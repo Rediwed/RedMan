@@ -69,6 +69,24 @@
   white-space: nowrap;
 }
 
+/* Skip warning banner */
+.skip-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-top: var(--space-sm);
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--color-warning, #eab308);
+  font-size: 0.82rem;
+}
+
+.skip-warning svg {
+  flex-shrink: 0;
+}
+
 /* Runs section */
 .runs-section {
   margin-top: var(--space-xl);

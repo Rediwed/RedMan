@@ -358,6 +358,12 @@ export default function RclonePage() {
                 <div className="config-detail"><span className="detail-label">Schedule</span><span>{describeCron(j.cron_expression)}</span></div>
               </div>
               <JobProgress progress={getProgressForConfig(j.id)} feature="rclone" />
+              {j.consecutive_skips > 0 && (
+                <div className="skip-warning">
+                  <AlertTriangle size={14} />
+                  <span>Schedule too aggressive — skipped {j.consecutive_skips} time{j.consecutive_skips > 1 ? 's' : ''} in a row (previous run still active)</span>
+                </div>
+              )}
             </div>
           ))}
         </div>

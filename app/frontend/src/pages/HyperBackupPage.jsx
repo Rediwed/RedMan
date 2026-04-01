@@ -4,7 +4,7 @@ import {
   triggerHyperBackup, testHyperConnection, getHyperRuns, getHyperRunDetail,
   getSshStatus, generateSshKey, authorizeLocalSsh, testSshConnection,
 } from '../api/index.js';
-import { RefreshCw, Play, Pencil, Trash2, ClipboardList, Plug, Search, CheckCircle2, XCircle, Key, Settings, Copy, Check, Terminal, Shield } from 'lucide-react';
+import { RefreshCw, Play, Pencil, Trash2, ClipboardList, Plug, Search, CheckCircle2, XCircle, Key, Settings, Copy, Check, Terminal, Shield, AlertTriangle } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
@@ -304,6 +304,12 @@ export default function HyperBackupPage() {
                 <div className="config-detail"><span className="detail-label">Schedule</span><span>{describeCron(j.cron_expression)}</span></div>
               </div>
               <JobProgress progress={getProgressForConfig(j.id)} feature="hyper-backup" />
+              {j.consecutive_skips > 0 && (
+                <div className="skip-warning">
+                  <AlertTriangle size={14} />
+                  <span>Schedule too aggressive — skipped {j.consecutive_skips} time{j.consecutive_skips > 1 ? 's' : ''} in a row (previous run still active)</span>
+                </div>
+              )}
             </div>
           ))}
         </div>
