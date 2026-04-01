@@ -1,0 +1,146 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>redman</Name>
+  <Repository>redman:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>
+    RedMan — Homelab management tool for Unraid. SSD backups with versioning,
+    cross-site Hyper Backup (rsync over SSH), Rclone cloud sync, and Docker
+    container monitoring with 24h metrics. React + Express + SQLite.
+  </Overview>
+  <Category>Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <!-- Web UI port -->
+  <Config
+    Name="WebUI Port"
+    Target="8090"
+    Default="8090"
+    Mode="tcp"
+    Description="Port for the RedMan web interface"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8090</Config>
+
+  <!-- Peer API port (Hyper Backup) -->
+  <Config
+    Name="Peer API Port"
+    Target="8091"
+    Default="8091"
+    Mode="tcp"
+    Description="Port for the Hyper Backup peer API (machine-to-machine)"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8091</Config>
+
+  <!-- SQLite database persistence -->
+  <Config
+    Name="App Data"
+    Target="/app/backend/data"
+    Default="/mnt/user/appdata/redman"
+    Mode="rw"
+    Description="Path to store the RedMan database"
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/redman</Config>
+
+  <!-- Docker socket (read-only, for container management) -->
+  <Config
+    Name="Docker Socket"
+    Target="/var/run/docker.sock"
+    Default="/var/run/docker.sock"
+    Mode="ro"
+    Description="Docker socket for container monitoring"
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/var/run/docker.sock</Config>
+
+  <!-- Unraid share config (read-only) -->
+  <Config
+    Name="Share Config"
+    Target="/boot/config/shares"
+    Default="/boot/config/shares"
+    Mode="ro"
+    Description="Unraid share configuration files (auto-detect shares)"
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false">/boot/config/shares</Config>
+
+  <!-- User shares (read-only for backup sources) -->
+  <Config
+    Name="User Shares"
+    Target="/mnt/user"
+    Default="/mnt/user"
+    Mode="ro"
+    Description="Unraid user shares (mounted read-only for browsing backup sources)"
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false">/mnt/user</Config>
+
+  <!-- Cache (read-only for SSD backup sources) -->
+  <Config
+    Name="Cache"
+    Target="/mnt/cache"
+    Default="/mnt/cache"
+    Mode="ro"
+    Description="Unraid cache drive (SSD backup sources)"
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false">/mnt/cache</Config>
+
+  <!-- Environment -->
+  <Config
+    Name="NODE_ENV"
+    Target="NODE_ENV"
+    Default="production"
+    Mode=""
+    Description="Node environment (leave as production)"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">production</Config>
+
+  <Config
+    Name="PORT"
+    Target="PORT"
+    Default="8090"
+    Mode=""
+    Description="Internal web UI port"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">8090</Config>
+
+  <Config
+    Name="PEER_PORT"
+    Target="PEER_PORT"
+    Default="8091"
+    Mode=""
+    Description="Internal peer API port"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">8091</Config>
+</Container>

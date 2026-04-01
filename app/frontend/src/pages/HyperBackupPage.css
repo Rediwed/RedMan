@@ -1,0 +1,98 @@
+.hyper-page {}
+
+.direction-toggle {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.dir-btn {
+  flex: 1;
+  padding: 0.5rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dir-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.dir-btn:hover:not(.active) {
+  border-color: var(--color-text-muted);
+}
+
+.test-result {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+}
+
+.test-result.success {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--color-success);
+}
+
+.test-result.failure {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+}
+
+/* SSH Wizard */
+.ssh-wizard-step {
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ssh-wizard-step:last-of-type {
+  border-bottom: none;
+}
+
+.ssh-wizard-step h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.95rem;
+  margin-bottom: var(--space-sm);
+}
+
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.ssh-pubkey-box {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-sm);
+}
+
+.ssh-pubkey-box code {
+  flex: 1;
+  font-size: 0.72rem;
+  word-break: break-all;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.text-success { color: var(--color-success); display: flex; align-items: center; gap: 4px; font-size: 0.85rem; }
+.text-danger { color: var(--color-danger); display: flex; align-items: center; gap: 4px; font-size: 0.85rem; }

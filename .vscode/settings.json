@@ -1,0 +1,11 @@
+{
+    "terminal.integrated.env.windows": {
+        "PATH": "C:\\Program Files\\nodejs;C:\\Windows\\System32;C:\\Windows;${env:PATH}"
+    },
+    "terminal.integrated.env.osx": {
+        "PATH": "/usr/local/bin:/opt/homebrew/bin:${env:PATH}"
+    },
+    "terminal.integrated.env.linux": {
+        "PATH": "/usr/local/bin:${env:PATH}"
+    }
+}

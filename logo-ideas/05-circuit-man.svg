@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- RedMan Logo 5: Circuit Man — minimalist stick figure made of circuit board traces -->
+  <defs>
+    <linearGradient id="circuitGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f87171"/>
+      <stop offset="50%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#dc2626"/>
+    </linearGradient>
+    <filter id="nodeGlow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="traceGlow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Dark background circle -->
+  <circle cx="256" cy="256" r="240" fill="#18181b"/>
+
+  <!-- Subtle concentric rings -->
+  <circle cx="256" cy="256" r="232" fill="none" stroke="#ef4444" stroke-width="2.5" opacity="0.18"/>
+  <circle cx="256" cy="256" r="210" fill="none" stroke="#ef4444" stroke-width="1.5" opacity="0.1"/>
+  <circle cx="256" cy="256" r="188" fill="none" stroke="#ef4444" stroke-width="1" opacity="0.06"/>
+
+  <!-- Background circuit traces (ambient decoration) -->
+  <g opacity="0.15" stroke="#ef4444" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M80 180 L100 180 L100 160"/>
+    <path d="M432 320 L412 320 L412 340"/>
+    <path d="M120 400 L140 400 L140 380 L160 380"/>
+    <path d="M380 140 L380 120 L400 120"/>
+    <path d="M90 300 L110 300"/>
+    <path d="M400 260 L420 260"/>
+  </g>
+  <g opacity="0.15" fill="#ef4444">
+    <circle cx="100" cy="160" r="3.5"/>
+    <circle cx="80" cy="180" r="3.5"/>
+    <circle cx="412" cy="340" r="3.5"/>
+    <circle cx="432" cy="320" r="3.5"/>
+    <circle cx="160" cy="380" r="3.5"/>
+    <circle cx="120" cy="400" r="3.5"/>
+    <circle cx="400" cy="120" r="3.5"/>
+    <circle cx="380" cy="140" r="3.5"/>
+    <circle cx="90" cy="300" r="3.5"/>
+    <circle cx="420" cy="260" r="3.5"/>
+  </g>
+
+  <!-- Main figure traces -->
+  <g filter="url(#traceGlow)">
+    <!-- Head — double ring -->
+    <circle cx="256" cy="116" r="42" fill="none" stroke="url(#circuitGrad)" stroke-width="5"/>
+    <circle cx="256" cy="116" r="30" fill="none" stroke="#ef4444" stroke-width="1.5" opacity="0.3"/>
+
+    <!-- Head core node -->
+    <circle cx="256" cy="116" r="14" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="256" cy="116" r="6" fill="#fca5a5" opacity="0.6"/>
+
+    <!-- Spine — vertical trace -->
+    <line x1="256" y1="158" x2="256" y2="316" stroke="#ef4444" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- Spine nodes -->
+    <circle cx="256" cy="196" r="7" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="256" cy="196" r="3" fill="#fca5a5" opacity="0.5"/>
+
+    <circle cx="256" cy="252" r="9" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="256" cy="252" r="4" fill="#fca5a5" opacity="0.5"/>
+
+    <circle cx="256" cy="316" r="7" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="256" cy="316" r="3" fill="#fca5a5" opacity="0.5"/>
+
+    <!-- Arms — 90° bend traces -->
+    <path d="M256 196 L180 196 L180 256" fill="none" stroke="#ef4444" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M256 196 L332 196 L332 256" fill="none" stroke="#ef4444" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Hand nodes -->
+    <circle cx="180" cy="256" r="9" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="332" cy="256" r="9" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="180" cy="256" r="4" fill="#fca5a5" opacity="0.5"/>
+    <circle cx="332" cy="256" r="4" fill="#fca5a5" opacity="0.5"/>
+
+    <!-- Extended arm traces (secondary) -->
+    <path d="M180 196 L136 196" fill="none" stroke="#ef4444" stroke-width="3" opacity="0.4" stroke-linecap="round"/>
+    <path d="M332 196 L376 196" fill="none" stroke="#ef4444" stroke-width="3" opacity="0.4" stroke-linecap="round"/>
+    <circle cx="136" cy="196" r="4.5" fill="#ef4444" opacity="0.4"/>
+    <circle cx="376" cy="196" r="4.5" fill="#ef4444" opacity="0.4"/>
+
+    <!-- Legs — traces with proper bends -->
+    <path d="M256 316 L200 392 L200 436" fill="none" stroke="#ef4444" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M256 316 L312 392 L312 436" fill="none" stroke="#ef4444" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Foot nodes -->
+    <circle cx="200" cy="436" r="7" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="312" cy="436" r="7" fill="#ef4444" filter="url(#nodeGlow)"/>
+    <circle cx="200" cy="436" r="3" fill="#fca5a5" opacity="0.5"/>
+    <circle cx="312" cy="436" r="3" fill="#fca5a5" opacity="0.5"/>
+  </g>
+
+  <!-- Data payloads held in hands — server/HDD icons -->
+  <g opacity="0.85">
+    <!-- Left hand: blue drive -->
+    <rect x="162" y="268" width="36" height="24" rx="4" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1.5"/>
+    <rect x="168" y="274" width="16" height="2.5" rx="1" fill="#60a5fa" opacity="0.7"/>
+    <rect x="168" y="279" width="10" height="2" rx="1" fill="#60a5fa" opacity="0.4"/>
+    <circle cx="190" cy="280" r="2.5" fill="#3b82f6"/>
+    <circle cx="190" cy="280" r="1" fill="#93c5fd" opacity="0.7"/>
+
+    <!-- Right hand: green drive -->
+    <rect x="314" y="268" width="36" height="24" rx="4" fill="#14532d" stroke="#22c55e" stroke-width="1.5"/>
+    <rect x="320" y="274" width="16" height="2.5" rx="1" fill="#4ade80" opacity="0.7"/>
+    <rect x="320" y="279" width="10" height="2" rx="1" fill="#4ade80" opacity="0.4"/>
+    <circle cx="342" cy="280" r="2.5" fill="#22c55e"/>
+    <circle cx="342" cy="280" r="1" fill="#86efac" opacity="0.7"/>
+  </g>
+
+  <!-- Chest emblem — Unraid diamond, centered on core node -->
+  <g transform="translate(256,252)" opacity="0.75">
+    <rect x="-10" y="-10" width="20" height="20" rx="2" transform="rotate(45)"
+          fill="none" stroke="#fca5a5" stroke-width="2"/>
+    <rect x="-5" y="-5" width="10" height="10" rx="1" transform="rotate(45)"
+          fill="#fca5a5" opacity="0.25"/>
+  </g>
+</svg>

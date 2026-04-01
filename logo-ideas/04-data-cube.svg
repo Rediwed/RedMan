@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- RedMan Logo 4: Data Cube — isometric 3D cube with drive array, Unraid-inspired -->
+  <defs>
+    <linearGradient id="cubeTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fca5a5"/>
+      <stop offset="100%" stop-color="#f87171"/>
+    </linearGradient>
+    <linearGradient id="cubeLeft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#991b1b"/>
+    </linearGradient>
+    <linearGradient id="cubeRight" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <filter id="cubeShadow">
+      <feDropShadow dx="4" dy="8" stdDeviation="14" flood-color="#1a0000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#cubeShadow)">
+    <!-- Top face -->
+    <path d="M256 80 L432 176 L256 272 L80 176 Z" fill="url(#cubeTop)"/>
+    <!-- Left face -->
+    <path d="M80 176 L256 272 L256 448 L80 352 Z" fill="url(#cubeLeft)"/>
+    <!-- Right face -->
+    <path d="M432 176 L256 272 L256 448 L432 352 Z" fill="url(#cubeRight)"/>
+  </g>
+
+  <!-- Edge highlights -->
+  <path d="M256 80 L432 176 L256 272 L80 176 Z" fill="none" stroke="#fef2f2" stroke-width="1.5" opacity="0.3"/>
+  <line x1="256" y1="272" x2="256" y2="448" stroke="#fca5a5" stroke-width="1.5" opacity="0.25"/>
+  <line x1="80" y1="176" x2="80" y2="352" stroke="#000000" stroke-width="1" opacity="0.15"/>
+  <line x1="432" y1="176" x2="432" y2="352" stroke="#000000" stroke-width="1" opacity="0.1"/>
+
+  <!-- Top face — grid pattern (isometric aligned) -->
+  <g opacity="0.12" stroke="#fef2f2" stroke-width="1">
+    <line x1="168" y1="128" x2="344" y2="224"/>
+    <line x1="212" y1="104" x2="388" y2="200"/>
+    <line x1="124" y1="152" x2="300" y2="248"/>
+    <line x1="168" y1="224" x2="344" y2="128"/>
+    <line x1="124" y1="200" x2="300" y2="104"/>
+    <line x1="212" y1="248" x2="388" y2="152"/>
+  </g>
+
+  <!-- Left face — drive bays (centered vertically on face) -->
+  <!-- Bay 1 -->
+  <path d="M96 227 L240 306 L240 326 L96 247 Z" fill="#fef2f2" opacity="0.15"/>
+  <path d="M104 233 L232 303 L232 315 L104 245 Z" fill="#fef2f2" opacity="0.12"/>
+  <!-- Bay 2 -->
+  <path d="M96 263 L240 342 L240 362 L96 283 Z" fill="#fef2f2" opacity="0.15"/>
+  <path d="M104 269 L232 339 L232 351 L104 281 Z" fill="#fef2f2" opacity="0.12"/>
+  <!-- Bay 3 -->
+  <path d="M96 299 L240 378 L240 398 L96 319 Z" fill="#fef2f2" opacity="0.15"/>
+  <path d="M104 305 L232 375 L232 387 L104 317 Z" fill="#fef2f2" opacity="0.12"/>
+
+  <!-- Bay separator lines -->
+  <path d="M94 255 L244 337" stroke="#fca5a5" stroke-width="0.8" opacity="0.3"/>
+  <path d="M94 291 L244 373" stroke="#fca5a5" stroke-width="0.8" opacity="0.3"/>
+
+  <!-- Drive LEDs on left face -->
+  <circle cx="228" cy="309" r="4" fill="#22c55e" opacity="0.9"/>
+  <circle cx="228" cy="309" r="2" fill="#4ade80" opacity="0.6"/>
+  <circle cx="228" cy="345" r="4" fill="#22c55e" opacity="0.9"/>
+  <circle cx="228" cy="345" r="2" fill="#4ade80" opacity="0.6"/>
+  <circle cx="228" cy="381" r="4" fill="#3b82f6" opacity="0.9"/>
+  <circle cx="228" cy="381" r="2" fill="#60a5fa" opacity="0.6"/>
+
+  <!-- Right face — data flow LEDs (isometrically aligned to face grid) -->
+  <g opacity="0.7">
+    <!-- Row 1 -->
+    <circle cx="300" cy="286" r="4" fill="#22c55e"/>
+    <circle cx="344" cy="262" r="4" fill="#22c55e"/>
+    <circle cx="388" cy="238" r="4" fill="#3b82f6"/>
+    <!-- Row 2 -->
+    <circle cx="300" cy="336" r="3.5" fill="#22c55e"/>
+    <circle cx="344" cy="312" r="3.5" fill="#fbbf24"/>
+    <circle cx="388" cy="288" r="3.5" fill="#22c55e"/>
+    <!-- Row 3 -->
+    <circle cx="300" cy="386" r="3.5" fill="#3b82f6"/>
+    <circle cx="344" cy="362" r="3.5" fill="#22c55e"/>
+    <circle cx="388" cy="338" r="3.5" fill="#22c55e"/>
+    <!-- Connecting lines along isometric face direction -->
+    <line x1="300" y1="286" x2="388" y2="238" stroke="#fca5a5" stroke-width="0.6" opacity="0.2"/>
+    <line x1="300" y1="336" x2="388" y2="288" stroke="#fca5a5" stroke-width="0.6" opacity="0.2"/>
+    <line x1="300" y1="386" x2="388" y2="338" stroke="#fca5a5" stroke-width="0.6" opacity="0.2"/>
+    <!-- Vertical connecting lines -->
+    <line x1="300" y1="286" x2="300" y2="386" stroke="#fca5a5" stroke-width="0.6" opacity="0.15"/>
+    <line x1="344" y1="262" x2="344" y2="362" stroke="#fca5a5" stroke-width="0.6" opacity="0.15"/>
+    <line x1="388" y1="238" x2="388" y2="338" stroke="#fca5a5" stroke-width="0.6" opacity="0.15"/>
+  </g>
+
+  <!-- "R" monogram on top face — isometric foreshortened -->
+  <g opacity="0.45">
+    <path d="M236 195 L236 157 L261 157 C276 157 282 162 282 167 C282 172 276 176 261 176 L236 176 M258 176 L282 195"
+          fill="none" stroke="#fef2f2" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- RedMan Logo 2: RM Monogram — bold lettermark with sync motif -->
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="60%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <linearGradient id="bgSheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.15"/>
+    </linearGradient>
+    <filter id="textShadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#3b0a0a" flood-opacity="0.4"/>
+    </filter>
+    <filter id="bgShadow">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded square background with drop shadow -->
+  <rect x="32" y="32" width="448" height="448" rx="80" fill="url(#bgGrad)" filter="url(#bgShadow)"/>
+  <!-- Sheen overlay -->
+  <rect x="32" y="32" width="448" height="448" rx="80" fill="url(#bgSheen)"/>
+
+  <!-- Subtle border inset -->
+  <rect x="38" y="38" width="436" height="436" rx="74" fill="none" stroke="#fca5a5" stroke-width="1" opacity="0.15"/>
+
+  <!-- R letter — clean, well-proportioned -->
+  <g filter="url(#textShadow)">
+    <path d="M72 400 L72 120 L192 120 C244 120 280 154 280 196
+             C280 232 258 260 224 268 L292 400 L250 400 L188 272
+             L114 272 L114 400 Z
+             M114 154 L114 240 L188 240 C220 240 240 222 240 196
+             C240 170 220 154 188 154 Z"
+          fill="#fef2f2"/>
+  </g>
+
+  <!-- M letter — wide, matching R weight and baseline -->
+  <g filter="url(#textShadow)" opacity="0.92">
+    <path d="M296 400 L296 120 L308 120 L370 310 L432 120 L444 120
+             L444 400 L412 400 L412 200 L362 380 L378 380
+             L328 200 L328 400 Z"
+          fill="#fef2f2"/>
+  </g>
+
+  <!-- Sync arrows — two ~280° arcs with visible gaps, arrows point down (right) and up (left) -->
+  <g transform="translate(256, 448)" opacity="0.5"
+     fill="none" stroke="#fca5a5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Arc 1: from lower-left (-11,8) clockwise over the top to upper-right (8,-11) -->
+    <path d="M-11,8 A14,14 0 1,1 8,-11"/>
+    <!-- Downward chevron at arc 1 endpoint (8,-11) -->
+    <polyline points="3,-16 8,-11 13,-16"/>
+    <!-- Arc 2: from upper-right (11,-8) clockwise under the bottom to lower-left (-8,11) -->
+    <path d="M11,-8 A14,14 0 1,1 -8,11"/>
+    <!-- Upward chevron at arc 2 endpoint (-8,11) -->
+    <polyline points="-13,16 -8,11 -3,16"/>
+  </g>
+
+  <!-- Unraid diamond accent — top center -->
+  <g transform="translate(256, 76)">
+    <rect x="-14" y="-14" width="28" height="28" rx="3"
+          transform="rotate(45)"
+          fill="none" stroke="#fca5a5" stroke-width="2.5" opacity="0.5"/>
+  </g>
+</svg>

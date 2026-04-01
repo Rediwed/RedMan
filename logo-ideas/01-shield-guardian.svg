@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- RedMan Logo 1: Shield Guardian — protective shield with server rack lines -->
+  <defs>
+    <linearGradient id="shieldGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f05252"/>
+      <stop offset="50%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#8b1a1a"/>
+    </linearGradient>
+    <linearGradient id="shieldEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b91c1c"/>
+      <stop offset="100%" stop-color="#5c1010"/>
+    </linearGradient>
+    <linearGradient id="innerSheen" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="40%" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.1"/>
+    </linearGradient>
+    <linearGradient id="serverBar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f0e0e0"/>
+    </linearGradient>
+    <filter id="innerShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
+      <feOffset dx="0" dy="2" result="offset"/>
+      <feComposite in="offset" in2="SourceGraphic" operator="arithmetic" k2="-1" k3="1"/>
+      <feFlood flood-color="#7f1d1d" flood-opacity="0.3"/>
+      <feComposite in2="offset" operator="in"/>
+      <feComposite in2="SourceGraphic" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Shield outer edge / border -->
+  <path d="M256 44 L440 120 L440 284 C440 388 344 464 256 488 C168 464 72 388 72 284 L72 120 Z"
+        fill="url(#shieldEdge)"/>
+
+  <!-- Shield main body -->
+  <path d="M256 54 L430 126 L430 280 C430 380 338 452 256 476 C174 452 82 380 82 280 L82 126 Z"
+        fill="url(#shieldGrad)"/>
+
+  <!-- Inner highlight / sheen for 3D effect -->
+  <path d="M256 54 L430 126 L430 280 C430 380 338 452 256 476 C174 452 82 380 82 280 L82 126 Z"
+        fill="url(#innerSheen)"/>
+
+  <!-- Unraid diamond symbol at top -->
+  <g transform="translate(256,128)">
+    <rect x="-18" y="-18" width="36" height="36" rx="4"
+          transform="rotate(45)"
+          fill="none" stroke="#fef2f2" stroke-width="5" opacity="0.95"/>
+    <rect x="-9" y="-9" width="18" height="18" rx="2"
+          transform="rotate(45)"
+          fill="#fef2f2" opacity="0.3"/>
+  </g>
+
+  <!-- Server rack housing -->
+  <g filter="url(#innerShadow)">
+    <!-- Drive bay 1 -->
+    <rect x="172" y="190" width="168" height="36" rx="6" fill="url(#serverBar)" opacity="0.92"/>
+    <!-- Drive bay 2 -->
+    <rect x="172" y="238" width="168" height="36" rx="6" fill="url(#serverBar)" opacity="0.92"/>
+    <!-- Drive bay 3 -->
+    <rect x="172" y="286" width="168" height="36" rx="6" fill="url(#serverBar)" opacity="0.92"/>
+  </g>
+
+  <!-- Drive detail lines (etched look) -->
+  <rect x="190" y="204" width="96" height="3" rx="1.5" fill="#dc2626" opacity="0.35"/>
+  <rect x="190" y="210" width="68" height="2" rx="1" fill="#dc2626" opacity="0.2"/>
+  <rect x="190" y="252" width="80" height="3" rx="1.5" fill="#dc2626" opacity="0.35"/>
+  <rect x="190" y="258" width="52" height="2" rx="1" fill="#dc2626" opacity="0.2"/>
+  <rect x="190" y="300" width="64" height="3" rx="1.5" fill="#dc2626" opacity="0.35"/>
+  <rect x="190" y="306" width="44" height="2" rx="1" fill="#dc2626" opacity="0.2"/>
+
+  <!-- Drive indicator LEDs with glow -->
+  <circle cx="320" cy="208" r="5.5" fill="#16a34a"/>
+  <circle cx="320" cy="208" r="3" fill="#4ade80" opacity="0.7"/>
+  <circle cx="320" cy="256" r="5.5" fill="#16a34a"/>
+  <circle cx="320" cy="256" r="3" fill="#4ade80" opacity="0.7"/>
+  <circle cx="320" cy="304" r="5.5" fill="#2563eb"/>
+  <circle cx="320" cy="304" r="3" fill="#60a5fa" opacity="0.7"/>
+
+  <!-- Connecting lines between diamond and server rack -->
+  <line x1="256" y1="154" x2="256" y2="184" stroke="#fef2f2" stroke-width="2.5" opacity="0.4" stroke-dasharray="4,4"/>
+</svg>

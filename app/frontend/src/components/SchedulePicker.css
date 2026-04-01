@@ -1,0 +1,93 @@
+.schedule-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.schedule-label {
+  min-width: 80px;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #a1a1aa);
+  flex-shrink: 0;
+}
+
+.schedule-select {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #3f3f46);
+  background: var(--input-bg, #27272a);
+  color: var(--text-primary, #fafafa);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.schedule-select:focus {
+  outline: none;
+  border-color: var(--accent, #ef4444);
+}
+
+.schedule-custom {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.schedule-cron-input {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #3f3f46);
+  background: var(--input-bg, #27272a);
+  color: var(--text-primary, #fafafa);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.85rem;
+}
+
+.schedule-cron-input:focus {
+  outline: none;
+  border-color: var(--accent, #ef4444);
+}
+
+.schedule-hint {
+  font-size: 0.75rem;
+  color: var(--text-tertiary, #71717a);
+}
+
+.schedule-description {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #a1a1aa);
+  padding: 4px 0;
+  font-style: italic;
+}
+
+.schedule-toggle-cron {
+  background: none;
+  border: none;
+  color: var(--text-tertiary, #71717a);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  width: fit-content;
+}
+
+.schedule-toggle-cron:hover {
+  color: var(--text-secondary, #a1a1aa);
+}
+
+.schedule-cron-display {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: var(--text-tertiary, #71717a);
+  background: var(--surface-alt, #1e1e22);
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}

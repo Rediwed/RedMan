@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  redman:
+    build: .
+    container_name: redman
+    ports:
+      - "8090:8090"
+      - "8091:8091"
+    volumes:
+      - db-data:/app/backend/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /boot/config/shares:/boot/config/shares:ro
+      - /mnt/user:/mnt/user:ro
+      - /mnt/cache:/mnt/cache:ro
+      - type: bind
+        source: /mnt/disks
+        target: /mnt/disks
+        bind:
+          propagation: rslave
+    environment:
+      - NODE_ENV=production
+      - PORT=8090
+      - PEER_PORT=8091
+    restart: unless-stopped
+
+volumes:
+  db-data:

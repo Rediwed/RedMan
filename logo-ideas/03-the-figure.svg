@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- RedMan Logo 3: The Figure — stylized humanoid guardian silhouette -->
+  <defs>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f87171"/>
+      <stop offset="40%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </linearGradient>
+    <linearGradient id="capeGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#991b1b"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <filter id="figureShadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1a0505" flood-opacity="0.35"/>
+    </filter>
+    <filter id="glowBlue">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Subtle radial background -->
+  <circle cx="256" cy="270" r="220" fill="#1a1a2e" opacity="0.06"/>
+
+  <!-- Cape (behind body) -->
+  <path d="M224 170 L172 360 L220 390 L256 400 L292 390 L340 360 L288 170 Z"
+        fill="url(#capeGrad)" opacity="0.45"/>
+
+  <!-- Figure group with shadow -->
+  <g filter="url(#figureShadow)">
+
+    <!-- Legs -->
+    <path d="M226 316 L208 432 L198 432 L190 448 L232 448 L238 432 L248 340"
+          fill="url(#bodyGrad)"/>
+    <path d="M286 316 L304 432 L314 432 L322 448 L280 448 L274 432 L264 340"
+          fill="url(#bodyGrad)"/>
+
+    <!-- Boots -->
+    <path d="M186 444 C186 452 192 460 200 460 L236 460 C240 460 242 456 242 452 L242 444 Z"
+          fill="#7f1d1d"/>
+    <path d="M270 444 C270 452 276 460 284 460 L320 460 C324 460 326 456 326 452 L326 444 Z"
+          fill="#7f1d1d"/>
+
+    <!-- Torso — tapered, more natural -->
+    <path d="M214 172 L198 320 L314 320 L298 172 Z" fill="url(#bodyGrad)"/>
+
+    <!-- Belt -->
+    <rect x="194" y="310" width="124" height="14" rx="4" fill="#7f1d1d"/>
+    <rect x="246" y="307" width="20" height="20" rx="3" fill="#991b1b" stroke="#fca5a5" stroke-width="1.5"/>
+
+    <!-- Arms -->
+    <path d="M214 178 L164 242 L148 276 L162 284 L182 254 L218 208"
+          fill="url(#bodyGrad)"/>
+    <path d="M298 178 L348 242 L364 276 L350 284 L330 254 L294 208"
+          fill="url(#bodyGrad)"/>
+
+    <!-- Fists -->
+    <circle cx="155" cy="280" r="16" fill="#dc2626"/>
+    <circle cx="357" cy="280" r="16" fill="#dc2626"/>
+    <circle cx="155" cy="280" r="8" fill="#b91c1c"/>
+    <circle cx="357" cy="280" r="8" fill="#b91c1c"/>
+
+    <!-- Head -->
+    <circle cx="256" cy="112" r="50" fill="url(#bodyGrad)"/>
+
+    <!-- Visor — sleek tech look -->
+    <g filter="url(#glowBlue)">
+      <rect x="218" y="100" width="76" height="12" rx="6" fill="#0f172a" opacity="0.85"/>
+      <rect x="222" y="102" width="68" height="8" rx="4" fill="#1e3a5f" opacity="0.6"/>
+      <circle cx="242" cy="106" r="3.5" fill="#60a5fa"/>
+      <circle cx="270" cy="106" r="3.5" fill="#60a5fa"/>
+      <circle cx="242" cy="106" r="1.5" fill="#ffffff" opacity="0.8"/>
+      <circle cx="270" cy="106" r="1.5" fill="#ffffff" opacity="0.8"/>
+    </g>
+
+    <!-- Chest emblem — Unraid-style diamond with data sync -->
+    <circle cx="256" cy="236" r="26" fill="#7f1d1d" stroke="#fca5a5" stroke-width="1.5"/>
+    <g transform="translate(256,236)">
+      <rect x="-10" y="-10" width="20" height="20" rx="2"
+            transform="rotate(45)"
+            fill="none" stroke="#fef2f2" stroke-width="2.5"/>
+      <rect x="-5" y="-5" width="10" height="10" rx="1"
+            transform="rotate(45)"
+            fill="#fef2f2" opacity="0.4"/>
+    </g>
+
+    <!-- Shoulder pads -->
+    <ellipse cx="210" cy="176" rx="20" ry="10" fill="#b91c1c"/>
+    <ellipse cx="302" cy="176" rx="20" ry="10" fill="#b91c1c"/>
+  </g>
+</svg>

@@ -1,0 +1,203 @@
+.media-import-page section {
+  margin-bottom: var(--space-2xl);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: var(--space-md);
+  color: var(--color-media);
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.status-warning {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+  font-size: 0.8rem;
+}
+
+/* Drive grid */
+.drive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: var(--space-md);
+}
+
+/* Drive card */
+.drive-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.drive-card-disconnected {
+  opacity: 0.5;
+}
+
+.drive-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drive-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.drive-name {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.drive-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.drive-status.connected {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--color-success);
+}
+
+.drive-status.disconnected {
+  background: rgba(139, 143, 163, 0.15);
+  color: var(--color-text-muted);
+}
+
+/* Drive metadata */
+.drive-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.drive-meta code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+/* Scan results */
+.scan-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(236, 72, 153, 0.06);
+  border: 1px solid rgba(236, 72, 153, 0.15);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+}
+
+.scan-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.85rem;
+  color: var(--color-media);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Import progress */
+.import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.import-progress-bar {
+  height: 6px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.import-progress-fill {
+  height: 100%;
+  background: var(--color-media);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.import-progress-text {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* New drive hint */
+.new-drive-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(79, 143, 247, 0.08);
+  border: 1px solid rgba(79, 143, 247, 0.2);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--color-primary);
+}
+
+/* Drive toggles */
+.drive-toggles {
+  display: flex;
+  gap: var(--space-lg);
+}
+
+.toggle-label-sm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* Drive actions */
+.drive-actions {
+  display: flex;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.badge-auto {
+  background: rgba(236, 72, 153, 0.15);
+  color: var(--color-media);
+}
+
+.text-danger {
+  color: var(--color-danger);
+  font-weight: 600;
+}

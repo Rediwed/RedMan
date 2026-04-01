@@ -1,0 +1,131 @@
+.rclone-page {}
+
+/* Remotes management section */
+.remotes-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-xl);
+}
+
+.remotes-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.remotes-section-header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.remotes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-sm);
+}
+
+.remote-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.remote-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.remote-card-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  font-family: var(--font-mono);
+  color: var(--color-rclone);
+}
+
+.remote-card-actions {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.remotes-empty {
+  text-align: center;
+  padding: var(--space-md);
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+/* Remote form fields */
+.remote-params {
+  margin-top: var(--space-sm);
+}
+
+.params-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: block;
+  margin-bottom: var(--space-sm);
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.kv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.kv-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.kv-key {
+  flex: 0 0 140px;
+  padding: 0.35rem 0.6rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.kv-value {
+  flex: 1;
+  padding: 0.35rem 0.6rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.kv-value:focus, .kv-key:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* Kept for backward compat — remote chips used in job cards */
+.remote-chip {
+  padding: 0.15rem 0.5rem;
+  background: rgba(6, 182, 212, 0.12);
+  color: var(--color-rclone);
+  border-radius: var(--radius-full);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.direction-toggle.three {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+}
