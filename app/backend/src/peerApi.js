@@ -3,7 +3,8 @@
 // Authenticated via per-peer Bearer API keys (not Authelia)
 
 import express from 'express';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import rateLimit from 'express-rate-limit';
 import { peerAuth } from './middleware/auth.js';
 import { normalizePath, isWithinPrefix, validateDirection } from './middleware/validation.js';
 import db from './db.js';
@@ -17,6 +18,15 @@ const logAudit = db.prepare(`
 export function createPeerApi() {
   const app = express();
   app.use(express.json());
+
+  // Rate limiting — 120 req/min for all peer requests
+  app.use(rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, try again later' },
+  }));
 
   // All peer routes require API key auth
   app.use(peerAuth(db));
@@ -195,10 +205,10 @@ export function createPeerApi() {
 // Get disk usage of a path in bytes using du
 function getDiskUsage(dirPath) {
   try {
-    const output = execSync(`du -sk "${dirPath}" 2>/dev/null | cut -f1`, {
+    const output = execFileSync('du', ['-sk', dirPath], {
       encoding: 'utf-8', timeout: 30000,
     });
-    const kb = parseInt(output.trim());
+    const kb = parseInt(output.split('\t')[0]);
     return isNaN(kb) ? -1 : kb * 1024;
   } catch {
     return -1;

@@ -8,6 +8,8 @@ import { resolve, normalize, posix } from 'path';
  */
 export function normalizePath(p) {
   if (!p || typeof p !== 'string') return null;
+  // Reject shell metacharacters that could be used for command injection
+  if (/[$`"\\|;&(){}]/.test(p)) return null;
   const normalized = posix.normalize(p);
   if (!normalized.startsWith('/')) return null;
   // Strip trailing slash (except for root '/')
