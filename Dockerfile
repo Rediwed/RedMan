@@ -19,8 +19,8 @@ RUN npm ci --omit=dev || npm install --omit=dev
 # ---- Stage 3: Final runtime image ----
 FROM node:20-alpine
 
-# Install util-linux (lsblk, umount) and download immich-go
-RUN apk add --no-cache util-linux curl && \
+# Install util-linux (lsblk, umount), librsync (rdiff for delta versioning) and download immich-go
+RUN apk add --no-cache util-linux curl librsync && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
       x86_64) GOARCH="amd64" ;; \
@@ -46,5 +46,8 @@ RUN mkdir -p /app/backend/data
 
 VOLUME ["/app/backend/data"]
 EXPOSE 8090 8091
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:8090/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
 CMD ["node", "src/index.js"]

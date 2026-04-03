@@ -4,6 +4,7 @@ import { Router } from 'express';
 import db from '../db.js';
 import { executeHyperBackup, testPeerConnection, getActiveHyperRun } from '../services/hyperBackup.js';
 import { scheduleJob, removeJob, getJobSkipCount, isJobRunning } from '../services/scheduler.js';
+import { normalizePath, validateSshPort, validateUrl } from '../middleware/validation.js';
 const router = Router();
 
 // List all Hyper Backup jobs
@@ -39,11 +40,29 @@ router.post('/jobs', (req, res) => {
     return res.status(400).json({ error: 'direction must be "push" or "pull"' });
   }
 
+  if (!validateUrl(remote_url)) {
+    return res.status(400).json({ error: 'remote_url must be a valid HTTP(S) URL' });
+  }
+
+  const normalizedLocal = normalizePath(local_path);
+  if (!normalizedLocal) {
+    return res.status(400).json({ error: 'local_path must be a valid absolute path' });
+  }
+
+  const normalizedRemote = normalizePath(remote_path);
+  if (!normalizedRemote) {
+    return res.status(400).json({ error: 'remote_path must be a valid absolute path' });
+  }
+
+  if (ssh_port && !validateSshPort(ssh_port)) {
+    return res.status(400).json({ error: 'ssh_port must be between 1 and 65535' });
+  }
+
   const result = db.prepare(`
     INSERT INTO hyper_backup_jobs (name, direction, remote_url, remote_api_key, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_on_success, notify_on_failure)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    name, direction, remote_url, remote_api_key, local_path, remote_path,
+    name, direction, remote_url, remote_api_key, normalizedLocal, normalizedRemote,
     ssh_user || 'root',
     ssh_host || null,
     ssh_port || 22,
@@ -73,6 +92,22 @@ router.put('/jobs/:id', (req, res) => {
     notify_on_success, notify_on_failure,
   } = req.body;
 
+  if (direction && !['push', 'pull'].includes(direction)) {
+    return res.status(400).json({ error: 'direction must be "push" or "pull"' });
+  }
+  if (remote_url && !validateUrl(remote_url)) {
+    return res.status(400).json({ error: 'remote_url must be a valid HTTP(S) URL' });
+  }
+  if (local_path && !normalizePath(local_path)) {
+    return res.status(400).json({ error: 'local_path must be a valid absolute path' });
+  }
+  if (remote_path && !normalizePath(remote_path)) {
+    return res.status(400).json({ error: 'remote_path must be a valid absolute path' });
+  }
+  if (ssh_port && !validateSshPort(ssh_port)) {
+    return res.status(400).json({ error: 'ssh_port must be between 1 and 65535' });
+  }
+
   db.prepare(`
     UPDATE hyper_backup_jobs SET
       name = ?, direction = ?, remote_url = ?, remote_api_key = ?,
@@ -87,8 +122,8 @@ router.put('/jobs/:id', (req, res) => {
     remote_url ?? existing.remote_url,
     // Only update API key if a new one is provided (not the masked placeholder)
     (remote_api_key && remote_api_key !== '••••••••') ? remote_api_key : existing.remote_api_key,
-    local_path ?? existing.local_path,
-    remote_path ?? existing.remote_path,
+    local_path ? normalizePath(local_path) : existing.local_path,
+    remote_path ? normalizePath(remote_path) : existing.remote_path,
     ssh_user ?? existing.ssh_user,
     ssh_host ?? existing.ssh_host,
     ssh_port ?? existing.ssh_port,
@@ -172,15 +207,19 @@ router.get('/runs', (req, res) => {
   res.json({ runs, page, limit, total, totalPages: Math.ceil(total / limit) });
 });
 
-// Get run detail
+// Get run detail (paginated file list for scale — defaults to first 1000)
 router.get('/runs/:id', (req, res) => {
   const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'hyper-backup'").get(req.params.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
-  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path').all(run.id);
+  const filePage = Math.max(1, parseInt(req.query.filePage) || 1);
+  const fileLimit = Math.min(5000, Math.max(1, parseInt(req.query.fileLimit) || 1000));
+  const fileOffset = (filePage - 1) * fileLimit;
+  const totalFiles = db.prepare('SELECT COUNT(*) as count FROM backup_run_files WHERE run_id = ?').get(run.id).count;
+  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path LIMIT ? OFFSET ?').all(run.id, fileLimit, fileOffset);
   const progress = getActiveHyperRun(run.id);
 
-  res.json({ ...run, files, liveProgress: progress || null });
+  res.json({ ...run, files, totalFiles, filePage, fileLimit, liveProgress: progress || null });
 });
 
 export default router;

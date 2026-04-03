@@ -4,6 +4,7 @@ import {
   startDriveImport, getImportProgress, ejectDrive, getMediaImportRuns,
   getMediaImportStatus,
 } from '../api/index.js';
+import useReconnect from '../hooks/useReconnect.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import {
   Camera, HardDrive, Search, Upload, LogOut, RefreshCw,
@@ -40,6 +41,7 @@ export default function MediaImportPage() {
   }, [runsPage]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useReconnect(refresh);
 
   // Auto-refresh every 10s
   useEffect(() => {

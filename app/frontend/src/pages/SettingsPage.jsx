@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getSettings, saveSettings, testNtfy, testBrowserNotify, testImmichConnection, getSshStatus, generateSshKey, authorizeLocalSsh, testSshConnection } from '../api/index.js';
+import { getSettings, saveSettings, testNtfy, testBrowserNotify, testImmichConnection, getSshStatus, generateSshKey, authorizeLocalSsh, testSshConnection, getPeers, createPeer, updatePeer, deletePeer, regeneratePeerKey, getPeerAuditLog } from '../api/index.js';
+import useReconnect from '../hooks/useReconnect.js';
 import {
   Settings, Bell, Link, Container, Camera, Save, Eye, EyeOff, Undo2,
   CheckCircle, XCircle, AlertTriangle, Info, Key, Copy, Shield, Terminal, Send,
+  Users, Plus, Trash2, RefreshCw, Clock, FolderLock, Activity,
 } from 'lucide-react';
 import PillTabs from '../components/PillTabs.jsx';
 import './SettingsPage.css';
@@ -10,6 +12,7 @@ import './SettingsPage.css';
 const SETTINGS_TABS = [
   { label: 'General', value: 'general' },
   { label: 'Notifications', value: 'notifications' },
+  { label: 'Authorized Peers', value: 'peers' },
   { label: 'Integrations', value: 'integrations' },
   { label: 'Infrastructure', value: 'infrastructure' },
 ];
@@ -46,16 +49,32 @@ export default function SettingsPage() {
   const [sshGenerating, setSshGenerating] = useState(false);
   const [sshCopied, setSshCopied] = useState(false);
 
-  useEffect(() => {
-    Promise.all([getSettings(), getSshStatus()])
-      .then(([s, sshData]) => {
+  // Peers state
+  const [peers, setPeers] = useState([]);
+  const [showPeerForm, setShowPeerForm] = useState(false);
+  const [editingPeer, setEditingPeer] = useState(null);
+  const [peerForm, setPeerForm] = useState({ name: '', allowed_path_prefix: '/' });
+  const [newPeerKey, setNewPeerKey] = useState(null);
+  const [peerKeyCopied, setPeerKeyCopied] = useState(false);
+  const [peerAuditLog, setPeerAuditLog] = useState(null);
+  const [auditPeerId, setAuditPeerId] = useState(null);
+  const [confirmDeletePeer, setConfirmDeletePeer] = useState(null);
+  const [confirmRegeneratePeer, setConfirmRegeneratePeer] = useState(null);
+
+  useEffect(() => { loadSettings(); }, []);
+  useReconnect(useCallback(() => loadSettings(), []));
+
+  function loadSettings() {
+    Promise.all([getSettings(), getSshStatus(), getPeers()])
+      .then(([s, sshData, peersData]) => {
         setSettings(s);
         setSavedSettings(s);
         setSsh(sshData);
+        setPeers(peersData);
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }
 
   const hasChanges = Object.keys(settings).some(k => settings[k] !== savedSettings[k])
     || Object.keys(savedSettings).some(k => settings[k] !== savedSettings[k]);
@@ -183,6 +202,74 @@ export default function SettingsPage() {
       setImmichTestResult(result);
     } catch (err) {
       setImmichTestResult({ ok: false, error: err.message });
+    }
+  }
+
+  // ── Peer handlers ──
+  async function loadPeers() {
+    try { setPeers(await getPeers()); } catch { /* silent */ }
+  }
+
+  async function handleCreatePeer(e) {
+    e.preventDefault();
+    try {
+      const result = await createPeer(peerForm);
+      setNewPeerKey(result.api_key);
+      setPeerForm({ name: '', allowed_path_prefix: '/' });
+      setShowPeerForm(false);
+      await loadPeers();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function handleUpdatePeer(e) {
+    e.preventDefault();
+    try {
+      await updatePeer(editingPeer.id, peerForm);
+      setEditingPeer(null);
+      setPeerForm({ name: '', allowed_path_prefix: '/' });
+      await loadPeers();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function handleDeletePeer(id) {
+    try {
+      await deletePeer(id);
+      setConfirmDeletePeer(null);
+      await loadPeers();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function handleRegenerateKey(id) {
+    try {
+      const result = await regeneratePeerKey(id);
+      setNewPeerKey(result.api_key);
+      await loadPeers();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function handleViewAuditLog(peerId) {
+    setAuditPeerId(peerId);
+    try {
+      const result = await getPeerAuditLog(peerId);
+      setPeerAuditLog(result);
+    } catch (err) {
+      setPeerAuditLog({ entries: [], error: err.message });
+    }
+  }
+
+  function copyPeerKey() {
+    if (newPeerKey) {
+      navigator.clipboard.writeText(newPeerKey);
+      setPeerKeyCopied(true);
+      setTimeout(() => setPeerKeyCopied(false), 3000);
     }
   }
 
@@ -348,6 +435,210 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* ── Authorized Peers ── */}
+      {activeTab === 'peers' && (
+        <div className="settings-cards-grid">
+          <div className="card" style={{ gridColumn: '1 / -1' }}>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3><Users size={16} /> Authorized Peers</h3>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => {
+                setPeerForm({ name: '', allowed_path_prefix: '/' });
+                setEditingPeer(null);
+                setShowPeerForm(true);
+              }}>
+                <Plus size={14} /> Add Peer
+              </button>
+            </div>
+            <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+              Each peer gets a unique API key. Remote RedMan instances use this key to authenticate when pushing backups here.
+            </p>
+
+            {peers.length === 0 ? (
+              <div className="empty-state" style={{ padding: 'var(--space-lg)' }}>
+                <Users size={32} style={{ opacity: 0.3 }} />
+                <p>No authorized peers yet. Add one to allow remote RedMan instances to back up here.</p>
+              </div>
+            ) : (
+              <div className="peer-list">
+                {peers.map(p => (
+                  <div key={p.id} className="config-card" style={{ opacity: p.enabled ? 1 : 0.6 }}>
+                    <div className="config-card-header">
+                      <div>
+                        <span className="config-name">{p.name}</span>
+                        {!p.enabled && <span className="badge badge-muted" style={{ marginLeft: 'var(--space-xs)' }}>Disabled</span>}
+                      </div>
+                      <div className="config-actions">
+                        <button type="button" className="btn btn-ghost btn-sm" title="View audit log" onClick={() => handleViewAuditLog(p.id)}>
+                          <Activity size={14} />
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm" title="Regenerate key" onClick={() => setConfirmRegeneratePeer(p)}>
+                          <RefreshCw size={14} />
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm" title="Edit" onClick={() => {
+                          setEditingPeer(p);
+                          setPeerForm({ name: p.name, allowed_path_prefix: p.allowed_path_prefix, enabled: !!p.enabled });
+                          setShowPeerForm(true);
+                        }}>
+                          Edit
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm btn-danger" title="Delete" onClick={() => setConfirmDeletePeer(p)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="config-details">
+                      <div className="config-detail">
+                        <span className="detail-label"><FolderLock size={12} /> Allowed Path</span>
+                        <code>{p.allowed_path_prefix}</code>
+                      </div>
+                      <div className="config-detail">
+                        <span className="detail-label"><Key size={12} /> API Key</span>
+                        <code>{p.api_key}</code>
+                      </div>
+                      {p.last_seen_at && (
+                        <div className="config-detail">
+                          <span className="detail-label"><Clock size={12} /> Last Seen</span>
+                          <span>{new Date(p.last_seen_at + 'Z').toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* New Peer Key Display Modal */}
+      {newPeerKey && (
+        <div className="modal-overlay" onClick={() => setNewPeerKey(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3><Key size={16} /> Peer API Key</h3></div>
+            <div className="modal-body">
+              <div className="alert alert-error" style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-start', marginBottom: 'var(--space-md)' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                <div><strong>Copy this key now.</strong> It will not be shown again.</div>
+              </div>
+              <div className="ssh-pubkey-row">
+                <code className="ssh-pubkey" style={{ wordBreak: 'break-all' }}>{newPeerKey}</code>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={copyPeerKey}>
+                  {peerKeyCopied ? <CheckCircle size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+              <p className="form-hint" style={{ marginTop: 'var(--space-sm)' }}>
+                Enter this key as the "Remote API Key" when creating a Hyper Backup job on the remote RedMan instance.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-primary" onClick={() => setNewPeerKey(null)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Peer Modal */}
+      {showPeerForm && (
+        <div className="modal-overlay" onClick={() => { setShowPeerForm(false); setEditingPeer(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <form onSubmit={editingPeer ? handleUpdatePeer : handleCreatePeer}>
+              <div className="modal-header"><h3>{editingPeer ? 'Edit Peer' : 'Add Authorized Peer'}</h3></div>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label>Name</label>
+                  <input value={peerForm.name} onChange={e => setPeerForm(f => ({ ...f, name: e.target.value }))} placeholder="Dad's NAS" required />
+                  <span className="form-hint">A friendly name to identify this peer</span>
+                </div>
+                <div className="form-group">
+                  <label>Allowed Path Prefix</label>
+                  <input value={peerForm.allowed_path_prefix} onChange={e => setPeerForm(f => ({ ...f, allowed_path_prefix: e.target.value }))} placeholder="/" required />
+                  <span className="form-hint">This peer can only write to paths under this prefix (e.g. <code>/backups/from-dad</code>). Use <code>/</code> for unrestricted.</span>
+                </div>
+                {editingPeer && (
+                  <div className="form-group">
+                    <div className="toggle-group">
+                      <div className={`toggle ${peerForm.enabled !== false ? 'active' : ''}`} onClick={() => setPeerForm(f => ({ ...f, enabled: !f.enabled }))} />
+                      <span>Enabled</span>
+                      <span className="form-hint" style={{ margin: 0 }}>Disabled peers cannot authenticate</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-ghost" onClick={() => { setShowPeerForm(false); setEditingPeer(null); }}>Cancel</button>
+                <button type="submit" className="btn btn-primary">{editingPeer ? 'Save' : 'Create Peer'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Regenerate Key Confirmation */}
+      {confirmRegeneratePeer && (
+        <div className="modal-overlay" onClick={() => setConfirmRegeneratePeer(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>Regenerate API Key</h3></div>
+            <div className="modal-body">
+              <p>Are you sure you want to regenerate the API key for <strong>{confirmRegeneratePeer.name}</strong>?</p>
+              <p style={{ color: 'var(--danger)', marginTop: 'var(--space-xs)' }}>⚠️ The current key will be permanently invalidated. Any remote instance using this key will lose access until updated with the new key.</p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setConfirmRegeneratePeer(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" onClick={() => { handleRegenerateKey(confirmRegeneratePeer.id); setConfirmRegeneratePeer(null); }}>Regenerate</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Peer Confirmation */}
+      {confirmDeletePeer && (
+        <div className="modal-overlay" onClick={() => setConfirmDeletePeer(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>Delete Peer</h3></div>
+            <div className="modal-body">
+              <p>Are you sure you want to delete <strong>{confirmDeletePeer.name}</strong>? This peer will no longer be able to authenticate.</p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setConfirmDeletePeer(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" onClick={() => handleDeletePeer(confirmDeletePeer.id)}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Peer Audit Log Modal */}
+      {peerAuditLog && (
+        <div className="modal-overlay" onClick={() => { setPeerAuditLog(null); setAuditPeerId(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 700 }}>
+            <div className="modal-header"><h3><Activity size={16} /> Peer Audit Log</h3></div>
+            <div className="modal-body" style={{ maxHeight: 400, overflowY: 'auto' }}>
+              {peerAuditLog.error && <p className="test-fail"><XCircle size={14} /> {peerAuditLog.error}</p>}
+              {peerAuditLog.entries?.length === 0 && <p className="form-hint">No audit log entries yet.</p>}
+              {peerAuditLog.entries?.length > 0 && (
+                <div className="table-wrapper">
+                  <table>
+                    <thead><tr><th>Time</th><th>Action</th><th>IP</th><th>Details</th></tr></thead>
+                    <tbody>
+                      {peerAuditLog.entries.map(e => (
+                        <tr key={e.id}>
+                          <td style={{ whiteSpace: 'nowrap' }}>{new Date(e.created_at + 'Z').toLocaleString()}</td>
+                          <td><code>{e.action}</code></td>
+                          <td><code>{e.ip_address}</code></td>
+                          <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.details || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-primary" onClick={() => { setPeerAuditLog(null); setAuditPeerId(null); }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Integrations ── */}
       {activeTab === 'integrations' && (
         <div className="settings-cards-grid">
@@ -393,28 +684,13 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Peer API */}
+          {/* Peer API Port */}
           <div className="card">
             <div className="card-header"><h3><Link size={16} /> Peer API (Hyper Backup)</h3></div>
             <div className="form-group">
               <label>Peer API Port</label>
               <input type="number" value={settings.peer_api_port || '8091'} onChange={e => update('peer_api_port', e.target.value)} />
-              <span className="form-hint">Requires restart to take effect</span>
-            </div>
-            <div className="form-group">
-              <label>Peer API Key</label>
-              <div className="token-input">
-                <input
-                  type={showTokens.peer_api_key ? 'text' : 'password'}
-                  value={settings.peer_api_key || ''}
-                  onChange={e => update('peer_api_key', e.target.value)}
-                  placeholder="Shared secret for peer authentication"
-                />
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => toggleShow('peer_api_key')}>
-                  {showTokens.peer_api_key ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-              <span className="form-hint">Must match the API key configured on the remote RedMan instance</span>
+              <span className="form-hint">Requires restart to take effect. Manage authorized peers in the Authorized Peers tab.</span>
             </div>
           </div>
         </div>

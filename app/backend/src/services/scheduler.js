@@ -14,6 +14,8 @@ const executors = new Map();
 const runningJobs = new Set();       // keys currently executing
 const skipCounts = new Map();        // key → consecutive skip count
 const SKIP_NOTIFY_THRESHOLD = 5;
+const MAX_RETRIES = 3;               // retry up to 3 times on transient failures
+const RETRY_BASE_DELAY_MS = 30_000;  // 30s base delay (30s, 60s, 120s)
 
 export function registerExecutor(feature, fn) {
   executors.set(feature, fn);
@@ -49,6 +51,37 @@ export function startScheduler() {
   console.log(`[scheduler] ${activeJobs.size} jobs scheduled.`);
 }
 
+// Check if an error is transient (network/SSH issues worth retrying)
+function isTransientError(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('econnrefused') || msg.includes('econnreset') ||
+    msg.includes('etimedout') || msg.includes('ssh connection failed') ||
+    msg.includes('unreachable') || msg.includes('connection closed') ||
+    msg.includes('connection reset') || msg.includes('timed out') ||
+    msg.includes('no route to host');
+}
+
+// Execute a job with exponential backoff retry on transient failures
+async function executeWithRetry(executor, configId, key) {
+  let lastError;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await executor(configId);
+      return; // success
+    } catch (err) {
+      lastError = err;
+      if (attempt < MAX_RETRIES && isTransientError(err)) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        console.warn(`[scheduler] ${key} failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err.message}. Retrying in ${delay / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw err; // non-transient or max retries exhausted
+      }
+    }
+  }
+  throw lastError;
+}
+
 export function scheduleJob(feature, configId, cronExpression) {
   const key = `${feature}:${configId}`;
 
@@ -82,7 +115,7 @@ export function scheduleJob(feature, configId, cronExpression) {
     runningJobs.add(key);
     try {
       console.log(`[scheduler] Triggering ${key}`);
-      await executor(configId);
+      await executeWithRetry(executor, configId, key);
       // Successful completion resets skip counter
       skipCounts.delete(key);
     } catch (err) {
@@ -106,6 +139,16 @@ export function removeJob(feature, configId) {
   // Clean up tracking state
   runningJobs.delete(key);
   skipCounts.delete(key);
+}
+
+// Stop all scheduled cron jobs (for graceful shutdown)
+export function stopAllJobs() {
+  for (const [key, task] of activeJobs) {
+    try { task.stop(); } catch {}
+  }
+  activeJobs.clear();
+  runningJobs.clear();
+  skipCounts.clear();
 }
 
 export function getNextRun(cronExpression) {

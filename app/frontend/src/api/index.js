@@ -61,8 +61,12 @@ export const browseSsdSnapshot = (configId, timestamp, path = '') => {
 };
 export const getSsdDownloadUrl = (configId, timestamp, path) =>
   `/api/ssd-backup/configs/${configId}/download?timestamp=${encodeURIComponent(timestamp)}&path=${encodeURIComponent(path)}`;
+export const getSsdPreviewUrl = (configId, timestamp, path) =>
+  `/api/ssd-backup/configs/${configId}/download?timestamp=${encodeURIComponent(timestamp)}&path=${encodeURIComponent(path)}&inline=true`;
 export const restoreSsdFile = (configId, timestamp, path) =>
   postJSON(`/ssd-backup/configs/${configId}/restore`, { timestamp, path });
+export const verifySsdVersions = (configId) =>
+  postJSON(`/ssd-backup/configs/${configId}/verify-versions`, {});
 
 // ===== Hyper Backup =====
 export const getHyperJobs = () => fetchJSON('/hyper-backup/jobs');
@@ -84,6 +88,16 @@ export const getSshStatus = () => fetchJSON('/settings/ssh/status');
 export const generateSshKey = () => postJSON('/settings/ssh/generate', {});
 export const authorizeLocalSsh = () => postJSON('/settings/ssh/authorize-localhost', {});
 export const testSshConnection = (data) => postJSON('/settings/ssh/test', data);
+
+// ===== Authorized Peers =====
+export const getPeers = () => fetchJSON('/peers');
+export const getPeer = (id) => fetchJSON(`/peers/${id}`);
+export const createPeer = (data) => postJSON('/peers', data);
+export const updatePeer = (id, data) => putJSON(`/peers/${id}`, data);
+export const deletePeer = (id) => deleteJSON(`/peers/${id}`);
+export const regeneratePeerKey = (id) => postJSON(`/peers/${id}/regenerate-key`, {});
+export const getPeerAuditLog = (id, page = 1) => fetchJSON(`/peers/${id}/audit-log?page=${page}`);
+export const getAllPeerAuditLog = (page = 1) => fetchJSON(`/peers/audit-log/all?page=${page}`);
 
 // ===== Rclone =====
 export const getRcloneRemotes = () => fetchJSON('/rclone/remotes');
@@ -140,3 +154,14 @@ export const getFilesystemRoots = () => fetchJSON('/filesystem/roots');
 // ===== Notifications =====
 export const testNtfy = () => postJSON('/settings/ntfy-test', {});
 export const testBrowserNotify = () => postJSON('/settings/browser-notify-test', {});
+
+// ===== Database Backup & Recovery =====
+export const backupDbTo = (destPath) => postJSON('/settings/db/backup', { dest_path: destPath });
+export const backupDbToAll = () => postJSON('/settings/db/backup-all', {});
+export const getDbBackups = (destPath) => fetchJSON(`/settings/db/backups?dest_path=${encodeURIComponent(destPath)}`);
+export const getDbRecoveryScan = (paths = []) => {
+  const q = paths.length ? `?paths=${paths.map(encodeURIComponent).join(',')}` : '';
+  return fetchJSON(`/settings/db/recovery-scan${q}`);
+};
+export const getDbRecoveryInfo = (destPath) => fetchJSON(`/settings/db/recovery-info?dest_path=${encodeURIComponent(destPath)}`);
+export const restoreDb = (backupPath) => postJSON('/settings/db/restore', { backup_path: backupPath });

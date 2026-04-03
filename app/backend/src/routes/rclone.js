@@ -175,15 +175,19 @@ router.get('/runs', (req, res) => {
   res.json({ runs, page, limit, total, totalPages: Math.ceil(total / limit) });
 });
 
-// Get run detail
+// Get run detail (paginated file list for scale — defaults to first 1000)
 router.get('/runs/:id', (req, res) => {
   const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'rclone'").get(req.params.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
-  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path').all(run.id);
+  const filePage = Math.max(1, parseInt(req.query.filePage) || 1);
+  const fileLimit = Math.min(5000, Math.max(1, parseInt(req.query.fileLimit) || 1000));
+  const fileOffset = (filePage - 1) * fileLimit;
+  const totalFiles = db.prepare('SELECT COUNT(*) as count FROM backup_run_files WHERE run_id = ?').get(run.id).count;
+  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path LIMIT ? OFFSET ?').all(run.id, fileLimit, fileOffset);
   const progress = getActiveRcloneRun(run.id);
 
-  res.json({ ...run, files, liveProgress: progress || null });
+  res.json({ ...run, files, totalFiles, filePage, fileLimit, liveProgress: progress || null });
 });
 
 // ===== Remote configuration management =====

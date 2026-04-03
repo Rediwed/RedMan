@@ -1,15 +1,21 @@
 // Rsync executor service
 // Spawns rsync as a child process, parses output, stores reports
 
-import { spawn } from 'child_process';
-import { mkdir } from 'fs/promises';
+import { spawn, execSync } from 'child_process';
+import { mkdir, access, constants } from 'fs/promises';
 import { join } from 'path';
 import os from 'os';
 import db from '../db.js';
 import { notifyBackupResult } from './notify.js';
+import { pruneVersions } from './versionBrowser.js';
+import { withConfigLock, rebaseDeltasWithTimestamp, deltaifySnapshot, computeVersionStats } from './deltaVersion.js';
+import { backupDatabase } from './dbBackup.js';
 
 // Active runs tracked for progress reporting
 const activeRuns = new Map();
+
+// Active child processes tracked for graceful shutdown
+const activeProcesses = new Set();
 
 const IS_MAC = os.platform() === 'darwin';
 
@@ -59,13 +65,51 @@ export async function executeSsdBackup(configId, existingRunId = null) {
   activeRuns.set(runId, progress);
 
   try {
+    // Pre-flight checks
+    try {
+      await access(config.source_path, constants.R_OK);
+    } catch {
+      throw new Error(`Source path not accessible: ${config.source_path}`);
+    }
+    try {
+      await access(config.dest_path, constants.W_OK);
+    } catch {
+      // Try to create it
+      await mkdir(config.dest_path, { recursive: true });
+    }
+
+    // Check available disk space on destination
+    try {
+      const dfOutput = execSync(`df -k "${config.dest_path}" 2>/dev/null | tail -1`, { encoding: 'utf-8' });
+      const parts = dfOutput.trim().split(/\s+/);
+      // df -k output: filesystem 1K-blocks used available capacity mountpoint
+      const availableKB = parseInt(parts[3]);
+      if (!isNaN(availableKB)) {
+        const availableGB = availableKB / (1024 * 1024);
+        if (availableGB < 1) {
+          throw new Error(`Destination has less than 1 GB free (${availableGB.toFixed(2)} GB). Aborting to prevent disk full.`);
+        }
+        if (availableGB < 10) {
+          console.warn(`[ssd-backup] Warning: destination "${config.dest_path}" has only ${availableGB.toFixed(1)} GB free`);
+        }
+      }
+    } catch (err) {
+      if (err.message.includes('Aborting to prevent')) throw err;
+      // df failed (e.g. path doesn't support it) — continue anyway
+    }
+
     // Build rsync command arguments
     const args = [
-      '-avz',
+      '-av',
       '--delete',
       '--itemize-changes',
       '--stats',
       '--human-readable',
+      // Resume partial transfers on interruption
+      '--partial',
+      '--partial-dir=.rsync-partial',
+      // Abort if no data transferred for 5 minutes (protects against hangs)
+      '--timeout=300',
       // GNU rsync: --info=progress2 gives byte-based overall progress
       // openrsync (macOS): only supports --progress (file-count based)
       IS_MAC ? '--progress' : '--info=progress2',
@@ -73,9 +117,10 @@ export async function executeSsdBackup(configId, existingRunId = null) {
     ];
 
     // Add versioning if enabled
+    let versionTimestamp = null;
     if (config.versioning_enabled) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const versionDir = join(config.dest_path, '.versions', timestamp);
+      versionTimestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const versionDir = join(config.dest_path, '.versions', versionTimestamp);
       await mkdir(versionDir, { recursive: true });
       args.push(`--backup`, `--backup-dir=${versionDir}`);
     }
@@ -114,6 +159,43 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       });
     }
 
+    // Prune old version snapshots after successful backup
+    if (result.exitCode === 0 && config.versioning_enabled) {
+      // Delta versioning: rebase existing deltas then deltaify the new snapshot
+      if (config.delta_versioning && versionTimestamp) {
+        try {
+          // Get list of changed files from this run
+          const runFiles = db.prepare('SELECT file_path FROM backup_run_files WHERE run_id = ? AND action IN (?, ?, ?)').all(runId, 'transferred', 'created', 'updated');
+          const changedFiles = runFiles.map(f => f.file_path);
+
+          await withConfigLock(configId, async () => {
+            await rebaseDeltasWithTimestamp(configId, changedFiles, versionTimestamp);
+            await deltaifySnapshot(configId, versionTimestamp);
+          });
+        } catch (err) {
+          console.error(`[ssd-backup] Delta versioning failed for "${config.name}":`, err.message);
+        }
+      }
+
+      try {
+        await pruneVersions(configId);
+      } catch (err) {
+        console.error(`[ssd-backup] Version pruning failed for "${config.name}":`, err.message);
+      }
+
+      // Update cached version stats
+      try {
+        await computeVersionStats(configId);
+      } catch {}
+
+      // Back up the RedMan database to this destination
+      try {
+        await backupDatabase(config.dest_path);
+      } catch (err) {
+        console.error(`[ssd-backup] DB backup failed for "${config.name}":`, err.message);
+      }
+    }
+
     return { runId, status: result.exitCode === 0 ? 'completed' : 'failed' };
   } catch (err) {
     db.prepare(`
@@ -131,14 +213,22 @@ export async function executeSsdBackup(configId, existingRunId = null) {
   }
 }
 
+// Batch size for file inserts — flushes every N files in a single transaction
+const FILE_INSERT_BATCH_SIZE = 1000;
+
 // Run rsync and parse output
 function runRsync(args, runId, progress) {
   return new Promise((resolve, reject) => {
     const proc = spawnRsync(args);
+    activeProcesses.add(proc);
 
     const insertFile = db.prepare(`
       INSERT INTO backup_run_files (run_id, file_path, action, size) VALUES (?, ?, ?, ?)
     `);
+    const flushBatch = db.transaction((batch) => {
+      for (const entry of batch) insertFile.run(entry.runId, entry.path, entry.action, entry.size);
+    });
+    let fileBatch = [];
 
     let errorOutput = '';
 
@@ -161,12 +251,18 @@ function runRsync(args, runId, progress) {
             progress.bytesTransferred += size;
           }
 
-          insertFile.run(runId, filename, action, size);
+          fileBatch.push({ runId, path: filename, action, size });
+          if (fileBatch.length >= FILE_INSERT_BATCH_SIZE) {
+            flushBatch(fileBatch);
+            fileBatch = [];
+          }
           continue;
         }
 
         // Parse progress output: --info=progress2 (GNU/Linux) or --progress (openrsync/macOS)
-        if (!parseProgress2Line(line, progress)) {
+        // Only try progress2 on Linux — on macOS --progress emits per-file bytes
+        // that look like progress2 output but would overwrite the accumulated total.
+        if (IS_MAC || !parseProgress2Line(line, progress)) {
           parseProgressLine(line, progress);
         }
 
@@ -174,7 +270,11 @@ function runRsync(args, runId, progress) {
         const delMatch = line.match(/^\*deleting\s+(.+)$/);
         if (delMatch) {
           progress.filesTotal++;
-          insertFile.run(runId, delMatch[1], 'deleted', 0);
+          fileBatch.push({ runId, path: delMatch[1], action: 'deleted', size: 0 });
+          if (fileBatch.length >= FILE_INSERT_BATCH_SIZE) {
+            flushBatch(fileBatch);
+            fileBatch = [];
+          }
           continue;
         }
 
@@ -197,10 +297,22 @@ function runRsync(args, runId, progress) {
     });
 
     proc.on('close', (exitCode) => {
+      activeProcesses.delete(proc);
+      // Flush remaining buffered file inserts
+      if (fileBatch.length > 0) {
+        flushBatch(fileBatch);
+        fileBatch = [];
+      }
       resolve({ exitCode, errorOutput: errorOutput.trim() || null });
     });
 
     proc.on('error', (err) => {
+      activeProcesses.delete(proc);
+      // Flush any buffered inserts before rejecting
+      if (fileBatch.length > 0) {
+        try { flushBatch(fileBatch); } catch {}
+        fileBatch = [];
+      }
       reject(new Error(`Failed to start rsync: ${err.message}`));
     });
   });
@@ -292,6 +404,7 @@ function parseProgress2Line(line, progress) {
 export function runRsyncWithSsh(args, onProgress = null) {
   return new Promise((resolve, reject) => {
     const proc = spawnRsync(args);
+    activeProcesses.add(proc);
 
     let stdout = '';
     let stderr = '';
@@ -321,8 +434,10 @@ export function runRsyncWithSsh(args, onProgress = null) {
         }
 
         // Parse progress output: --info=progress2 (GNU/Linux) or --progress (openrsync/macOS)
-        if ((parseProgress2Line(line, progress) || parseProgressLine(line, progress)) && onProgress) {
-          onProgress(progress);
+        // Only try progress2 on Linux — on macOS --progress emits per-file bytes
+        // that look like progress2 output but would overwrite the accumulated total.
+        if ((!IS_MAC && parseProgress2Line(line, progress)) || parseProgressLine(line, progress)) {
+          if (onProgress) onProgress(progress);
           continue;
         }
 
@@ -339,11 +454,21 @@ export function runRsyncWithSsh(args, onProgress = null) {
     });
 
     proc.on('close', (exitCode) => {
+      activeProcesses.delete(proc);
       resolve({ exitCode, stdout, stderr, progress });
     });
 
     proc.on('error', (err) => {
+      activeProcesses.delete(proc);
       reject(new Error(`Failed to start rsync: ${err.message}`));
     });
   });
+}
+
+// Kill all active rsync child processes (for graceful shutdown)
+export function killActiveRsyncProcesses() {
+  for (const proc of activeProcesses) {
+    try { proc.kill('SIGTERM'); } catch {}
+  }
+  activeProcesses.clear();
 }

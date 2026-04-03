@@ -3,7 +3,8 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { executeSsdBackup, getActiveRun } from '../services/rsync.js';
-import { listSnapshots, browseSnapshot, resolveFilePath, restoreFile } from '../services/versionBrowser.js';
+import { listSnapshots, browseSnapshot, resolveFilePath, restoreFile, pruneVersions, DEFAULT_RETENTION_POLICY } from '../services/versionBrowser.js';
+import { verifyDeltaChain, cleanupTempFile } from '../services/deltaVersion.js';
 import { scheduleJob, removeJob, getJobSkipCount, isJobRunning } from '../services/scheduler.js';
 import { getShares, browsePath } from '../services/unraid.js';
 import { createReadStream } from 'fs';
@@ -54,19 +55,25 @@ router.get('/configs/:id', (req, res) => {
 
 // Create a new backup config
 router.post('/configs', (req, res) => {
-  const { name, source_path, dest_path, cron_expression, versioning_enabled, notify_on_success, notify_on_failure } = req.body;
+  const { name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, notify_on_success, notify_on_failure } = req.body;
 
   if (!name || !source_path || !dest_path) {
     return res.status(400).json({ error: 'name, source_path, and dest_path are required' });
   }
 
   const result = db.prepare(`
-    INSERT INTO ssd_backup_configs (name, source_path, dest_path, cron_expression, versioning_enabled, notify_on_success, notify_on_failure)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ssd_backup_configs (name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, notify_on_success, notify_on_failure)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     name, source_path, dest_path,
     cron_expression || '0 * * * *',
     versioning_enabled !== undefined ? (versioning_enabled ? 1 : 0) : 1,
+    retention_days !== undefined ? Math.max(0, parseInt(retention_days) || 30) : 30,
+    delta_versioning ? 1 : 0,
+    delta_threshold !== undefined ? Math.min(90, Math.max(10, parseInt(delta_threshold) || 50)) : 50,
+    delta_max_chain !== undefined ? Math.min(50, Math.max(1, parseInt(delta_max_chain) || 10)) : 10,
+    delta_keyframe_days !== undefined ? Math.min(30, Math.max(1, parseInt(delta_keyframe_days) || 7)) : 7,
+    retention_policy ? JSON.stringify(retention_policy) : JSON.stringify(DEFAULT_RETENTION_POLICY),
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : 1,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : 1,
   );
@@ -86,12 +93,14 @@ router.put('/configs/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Config not found' });
 
-  const { name, source_path, dest_path, cron_expression, versioning_enabled, enabled, notify_on_success, notify_on_failure } = req.body;
+  const { name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, enabled, notify_on_success, notify_on_failure } = req.body;
 
   db.prepare(`
     UPDATE ssd_backup_configs SET
       name = ?, source_path = ?, dest_path = ?, cron_expression = ?,
-      versioning_enabled = ?, enabled = ?,
+      versioning_enabled = ?, retention_days = ?, delta_versioning = ?,
+      delta_threshold = ?, delta_max_chain = ?, delta_keyframe_days = ?,
+      retention_policy = ?, enabled = ?,
       notify_on_success = ?, notify_on_failure = ?,
       updated_at = datetime('now')
     WHERE id = ?
@@ -101,6 +110,12 @@ router.put('/configs/:id', (req, res) => {
     dest_path ?? existing.dest_path,
     cron_expression ?? existing.cron_expression,
     versioning_enabled !== undefined ? (versioning_enabled ? 1 : 0) : existing.versioning_enabled,
+    retention_days !== undefined ? Math.max(0, parseInt(retention_days) || 30) : existing.retention_days,
+    delta_versioning !== undefined ? (delta_versioning ? 1 : 0) : existing.delta_versioning,
+    delta_threshold !== undefined ? Math.min(90, Math.max(10, parseInt(delta_threshold) || 50)) : existing.delta_threshold,
+    delta_max_chain !== undefined ? Math.min(50, Math.max(1, parseInt(delta_max_chain) || 10)) : existing.delta_max_chain,
+    delta_keyframe_days !== undefined ? Math.min(30, Math.max(1, parseInt(delta_keyframe_days) || 7)) : existing.delta_keyframe_days,
+    retention_policy ? JSON.stringify(retention_policy) : existing.retention_policy,
     enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : existing.notify_on_success,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : existing.notify_on_failure,
@@ -179,20 +194,34 @@ router.get('/runs', (req, res) => {
   });
 });
 
-// Get run detail with file list
+// Get run detail with file list (paginated for scale — defaults to first 1000)
 router.get('/runs/:id', (req, res) => {
   const run = db.prepare('SELECT * FROM backup_runs WHERE id = ? AND feature = \'ssd-backup\'').get(req.params.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
-  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path').all(run.id);
+  const filePage = Math.max(1, parseInt(req.query.filePage) || 1);
+  const fileLimit = Math.min(5000, Math.max(1, parseInt(req.query.fileLimit) || 1000));
+  const fileOffset = (filePage - 1) * fileLimit;
+  const totalFiles = db.prepare('SELECT COUNT(*) as count FROM backup_run_files WHERE run_id = ?').get(run.id).count;
+  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path LIMIT ? OFFSET ?').all(run.id, fileLimit, fileOffset);
 
   // Check if still running
   const progress = getActiveRun(run.id);
 
-  res.json({ ...run, files, liveProgress: progress || null });
+  res.json({ ...run, files, totalFiles, filePage, fileLimit, liveProgress: progress || null });
 });
 
 // ===== Version Browser =====
+
+// Manually prune old version snapshots
+router.post('/configs/:id/prune', async (req, res) => {
+  try {
+    const result = await pruneVersions(parseInt(req.params.id));
+    res.json(result);
+  } catch (err) {
+    res.status(err.message === 'Config not found' ? 404 : 500).json({ error: err.message });
+  }
+});
 
 // List available snapshots for a config
 router.get('/configs/:id/snapshots', async (req, res) => {
@@ -217,19 +246,54 @@ router.get('/configs/:id/browse', async (req, res) => {
   }
 });
 
-// Download a file from a specific snapshot
+// MIME types for inline preview
+const MIME_TYPES = {
+  '.txt': 'text/plain', '.md': 'text/plain', '.log': 'text/plain',
+  '.json': 'application/json', '.csv': 'text/csv', '.xml': 'text/xml',
+  '.html': 'text/html', '.htm': 'text/html',
+  '.js': 'text/javascript', '.mjs': 'text/javascript',
+  '.py': 'text/x-python', '.sh': 'text/x-sh',
+  '.yml': 'text/yaml', '.yaml': 'text/yaml', '.toml': 'text/plain',
+  '.env': 'text/plain', '.cfg': 'text/plain', '.ini': 'text/plain',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+  '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+};
+
+function getMimeType(fileName) {
+  const ext = '.' + fileName.split('.').pop().toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
+// Download (or inline preview) a file from a specific snapshot
 router.get('/configs/:id/download', async (req, res) => {
-  const { timestamp, path: filePath } = req.query;
+  const { timestamp, path: filePath, inline } = req.query;
   if (!timestamp || !filePath) return res.status(400).json({ error: 'timestamp and path query parameters required' });
 
   try {
-    const resolvedPath = await resolveFilePath(parseInt(req.params.id), timestamp, filePath);
-    const info = await stat(resolvedPath);
-    const fileName = basename(resolvedPath);
+    const resolved = await resolveFilePath(parseInt(req.params.id), timestamp, filePath);
+    const info = await stat(resolved.path);
+    const fileName = basename(resolved.path).replace(/\.rdelta$/, '');
 
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    if (inline === 'true') {
+      const mime = getMimeType(fileName);
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    }
     res.setHeader('Content-Length', info.size);
-    createReadStream(resolvedPath).pipe(res);
+
+    const stream = createReadStream(resolved.path);
+    stream.pipe(res);
+
+    // Clean up temp file after streaming completes
+    if (resolved.isTemp) {
+      res.on('finish', () => cleanupTempFile(resolved.path));
+      res.on('error', () => cleanupTempFile(resolved.path));
+    }
   } catch (err) {
     res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
   }
@@ -245,6 +309,16 @@ router.post('/configs/:id/restore', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
+  }
+});
+
+// Verify delta chain integrity for a config
+router.post('/configs/:id/verify-versions', async (req, res) => {
+  try {
+    const result = await verifyDeltaChain(parseInt(req.params.id));
+    res.json(result);
+  } catch (err) {
+    res.status(err.message === 'Config not found' ? 404 : 500).json({ error: err.message });
   }
 });
 

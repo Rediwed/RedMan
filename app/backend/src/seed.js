@@ -8,6 +8,8 @@ try { mkdirSync(dirname(db.name), { recursive: true }); } catch {}
 console.log('🌱 Seeding RedMan database...');
 
 // Drop existing tables (reverse dependency order)
+db.exec(`DROP TABLE IF EXISTS peer_audit_log`);
+db.exec(`DROP TABLE IF EXISTS authorized_peers`);
 db.exec(`DROP TABLE IF EXISTS backup_run_files`);
 db.exec(`DROP TABLE IF EXISTS backup_runs`);
 db.exec(`DROP TABLE IF EXISTS ssd_backup_configs`);
@@ -35,6 +37,12 @@ db.exec(`
     dest_path TEXT NOT NULL,
     cron_expression TEXT NOT NULL DEFAULT '0 * * * *',
     versioning_enabled INTEGER NOT NULL DEFAULT 1,
+    retention_days INTEGER NOT NULL DEFAULT 30,
+    delta_versioning INTEGER NOT NULL DEFAULT 0,
+    delta_threshold INTEGER NOT NULL DEFAULT 50,
+    delta_max_chain INTEGER NOT NULL DEFAULT 10,
+    delta_keyframe_days INTEGER NOT NULL DEFAULT 7,
+    retention_policy TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     notify_on_success INTEGER NOT NULL DEFAULT 1,
     notify_on_failure INTEGER NOT NULL DEFAULT 1,
@@ -151,6 +159,43 @@ db.exec(`
   )
 `);
 
+// Authorized peers — per-peer API keys for Hyper Backup
+db.exec(`
+  CREATE TABLE authorized_peers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    api_key TEXT NOT NULL UNIQUE,
+    allowed_path_prefix TEXT NOT NULL DEFAULT '/',
+    storage_limit_bytes INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_seen_at TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
+// Peer audit log — tracks all peer API activity
+db.exec(`
+  CREATE TABLE peer_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    peer_id INTEGER REFERENCES authorized_peers(id) ON DELETE SET NULL,
+    peer_name TEXT,
+    action TEXT NOT NULL,
+    details TEXT,
+    ip_address TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
+// Cache table for dashboard stats
+db.exec(`
+  CREATE TABLE cache (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
 // Indexes
 db.exec(`CREATE INDEX idx_backup_runs_feature ON backup_runs(feature)`);
 db.exec(`CREATE INDEX idx_backup_runs_config ON backup_runs(config_id)`);
@@ -159,6 +204,9 @@ db.exec(`CREATE INDEX idx_container_metrics_recorded ON container_metrics(record
 db.exec(`CREATE INDEX idx_container_metrics_container ON container_metrics(container_id)`);
 db.exec(`CREATE INDEX idx_media_drives_uuid ON media_drives(uuid)`);
 db.exec(`CREATE INDEX idx_media_drives_serial ON media_drives(serial)`);
+db.exec(`CREATE INDEX idx_authorized_peers_api_key ON authorized_peers(api_key)`);
+db.exec(`CREATE INDEX idx_peer_audit_log_peer ON peer_audit_log(peer_id)`);
+db.exec(`CREATE INDEX idx_peer_audit_log_created ON peer_audit_log(created_at)`);
 
 // Seed default settings
 const upsert = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
@@ -193,7 +241,6 @@ const seedSettings = db.transaction(() => {
 
   // Docker
   upsert.run('docker_socket', '/var/run/docker.sock');
-  upsert.run('peer_api_key', '');
   upsert.run('peer_api_port', '8091');
   upsert.run('metrics_poll_interval', '30');
   upsert.run('metrics_retention_hours', '24');

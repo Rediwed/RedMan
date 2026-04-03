@@ -27,34 +27,47 @@ export function autheliaAuth(req, res, next) {
   next();
 }
 
-// Peer API: validate Bearer token against configured peer API key
+// Peer API: validate Bearer token against per-peer API keys in authorized_peers table
 export function peerAuth(db) {
+  const logAudit = db.prepare(`
+    INSERT INTO peer_audit_log (peer_id, peer_name, action, details, ip_address)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
   return (req, res, next) => {
     const authHeader = req.headers.authorization;
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      logAudit.run(null, null, 'auth_failure', JSON.stringify({ reason: 'missing_token' }), ip);
       return res.status(401).json({ error: 'Unauthorized — Bearer token required' });
     }
 
     const token = authHeader.slice(7);
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('peer_api_key');
-    const configuredKey = row?.value;
+    const peer = db.prepare('SELECT * FROM authorized_peers WHERE api_key = ?').get(token);
 
-    if (!configuredKey || configuredKey.length === 0) {
-      return res.status(503).json({ error: 'Peer API key not configured' });
-    }
-
-    // Constant-time comparison to prevent timing attacks
-    if (token.length !== configuredKey.length) {
-      return res.status(401).json({ error: 'Invalid API key' });
-    }
-    let mismatch = 0;
-    for (let i = 0; i < token.length; i++) {
-      mismatch |= token.charCodeAt(i) ^ configuredKey.charCodeAt(i);
-    }
-    if (mismatch !== 0) {
+    if (!peer) {
+      logAudit.run(null, null, 'auth_failure', JSON.stringify({ reason: 'unknown_key' }), ip);
       return res.status(401).json({ error: 'Invalid API key' });
     }
 
+    if (!peer.enabled) {
+      logAudit.run(peer.id, peer.name, 'auth_failure', JSON.stringify({ reason: 'peer_disabled' }), ip);
+      return res.status(403).json({ error: 'Peer is disabled' });
+    }
+
+    // Update last_seen_at
+    db.prepare('UPDATE authorized_peers SET last_seen_at = datetime(\'now\') WHERE id = ?').run(peer.id);
+
+    // Attach peer info to request for downstream use
+    req.peer = {
+      id: peer.id,
+      name: peer.name,
+      allowed_path_prefix: peer.allowed_path_prefix,
+    };
+    req.peerIp = ip;
+
+    logAudit.run(peer.id, peer.name, 'auth_success', null, ip);
     next();
   };
 }

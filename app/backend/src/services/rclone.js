@@ -107,13 +107,18 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       db.prepare('UPDATE rclone_jobs SET bisync_resync_needed = 0 WHERE id = ?').run(jobId);
     }
 
-    // Store file details from log
+    // Store file details from log (batched in a single transaction for performance)
     const insertFile = db.prepare(`
       INSERT INTO backup_run_files (run_id, file_path, action, size, error) VALUES (?, ?, ?, ?, ?)
     `);
+    const insertAllFiles = db.transaction((entries) => {
+      for (const e of entries) insertFile.run(e.runId, e.path, e.action, e.size, e.error);
+    });
+    const fileEntries = [];
     for (const file of stats.files) {
-      insertFile.run(runId, file.path, file.action, file.size || 0, file.error || null);
+      fileEntries.push({ runId, path: file.path, action: file.action, size: file.size || 0, error: file.error || null });
     }
+    if (fileEntries.length > 0) insertAllFiles(fileEntries);
 
     const duration = (Date.now() - startTime) / 1000;
     const status = result.exitCode === 0 ? 'completed' : 'failed';
@@ -129,7 +134,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       status,
       stats.filesTotal, stats.filesCopied, stats.filesFailed,
       stats.bytesTransferred, duration,
-      result.exitCode !== 0 ? result.stderr : null,
+      result.exitCode !== 0 ? (result.stderr || `rclone exited with code ${result.exitCode}`) : null,
       runId,
     );
 

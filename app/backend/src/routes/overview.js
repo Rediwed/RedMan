@@ -3,6 +3,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import { getNextRun, getActiveJobCount } from '../services/scheduler.js';
+import { getAllCachedVersionStats } from '../services/deltaVersion.js';
 
 const router = Router();
 
@@ -60,6 +61,14 @@ router.get('/summary', (req, res) => {
   }
 
   summary.activeJobs = getActiveJobCount();
+
+  // Add cached version stats for SSD Backup
+  try {
+    summary.versionStats = getAllCachedVersionStats();
+  } catch {
+    summary.versionStats = null;
+  }
+
   res.json(summary);
 });
 

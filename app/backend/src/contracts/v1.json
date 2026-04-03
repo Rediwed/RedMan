@@ -1,0 +1,314 @@
+{
+  "_comment": "RedMan v1.0.0 backward compatibility contract. DO NOT MODIFY — changes here must follow the migration process in migrations.js. This file is the source of truth for the test/test_backward_compat.mjs test suite.",
+  "version": "1.0.0",
+
+  "api": {
+    "health": {
+      "GET /api/health": { "auth": false, "returns": ["status", "version", "timestamp", "uptime", "hostname", "platform", "nodeVersion", "activeJobs", "memory", "pid"] }
+    },
+    "ssd-backup": {
+      "GET /api/ssd-backup/shares": { "auth": true },
+      "GET /api/ssd-backup/browse": { "auth": true, "query": ["path"] },
+      "GET /api/ssd-backup/configs": { "auth": true },
+      "GET /api/ssd-backup/configs/:id": { "auth": true },
+      "POST /api/ssd-backup/configs": { "auth": true },
+      "PUT /api/ssd-backup/configs/:id": { "auth": true },
+      "DELETE /api/ssd-backup/configs/:id": { "auth": true },
+      "POST /api/ssd-backup/configs/:id/run": { "auth": true },
+      "GET /api/ssd-backup/runs": { "auth": true, "query": ["page", "limit", "config_id"] },
+      "GET /api/ssd-backup/runs/:id": { "auth": true },
+      "POST /api/ssd-backup/configs/:id/prune": { "auth": true },
+      "GET /api/ssd-backup/configs/:id/snapshots": { "auth": true },
+      "GET /api/ssd-backup/configs/:id/browse": { "auth": true, "query": ["timestamp", "path"] },
+      "GET /api/ssd-backup/configs/:id/download": { "auth": true, "query": ["timestamp", "path", "inline"] },
+      "POST /api/ssd-backup/configs/:id/restore": { "auth": true },
+      "POST /api/ssd-backup/configs/:id/verify-versions": { "auth": true }
+    },
+    "hyper-backup": {
+      "GET /api/hyper-backup/jobs": { "auth": true },
+      "GET /api/hyper-backup/jobs/:id": { "auth": true },
+      "POST /api/hyper-backup/jobs": { "auth": true },
+      "PUT /api/hyper-backup/jobs/:id": { "auth": true },
+      "DELETE /api/hyper-backup/jobs/:id": { "auth": true },
+      "POST /api/hyper-backup/jobs/:id/run": { "auth": true },
+      "POST /api/hyper-backup/test-connection": { "auth": true },
+      "GET /api/hyper-backup/runs": { "auth": true, "query": ["page", "limit", "job_id"] },
+      "GET /api/hyper-backup/runs/:id": { "auth": true }
+    },
+    "rclone": {
+      "GET /api/rclone/remotes": { "auth": true },
+      "GET /api/rclone/remote/:name/ls": { "auth": true, "query": ["path"] },
+      "GET /api/rclone/jobs": { "auth": true },
+      "GET /api/rclone/jobs/:id": { "auth": true },
+      "POST /api/rclone/jobs": { "auth": true },
+      "PUT /api/rclone/jobs/:id": { "auth": true },
+      "DELETE /api/rclone/jobs/:id": { "auth": true },
+      "POST /api/rclone/jobs/:id/run": { "auth": true },
+      "GET /api/rclone/runs": { "auth": true, "query": ["page", "limit", "job_id"] },
+      "GET /api/rclone/runs/:id": { "auth": true },
+      "GET /api/rclone/providers": { "auth": true },
+      "GET /api/rclone/remotes/:name/config": { "auth": true },
+      "POST /api/rclone/remotes": { "auth": true },
+      "PUT /api/rclone/remotes/:name": { "auth": true },
+      "DELETE /api/rclone/remotes/:name": { "auth": true },
+      "POST /api/rclone/remotes/:name/test": { "auth": true }
+    },
+    "docker": {
+      "GET /api/docker/status": { "auth": true },
+      "GET /api/docker/containers": { "auth": true },
+      "POST /api/docker/containers/:id/:action": { "auth": true },
+      "GET /api/docker/containers/:id/stats": { "auth": true },
+      "GET /api/docker/containers/:id/metrics": { "auth": true, "query": ["hours"] }
+    },
+    "media-import": {
+      "GET /api/media-import/drives": { "auth": true },
+      "GET /api/media-import/drives/known": { "auth": true },
+      "GET /api/media-import/drives/:id": { "auth": true },
+      "PUT /api/media-import/drives/:id": { "auth": true },
+      "POST /api/media-import/drives/:id/scan": { "auth": true },
+      "GET /api/media-import/drives/:id/scan": { "auth": true },
+      "POST /api/media-import/drives/:id/import": { "auth": true },
+      "GET /api/media-import/runs/:id/progress": { "auth": true },
+      "GET /api/media-import/runs": { "auth": true, "query": ["page", "drive_id"] },
+      "GET /api/media-import/runs/:id": { "auth": true },
+      "POST /api/media-import/drives/:id/eject": { "auth": true },
+      "POST /api/media-import/test-immich": { "auth": true },
+      "GET /api/media-import/status": { "auth": true }
+    },
+    "settings": {
+      "GET /api/settings": { "auth": true },
+      "PUT /api/settings": { "auth": true },
+      "POST /api/settings/ntfy-test": { "auth": true },
+      "POST /api/settings/browser-notify-test": { "auth": true },
+      "GET /api/settings/ssh/status": { "auth": true },
+      "POST /api/settings/ssh/generate": { "auth": true },
+      "POST /api/settings/ssh/authorize-localhost": { "auth": true },
+      "POST /api/settings/ssh/test": { "auth": true },
+      "POST /api/settings/db/backup": { "auth": true },
+      "POST /api/settings/db/backup-all": { "auth": true },
+      "GET /api/settings/db/backups": { "auth": true, "query": ["dest_path"] },
+      "GET /api/settings/db/recovery-scan": { "auth": true, "query": ["paths"] },
+      "GET /api/settings/db/recovery-info": { "auth": true, "query": ["dest_path"] },
+      "POST /api/settings/db/restore": { "auth": true },
+      "GET /api/settings/notifications/stream": { "auth": true }
+    },
+    "peers": {
+      "GET /api/peers": { "auth": true },
+      "POST /api/peers": { "auth": true },
+      "GET /api/peers/:id": { "auth": true },
+      "PUT /api/peers/:id": { "auth": true },
+      "DELETE /api/peers/:id": { "auth": true },
+      "POST /api/peers/:id/regenerate-key": { "auth": true },
+      "GET /api/peers/:id/audit-log": { "auth": true, "query": ["page", "limit"] },
+      "GET /api/peers/audit-log/all": { "auth": true, "query": ["page", "limit"] }
+    },
+    "overview": {
+      "GET /api/overview/summary": { "auth": true }
+    },
+    "filesystem": {
+      "GET /api/filesystem/browse": { "auth": true, "query": ["dir"] },
+      "GET /api/filesystem/roots": { "auth": true }
+    }
+  },
+
+  "peerApi": {
+    "GET /peer/health": { "returns": ["ok", "instance", "version", "timestamp"] },
+    "POST /peer/backup/prepare": { "body": ["direction", "remotePath", "runId"] },
+    "POST /peer/backup/complete": { "body": ["runId", "status"] },
+    "GET /peer/backup/status/:runId": {},
+    "POST /peer/shutdown": {},
+    "GET /peer/storage": {}
+  },
+
+  "database": {
+    "settings": {
+      "columns": {
+        "key": "TEXT PRIMARY KEY",
+        "value": "TEXT NOT NULL",
+        "updated_at": "TEXT"
+      }
+    },
+    "ssd_backup_configs": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "name": "TEXT NOT NULL",
+        "source_path": "TEXT NOT NULL",
+        "dest_path": "TEXT NOT NULL",
+        "cron_expression": "TEXT",
+        "versioning_enabled": "INTEGER",
+        "retention_days": "INTEGER",
+        "delta_versioning": "INTEGER",
+        "delta_threshold": "INTEGER",
+        "delta_max_chain": "INTEGER",
+        "delta_keyframe_days": "INTEGER",
+        "retention_policy": "TEXT",
+        "enabled": "INTEGER",
+        "notify_on_success": "INTEGER",
+        "notify_on_failure": "INTEGER",
+        "created_at": "TEXT",
+        "updated_at": "TEXT"
+      }
+    },
+    "hyper_backup_jobs": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "name": "TEXT NOT NULL",
+        "direction": "TEXT NOT NULL",
+        "remote_url": "TEXT NOT NULL",
+        "remote_api_key": "TEXT NOT NULL",
+        "local_path": "TEXT NOT NULL",
+        "remote_path": "TEXT NOT NULL",
+        "ssh_user": "TEXT",
+        "ssh_host": "TEXT",
+        "ssh_port": "INTEGER",
+        "cron_expression": "TEXT",
+        "enabled": "INTEGER",
+        "notify_on_success": "INTEGER",
+        "notify_on_failure": "INTEGER",
+        "created_at": "TEXT",
+        "updated_at": "TEXT"
+      }
+    },
+    "rclone_jobs": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "name": "TEXT NOT NULL",
+        "local_path": "TEXT NOT NULL",
+        "remote_name": "TEXT NOT NULL",
+        "remote_path": "TEXT NOT NULL",
+        "sync_direction": "TEXT",
+        "cron_expression": "TEXT",
+        "enabled": "INTEGER",
+        "bisync_resync_needed": "INTEGER",
+        "notify_on_success": "INTEGER",
+        "notify_on_failure": "INTEGER",
+        "created_at": "TEXT",
+        "updated_at": "TEXT"
+      }
+    },
+    "backup_runs": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "feature": "TEXT NOT NULL",
+        "config_id": "INTEGER NOT NULL",
+        "status": "TEXT",
+        "started_at": "TEXT",
+        "completed_at": "TEXT",
+        "files_total": "INTEGER",
+        "files_copied": "INTEGER",
+        "files_failed": "INTEGER",
+        "bytes_transferred": "INTEGER",
+        "duration_seconds": "REAL",
+        "error_message": "TEXT"
+      }
+    },
+    "backup_run_files": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "run_id": "INTEGER NOT NULL",
+        "file_path": "TEXT NOT NULL",
+        "action": "TEXT NOT NULL",
+        "size": "INTEGER",
+        "version_path": "TEXT",
+        "error": "TEXT"
+      }
+    },
+    "container_metrics": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "container_id": "TEXT NOT NULL",
+        "container_name": "TEXT NOT NULL",
+        "cpu_percent": "REAL",
+        "memory_usage": "INTEGER",
+        "memory_limit": "INTEGER",
+        "recorded_at": "TEXT"
+      }
+    },
+    "media_drives": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "uuid": "TEXT",
+        "serial": "TEXT",
+        "label": "TEXT",
+        "name": "TEXT",
+        "mount_path": "TEXT",
+        "size_bytes": "INTEGER",
+        "filesystem": "TEXT",
+        "detected_camera": "TEXT",
+        "auto_import": "INTEGER",
+        "delete_after_import": "INTEGER",
+        "eject_after_import": "INTEGER",
+        "first_seen_at": "TEXT",
+        "last_seen_at": "TEXT",
+        "last_import_at": "TEXT",
+        "created_at": "TEXT",
+        "updated_at": "TEXT"
+      }
+    },
+    "authorized_peers": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "name": "TEXT NOT NULL",
+        "api_key": "TEXT NOT NULL",
+        "allowed_path_prefix": "TEXT",
+        "storage_limit_bytes": "INTEGER",
+        "enabled": "INTEGER",
+        "last_seen_at": "TEXT",
+        "created_at": "TEXT",
+        "updated_at": "TEXT"
+      }
+    },
+    "peer_audit_log": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "peer_id": "INTEGER",
+        "peer_name": "TEXT",
+        "action": "TEXT NOT NULL",
+        "details": "TEXT",
+        "ip_address": "TEXT",
+        "created_at": "TEXT"
+      }
+    },
+    "cache": {
+      "columns": {
+        "key": "TEXT PRIMARY KEY",
+        "value": "TEXT NOT NULL",
+        "updated_at": "TEXT"
+      }
+    }
+  },
+
+  "services": {
+    "rsync": ["getActiveRun", "executeSsdBackup", "parseItemizeAction", "runRsyncWithSsh", "killActiveRsyncProcesses"],
+    "hyperBackup": ["getActiveHyperRun", "executeHyperBackup", "testPeerConnection", "notifyPeersOfShutdown"],
+    "rclone": ["getActiveRcloneRun", "listRemotes", "browseRemote", "executeRcloneJob", "getProviderTypes", "getRemoteConfig", "createRemote", "updateRemote", "deleteRemote", "testRemote"],
+    "docker": ["listContainers", "containerAction", "getContainerStats", "startMetricsPoller", "stopMetricsPoller", "getMetrics", "isDockerAvailable"],
+    "scheduler": ["registerExecutor", "startScheduler", "scheduleJob", "removeJob", "stopAllJobs", "getNextRun", "getActiveJobCount", "getSkipStatus", "getJobSkipCount", "isJobRunning"],
+    "driveMonitor": ["detectDrives", "startDriveMonitor", "stopDriveMonitor", "isDriveMounted", "getConnectedDrives"],
+    "driveScanner": ["startScan", "getScanProgress", "clearScan"],
+    "immichImport": ["getActiveImport", "testImmichConnection", "isImmichGoAvailable", "startImport", "ejectDrive"],
+    "versionBrowser": ["listSnapshots", "browseSnapshot", "resolveFilePath", "restoreFile", "pruneVersions"],
+    "deltaVersion": ["withConfigLock", "registerTempFile", "cleanupTempFile", "startTempCleanup", "readManifest", "deltaifySnapshot", "rebaseDeltas", "rebaseDeltasWithTimestamp", "reconstructFile", "getChainLength", "verifyDeltaChain", "promoteDeltaToFull", "computeVersionStats", "getCachedVersionStats", "getAllCachedVersionStats"],
+    "notify": ["sendNotification", "notifyJobStarted", "notifyJobCompleted", "notifyJobError", "notifyJobCancelled", "notifyJobSkipped", "notifyJobProgress", "notifyDriveAttached", "notifyDriveEjected", "notifyDriveLost", "notifyDriveScanStarted", "notifyDriveScanCompleted", "notifyImportStarted", "notifyImportCompleted", "notifyImportError", "notifyBackupResult", "sendTestNtfy", "sendTestBrowser", "addBrowserSubscriber", "removeBrowserSubscriber"],
+    "sshManager": ["hasKey", "getPublicKey", "generateKey", "authorizeLocalhost", "testSshConnection", "getSshStatus"],
+    "unraid": ["getShares", "browsePath"]
+  },
+
+  "frontendApi": {
+    "exports": [
+      "getSettings", "saveSettings",
+      "getOverviewSummary",
+      "getSsdShares", "browsePath", "getSsdConfigs", "getSsdConfig", "createSsdConfig", "updateSsdConfig", "deleteSsdConfig", "triggerSsdBackup", "getSsdRuns", "getSsdRunDetail",
+      "getSsdSnapshots", "browseSsdSnapshot", "getSsdDownloadUrl", "getSsdPreviewUrl", "restoreSsdFile", "verifySsdVersions",
+      "getHyperJobs", "getHyperJob", "createHyperJob", "updateHyperJob", "deleteHyperJob", "triggerHyperBackup", "testHyperConnection", "getHyperRuns", "getHyperRunDetail",
+      "getSshStatus", "generateSshKey", "authorizeLocalSsh", "testSshConnection",
+      "getPeers", "getPeer", "createPeer", "updatePeer", "deletePeer", "regeneratePeerKey", "getPeerAuditLog", "getAllPeerAuditLog",
+      "getRcloneRemotes", "getRcloneProviders", "getRcloneRemoteConfig", "createRcloneRemote", "updateRcloneRemote", "deleteRcloneRemote", "testRcloneRemote", "browseRemote", "getRcloneJobs", "getRcloneJob", "createRcloneJob", "updateRcloneJob", "deleteRcloneJob", "triggerRcloneSync", "getRcloneRuns", "getRcloneRunDetail",
+      "getDockerStatus", "getDockerContainers", "dockerAction", "getContainerStats", "getContainerMetrics",
+      "getMediaDrives", "getKnownDrives", "getMediaDrive", "updateMediaDrive", "scanDrive", "getScanProgress", "startDriveImport", "getImportProgress", "ejectDrive", "getMediaImportRuns", "getMediaImportRunDetail", "testImmichConnection", "getMediaImportStatus",
+      "browseDirectory", "getFilesystemRoots",
+      "testNtfy", "testBrowserNotify",
+      "backupDbTo", "backupDbToAll", "getDbBackups", "getDbRecoveryScan", "getDbRecoveryInfo", "restoreDb"
+    ]
+  }
+}

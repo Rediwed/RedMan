@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   getRcloneRemotes, getRcloneJobs, createRcloneJob, updateRcloneJob,
   deleteRcloneJob, triggerRcloneSync, getRcloneRuns, getRcloneRunDetail,
   getRcloneProviders, getRcloneRemoteConfig, createRcloneRemote,
   updateRcloneRemote, deleteRcloneRemote, testRcloneRemote,
 } from '../api/index.js';
+import useReconnect from '../hooks/useReconnect.js';
 import { Cloud, Play, Pencil, Trash2, ClipboardList, AlertTriangle, Plus, Plug, CheckCircle2, XCircle, Settings, Eye, EyeOff } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
@@ -43,6 +44,7 @@ export default function RclonePage() {
   }
 
   useEffect(() => { loadAll(); }, []);
+  useReconnect(useCallback(() => loadAll(), []));
 
   async function loadAll() {
     setLoading(true);
@@ -521,10 +523,14 @@ export default function RclonePage() {
                 <div className="run-stat"><span className="run-stat-label">Failed</span><span className={selectedRun.files_failed ? 'danger-text' : ''}>{selectedRun.files_failed || 0}</span></div>
                 <div className="run-stat"><span className="run-stat-label">Transferred</span><span>{formatBytes(selectedRun.bytes_transferred || 0)}</span></div>
               </div>
-              {selectedRun.error_message && <div className="alert alert-error" style={{ marginTop: 'var(--space-md)' }}>{selectedRun.error_message}</div>}
+              {selectedRun.status === 'failed' && (
+                <div className="alert alert-error" style={{ marginTop: 'var(--space-md)', whiteSpace: 'pre-wrap' }}>
+                  {selectedRun.error_message || 'Sync failed — no error details were recorded for this run.'}
+                </div>
+              )}
               {selectedRun.files?.length > 0 && (
                 <div className="run-files">
-                  <h3>Files ({selectedRun.files.length})</h3>
+                  <h3>Files ({selectedRun.totalFiles ?? selectedRun.files.length}{selectedRun.totalFiles > selectedRun.files.length ? `, showing ${selectedRun.files.length}` : ''})</h3>
                   <div className="table-wrapper" style={{ maxHeight: '300px', overflowY: 'auto' }}>
                     <table>
                       <thead><tr><th>Action</th><th>File</th><th>Error</th></tr></thead>

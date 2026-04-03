@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   getHyperJobs, createHyperJob, updateHyperJob, deleteHyperJob,
   triggerHyperBackup, testHyperConnection, getHyperRuns, getHyperRunDetail,
@@ -10,6 +10,7 @@ import PathPicker from '../components/PathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
 import SchedulePicker, { describeCron } from '../components/SchedulePicker.jsx';
 import useJobProgress from '../hooks/useJobProgress.js';
+import useReconnect from '../hooks/useReconnect.js';
 import './HyperBackupPage.css';
 
 export default function HyperBackupPage() {
@@ -44,6 +45,7 @@ export default function HyperBackupPage() {
   }
 
   useEffect(() => { loadAll(); }, []);
+  useReconnect(useCallback(() => loadAll(), []));
 
   async function loadAll() {
     setLoading(true);
@@ -356,6 +358,7 @@ export default function HyperBackupPage() {
                 <div className="form-group">
                   <label>Remote API Key</label>
                   <input type="password" value={form.remote_api_key} onChange={e => setForm({ ...form, remote_api_key: e.target.value })} placeholder={editId ? 'Leave empty to keep existing' : 'Peer API key'} required={!editId} />
+                  <span className="form-hint">Generated on the remote instance's Settings → Authorized Peers tab</span>
                 </div>
 
                 <div className="form-group">
@@ -488,10 +491,14 @@ export default function HyperBackupPage() {
                 <div className="run-stat"><span className="run-stat-label">Files</span><span>{selectedRun.files_copied || 0}</span></div>
                 <div className="run-stat"><span className="run-stat-label">Transferred</span><span>{formatBytes(selectedRun.bytes_transferred || 0)}</span></div>
               </div>
-              {selectedRun.error_message && <div className="alert alert-error" style={{ marginTop: 'var(--space-md)' }}>{selectedRun.error_message}</div>}
+              {selectedRun.status === 'failed' && (
+                <div className="alert alert-error" style={{ marginTop: 'var(--space-md)', whiteSpace: 'pre-wrap' }}>
+                  {selectedRun.error_message || 'Backup failed — no error details were recorded for this run.'}
+                </div>
+              )}
               {selectedRun.files?.length > 0 && (
                 <div className="run-files">
-                  <h3>Files ({selectedRun.files.length})</h3>
+                  <h3>Files ({selectedRun.totalFiles ?? selectedRun.files.length}{selectedRun.totalFiles > selectedRun.files.length ? `, showing ${selectedRun.files.length}` : ''})</h3>
                   <div className="table-wrapper" style={{ maxHeight: '300px', overflowY: 'auto' }}>
                     <table>
                       <thead><tr><th>Action</th><th>File</th><th>Size</th></tr></thead>

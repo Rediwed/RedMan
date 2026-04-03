@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { dispatchReconnect } from '../hooks/useReconnect.js';
 import './ConnectionStatus.css';
+
+const POLL_CONNECTED = 5000;
+const POLL_DISCONNECTED = 2000;
 
 export default function ConnectionStatus() {
   const [status, setStatus] = useState('connecting');
@@ -7,6 +11,7 @@ export default function ConnectionStatus() {
   const [showPopover, setShowPopover] = useState(false);
   const intervalRef = useRef(null);
   const hideTimer = useRef(null);
+  const wasDisconnected = useRef(false);
 
   async function checkHealth() {
     const start = Date.now();
@@ -14,18 +19,38 @@ export default function ConnectionStatus() {
       const res = await fetch('/api/health');
       const data = await res.json();
       const latency = Date.now() - start;
+
+      if (wasDisconnected.current) {
+        wasDisconnected.current = false;
+        dispatchReconnect();
+      }
+
       setStatus('connected');
       setInfo({ ...data, latency });
+      return true;
     } catch {
+      wasDisconnected.current = true;
       setStatus('disconnected');
       setInfo(null);
+      return false;
     }
   }
 
   useEffect(() => {
-    checkHealth();
-    intervalRef.current = setInterval(checkHealth, 15000);
-    return () => clearInterval(intervalRef.current);
+    let active = true;
+
+    async function poll() {
+      if (!active) return;
+      const ok = await checkHealth();
+      const delay = ok ? POLL_CONNECTED : POLL_DISCONNECTED;
+      intervalRef.current = setTimeout(poll, delay);
+    }
+
+    poll();
+    return () => {
+      active = false;
+      clearTimeout(intervalRef.current);
+    };
   }, []);
 
   const handleEnter = () => {

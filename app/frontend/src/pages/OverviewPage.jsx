@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getOverviewSummary, getDockerContainers, getDockerStatus, dockerAction, getContainerMetrics } from '../api/index.js';
+import useReconnect from '../hooks/useReconnect.js';
 import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Container, RotateCw, Square, Play, CheckCircle2, XCircle } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import MetricsChart from '../components/MetricsChart.jsx';
@@ -37,6 +38,7 @@ export default function OverviewPage() {
     const interval = setInterval(load, 15000);
     return () => clearInterval(interval);
   }, [load]);
+  useReconnect(load);
 
   async function handleAction(containerId, action) {
     setActionLoading(`${containerId}:${action}`);
@@ -120,6 +122,14 @@ export default function OverviewPage() {
                   {data.recentRuns.failed && <span className="run-count danger"><XCircle size={12} /> {data.recentRuns.failed}</span>}
                 </div>
               )}
+              {f.key === 'ssd-backup' && summary?.versionStats?.snapshotCount > 0 && (
+                <div className="feature-card-footer">
+                  <span className="feature-footer-label">
+                    Versions: {summary.versionStats.snapshotCount} snapshots · {formatBytes(summary.versionStats.totalDiskSize)}
+                    {summary.versionStats.spaceSaved > 0 && ` (saved ${formatBytes(summary.versionStats.spaceSaved)} with deltas)`}
+                  </span>
+                </div>
+              )}
             </a>
           );
         })}
@@ -189,4 +199,11 @@ export default function OverviewPage() {
       </div>
     </div>
   );
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }

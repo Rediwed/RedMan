@@ -7,6 +7,10 @@ import {
   addBrowserSubscriber, removeBrowserSubscriber,
 } from '../services/notify.js';
 import { getSshStatus, generateKey, authorizeLocalhost, testSshConnection } from '../services/sshManager.js';
+import {
+  backupDatabase, scanForRecoverableConfigs, recoverConfigFromFilesystem,
+  getAvailableDbBackups, restoreDbFromBackup,
+} from '../services/dbBackup.js';
 
 const router = Router();
 
@@ -95,6 +99,97 @@ router.post('/ssh/test', async (req, res) => {
   if (!host) return res.status(400).json({ error: 'host is required' });
   const result = await testSshConnection(host, user || 'root', port || 22);
   res.json(result);
+});
+
+// ===== Database Backup & Recovery =====
+
+// Trigger a manual DB backup to a specific destination
+router.post('/db/backup', async (req, res) => {
+  const { dest_path } = req.body;
+  if (!dest_path) {
+    return res.status(400).json({ error: 'dest_path is required' });
+  }
+  try {
+    const path = await backupDatabase(dest_path);
+    res.json({ success: true, path });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Backup DB to all known SSD backup destinations
+router.post('/db/backup-all', async (req, res) => {
+  try {
+    const configs = db.prepare('SELECT dest_path, name FROM ssd_backup_configs').all();
+    if (configs.length === 0) {
+      return res.status(404).json({ error: 'No SSD backup configs found' });
+    }
+    const results = [];
+    for (const config of configs) {
+      try {
+        const path = await backupDatabase(config.dest_path);
+        results.push({ dest: config.dest_path, name: config.name, path, success: true });
+      } catch (err) {
+        results.push({ dest: config.dest_path, name: config.name, error: err.message, success: false });
+      }
+    }
+    res.json({ results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List available DB backups at a destination
+router.get('/db/backups', async (req, res) => {
+  const { dest_path } = req.query;
+  if (!dest_path) {
+    return res.status(400).json({ error: 'dest_path query param is required' });
+  }
+  try {
+    const backups = await getAvailableDbBackups(dest_path);
+    res.json(backups);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Scan filesystem for recoverable configs (when DB is lost)
+router.get('/db/recovery-scan', async (req, res) => {
+  const paths = req.query.paths ? req.query.paths.split(',') : [];
+  try {
+    const results = await scanForRecoverableConfigs(paths);
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Analyze a specific destination for recovery info
+router.get('/db/recovery-info', async (req, res) => {
+  const { dest_path } = req.query;
+  if (!dest_path) {
+    return res.status(400).json({ error: 'dest_path query param is required' });
+  }
+  try {
+    const info = await recoverConfigFromFilesystem(dest_path);
+    res.json(info);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restore DB from a backup file
+router.post('/db/restore', async (req, res) => {
+  const { backup_path } = req.body;
+  if (!backup_path) {
+    return res.status(400).json({ error: 'backup_path is required' });
+  }
+  try {
+    const result = await restoreDbFromBackup(backup_path);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // SSE stream for browser notifications
