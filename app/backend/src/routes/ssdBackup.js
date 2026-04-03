@@ -271,6 +271,7 @@ function getMimeType(fileName) {
 router.get('/configs/:id/download', async (req, res) => {
   const { timestamp, path: filePath, inline } = req.query;
   if (!timestamp || !filePath) return res.status(400).json({ error: 'timestamp and path query parameters required' });
+  if (filePath.includes('..')) return res.status(400).json({ error: 'Invalid path' });
 
   try {
     const resolved = await resolveFilePath(parseInt(req.params.id), timestamp, filePath);

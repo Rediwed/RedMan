@@ -3,9 +3,13 @@
 
 const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
 
+if (AUTH_DISABLED && process.env.NODE_ENV === 'production') {
+  console.warn('[SECURITY] AUTH_DISABLED is set in production — ignoring, auth will be enforced.');
+}
+
 // Main API: extract Authelia headers injected by Traefik forward auth
 export function autheliaAuth(req, res, next) {
-  if (AUTH_DISABLED) {
+  if (AUTH_DISABLED && process.env.NODE_ENV !== 'production') {
     req.user = { name: 'dev', email: 'dev@localhost', groups: [] };
     return next();
   }

@@ -4,6 +4,10 @@ services:
   redman:
     build: .
     container_name: redman
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "8090:8090"
       - "8091:8091"
