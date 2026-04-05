@@ -48,4 +48,4 @@ if [[ "\$1" == "--seed" ]]; then
   ssh "$REMOTE" "docker exec $CONTAINER node src/seed.js"
 fi
 
-echo "✅ Live at http://192.168.1.17:$PORT"
+echo "✅ Live at http://<server-ip>:$PORT"

@@ -678,7 +678,7 @@ export default function RclonePage() {
 
                 <div className="form-group">
                   <label>Local Path</label>
-                  <PathPicker value={form.local_path} onChange={v => setForm({ ...form, local_path: v })} placeholder="/mnt/user/Documents/dewicadat/files" />
+                  <PathPicker value={form.local_path} onChange={v => setForm({ ...form, local_path: v })} placeholder="/mnt/user/Documents/myfiles" />
                 </div>
 
                 <div className="form-group">

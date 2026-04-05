@@ -52,7 +52,7 @@ const PEER_PORT = parseInt(process.env.PEER_API_PORT || '8091');
 app.use(helmet());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://rm.rediwed.one']
+    ? [process.env.CORS_ORIGIN || 'http://localhost:8090']
     : ['http://localhost:5173', 'http://localhost:5175', 'http://localhost:8090'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,

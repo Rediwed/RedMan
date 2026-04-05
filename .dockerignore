@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+.DS_Store
+.gitignore
+test/
+logo-ideas/
+deploy.sh
+pre-push.sh
+start-dev.sh
+start-dev.ps1
+README.md
+*.db
+*.db-wal
+*.db-shm
+.env
+node_modules
