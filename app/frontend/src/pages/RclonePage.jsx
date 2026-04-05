@@ -6,7 +6,7 @@ import {
   updateRcloneRemote, deleteRcloneRemote, testRcloneRemote,
 } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
-import { Cloud, Play, Pencil, Trash2, ClipboardList, AlertTriangle, Plus, Plug, CheckCircle2, XCircle, Settings, Eye, EyeOff } from 'lucide-react';
+import { Cloud, Play, Pencil, Trash2, ClipboardList, AlertTriangle, Plus, Plug, CheckCircle2, XCircle, Settings, Eye, EyeOff, Copy, ChevronRight, ChevronDown, ExternalLink, Loader2, Terminal } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
@@ -32,6 +32,11 @@ export default function RclonePage() {
   const [remoteTestResult, setRemoteTestResult] = useState(null);
   const [remoteTesting, setRemoteTesting] = useState(null);
   const [showSensitive, setShowSensitive] = useState({});
+  const [wizardStep, setWizardStep] = useState(1);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [autoTesting, setAutoTesting] = useState(false);
+  const [createTestResult, setCreateTestResult] = useState(null);
 
   const { trackRun, detectRunning, getProgressForConfig } = useJobProgress(getRcloneRunDetail, () => loadAll());
 
@@ -125,6 +130,12 @@ export default function RclonePage() {
     setEditRemote(null);
     setRemoteForm({ name: '', type: providers[0] || 'drive', params: {} });
     setRemoteTestResult(null);
+    setShowSensitive({});
+    setWizardStep(1);
+    setShowAdvanced(false);
+    setCopied(false);
+    setAutoTesting(false);
+    setCreateTestResult(null);
     setShowRemoteForm(true);
   }
 
@@ -136,6 +147,7 @@ export default function RclonePage() {
       setRemoteForm({ name: n, type, params });
       setRemoteTestResult(null);
       setShowSensitive({});
+      setShowAdvanced(false);
       setShowRemoteForm(true);
     } catch (err) {
       alert(`Failed to load config: ${err.message}`);
@@ -143,20 +155,36 @@ export default function RclonePage() {
   }
 
   async function handleRemoteSubmit(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
     try {
       if (editRemote) {
-        // Filter out masked "••••••••" values so they don't overwrite real secrets
         const cleanParams = {};
         for (const [k, v] of Object.entries(remoteForm.params)) {
           if (v !== '••••••••') cleanParams[k] = v;
         }
+        if (cleanParams.token) cleanParams.token = extractToken(cleanParams.token) || cleanParams.token;
         await updateRcloneRemote(editRemote, cleanParams);
+        setShowRemoteForm(false);
+        loadAll();
       } else {
-        await createRcloneRemote({ name: remoteForm.name, type: remoteForm.type, params: remoteForm.params });
+        const params = {};
+        for (const [k, v] of Object.entries(remoteForm.params)) {
+          if (v !== undefined && v !== null && v !== '') {
+            params[k] = k === 'token' ? (extractToken(v) || v) : v;
+          }
+        }
+        await createRcloneRemote({ name: remoteForm.name, type: remoteForm.type, params });
+        setWizardStep(3);
+        setAutoTesting(true);
+        loadAll();
+        try {
+          const result = await testRcloneRemote(remoteForm.name);
+          setCreateTestResult(result);
+        } catch {
+          setCreateTestResult({ reachable: false, error: 'Connection test failed' });
+        }
+        setAutoTesting(false);
       }
-      setShowRemoteForm(false);
-      loadAll();
     } catch (err) {
       alert(err.message);
     }
@@ -186,6 +214,77 @@ export default function RclonePage() {
 
   function updateRemoteParam(key, value) {
     setRemoteForm(f => ({ ...f, params: { ...f.params, [key]: value } }));
+  }
+
+  function getAuthorizeCommand(type, params = {}) {
+    let cmd = `rclone authorize "${type}"`;
+    if (params.client_id && params.client_secret) {
+      cmd += ` "${params.client_id}" "${params.client_secret}"`;
+    }
+    return cmd;
+  }
+
+  function extractToken(str) {
+    if (!str || !str.trim()) return '';
+    const trimmed = str.trim();
+    try { if (JSON.parse(trimmed).access_token) return trimmed; } catch {}
+    const match = trimmed.match(/--->\s*(\{[\s\S]*?\})\s*<---/);
+    if (match) {
+      try { if (JSON.parse(match[1].trim()).access_token) return match[1].trim(); } catch {}
+    }
+    return '';
+  }
+
+  function validateTokenJson(str) {
+    if (!str || !str.trim()) return null;
+    return extractToken(str) !== '';
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function renderFormField(field, editMode = false) {
+    return (
+      <div key={field.key} className="form-group">
+        <label>{field.label}{field.required && !editMode ? ' *' : ''}</label>
+        {field.sensitive ? (
+          <div className="token-input">
+            <input
+              type={showSensitive[field.key] ? 'text' : 'password'}
+              value={remoteForm.params[field.key] || ''}
+              onChange={e => updateRemoteParam(field.key, e.target.value)}
+              placeholder={field.placeholder}
+              required={field.required && !editMode}
+            />
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowSensitive(s => ({ ...s, [field.key]: !s[field.key] }))}>
+              {showSensitive[field.key] ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        ) : (
+          <input
+            value={remoteForm.params[field.key] || ''}
+            onChange={e => updateRemoteParam(field.key, e.target.value)}
+            placeholder={field.placeholder}
+            required={field.required && !editMode}
+          />
+        )}
+        {field.hint && <span className="form-hint">{field.hint}</span>}
+      </div>
+    );
   }
 
   if (loading) return <div className="empty-state"><p>Loading...</p></div>;
@@ -247,91 +346,277 @@ export default function RclonePage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editRemote ? `Edit Remote: ${editRemote}` : 'New Remote'}</h2>
+              {!editRemote && wizardStep < 3 && (
+                <div className="wizard-steps">
+                  <span className={`wizard-dot ${wizardStep >= 1 ? 'active' : ''}`} />
+                  <span className={`wizard-dot ${wizardStep >= 2 ? 'active' : ''}`} />
+                </div>
+              )}
               <button className="btn btn-ghost btn-sm" onClick={() => setShowRemoteForm(false)}>✕</button>
             </div>
-            <form onSubmit={handleRemoteSubmit}>
-              <div className="modal-body">
-                {!editRemote && (
-                  <>
-                    <div className="form-group">
-                      <label>Remote Name</label>
-                      <input
-                        value={remoteForm.name}
-                        onChange={e => setRemoteForm({ ...remoteForm, name: e.target.value })}
-                        required
-                        placeholder="e.g. proton-drive"
-                        pattern="[a-zA-Z0-9_-]+"
-                        title="Letters, numbers, hyphens, and underscores only"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Provider Type</label>
-                      <select value={remoteForm.type} onChange={e => setRemoteForm({ ...remoteForm, type: e.target.value, params: {} })} required>
-                        {providers.map(p => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
-                      </select>
-                    </div>
-                  </>
-                )}
 
-                <div className="remote-params">
-                  <label className="params-label">Configuration</label>
-                  {PROVIDER_FIELDS[remoteForm.type]?.map(field => (
-                    <div key={field.key} className="form-group">
-                      <label>{field.label}</label>
-                      {field.sensitive ? (
-                        <div className="token-input">
-                          <input
-                            type={showSensitive[field.key] ? 'text' : 'password'}
-                            value={remoteForm.params[field.key] || ''}
-                            onChange={e => updateRemoteParam(field.key, e.target.value)}
-                            placeholder={field.placeholder}
-                            required={field.required && !editRemote}
-                          />
-                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowSensitive(s => ({ ...s, [field.key]: !s[field.key] }))}>
-                            {showSensitive[field.key] ? <EyeOff size={14} /> : <Eye size={14} />}
+            {editRemote ? (
+              /* ---- EDIT MODE ---- */
+              <form onSubmit={handleRemoteSubmit}>
+                <div className="modal-body">
+                  <div className="remote-params">
+                    {PROVIDER_FIELDS[remoteForm.type] ? (
+                      <>
+                        {(PROVIDER_FIELDS[remoteForm.type]).filter(f => !f.advanced && !f.oauth).map(f => renderFormField(f, true))}
+
+                        {OAUTH_PROVIDERS.has(remoteForm.type) && (
+                          <div className="form-group">
+                            <label>Account Connection</label>
+                            {remoteForm.params.token ? (
+                              <span className="form-hint oauth-status connected"><CheckCircle2 size={12} /> Connected (token saved)</span>
+                            ) : (
+                              <span className="form-hint oauth-status"><AlertTriangle size={12} /> No token configured</span>
+                            )}
+                          </div>
+                        )}
+
+                        {((PROVIDER_FIELDS[remoteForm.type]).filter(f => f.advanced).length > 0 || OAUTH_PROVIDERS.has(remoteForm.type)) && (
+                          <>
+                            <button type="button" className="advanced-toggle" onClick={() => setShowAdvanced(a => !a)}>
+                              {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              {OAUTH_PROVIDERS.has(remoteForm.type) ? 'Advanced options & reconnect' : 'Advanced options'}
+                            </button>
+                            {showAdvanced && (
+                              <div className="advanced-fields">
+                                {OAUTH_PROVIDERS.has(remoteForm.type) && (
+                                  <div className="oauth-section">
+                                    <label>Re-authorize</label>
+                                    <div className="authorize-command">
+                                      <code>{getAuthorizeCommand(remoteForm.type, remoteForm.params)}</code>
+                                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => copyToClipboard(getAuthorizeCommand(remoteForm.type, remoteForm.params))}>
+                                        {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                                      </button>
+                                    </div>
+                                    <span className="form-hint">Run this on a machine with a web browser, then paste the token below.</span>
+                                    <textarea
+                                      className="token-paste"
+                                      rows={3}
+                                      value={remoteForm.params.token === '••••••••' ? '' : (remoteForm.params.token || '')}
+                                      onChange={e => updateRemoteParam('token', e.target.value)}
+                                      placeholder="Paste the new token JSON here..."
+                                    />
+                                    {(() => {
+                                      const v = validateTokenJson(remoteForm.params.token === '••••••••' ? '' : remoteForm.params.token);
+                                      if (v === null) return null;
+                                      return v
+                                        ? <span className="form-hint oauth-status connected"><CheckCircle2 size={12} /> Valid token</span>
+                                        : <span className="form-hint danger-text">Doesn't look like valid token JSON</span>;
+                                    })()}
+                                  </div>
+                                )}
+                                {(PROVIDER_FIELDS[remoteForm.type]).filter(f => f.advanced).map(f => renderFormField(f, true))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <div className="form-group">
+                        <span className="form-hint">
+                          Enter key=value pairs for this provider. Check the <a href="https://rclone.org/overview/" target="_blank" rel="noreferrer">rclone docs</a> for available options.
+                        </span>
+                        <div className="kv-editor">
+                          {Object.entries(remoteForm.params).filter(([k]) => k !== 'type').map(([k, v]) => (
+                            <div key={k} className="kv-row">
+                              <input value={k} disabled className="kv-key" />
+                              <input value={v} onChange={e => updateRemoteParam(k, e.target.value)} className="kv-value" />
+                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
+                                const next = { ...remoteForm.params };
+                                delete next[k];
+                                setRemoteForm(f => ({ ...f, params: next }));
+                              }}><Trash2 size={12} /></button>
+                            </div>
+                          ))}
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={() => {
+                            const key = prompt('Parameter name:');
+                            if (key) updateRemoteParam(key, '');
+                          }}><Plus size={12} /> Add Parameter</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowRemoteForm(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary">Save Changes</button>
+                </div>
+              </form>
+
+            ) : wizardStep === 1 ? (
+              /* ---- CREATE STEP 1: Name + Provider ---- */
+              <div>
+                <div className="modal-body">
+                  <div className="form-group">
+                    <label>Remote Name</label>
+                    <input
+                      value={remoteForm.name}
+                      onChange={e => setRemoteForm({ ...remoteForm, name: e.target.value })}
+                      placeholder="e.g. proton-drive"
+                      pattern="[a-zA-Z0-9_-]+"
+                      title="Letters, numbers, hyphens, and underscores only"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Provider Type</label>
+                    <select value={remoteForm.type} onChange={e => setRemoteForm({ ...remoteForm, type: e.target.value, params: {} })}>
+                      {providers.map(p => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowRemoteForm(false)}>Cancel</button>
+                  <button type="button" className="btn btn-primary"
+                    disabled={!remoteForm.name || !remoteForm.type || !/^[a-zA-Z0-9_-]+$/.test(remoteForm.name)}
+                    onClick={() => { setShowAdvanced(false); setWizardStep(2); }}>
+                    Next →
+                  </button>
+                </div>
+              </div>
+
+            ) : wizardStep === 2 ? (
+              /* ---- CREATE STEP 2: Configure ---- */
+              <form onSubmit={handleRemoteSubmit}>
+                <div className="modal-body">
+                  {OAUTH_PROVIDERS.has(remoteForm.type) ? (
+                    /* OAuth provider wizard */
+                    <div className="oauth-wizard">
+                      <div className="oauth-section">
+                        <h3><Terminal size={16} /> Authorize {PROVIDER_LABELS[remoteForm.type]}</h3>
+                        <p className="oauth-instructions">
+                          Run this command on a machine with a web browser, then paste the resulting token below:
+                        </p>
+                        <div className="authorize-command">
+                          <code>{getAuthorizeCommand(remoteForm.type, remoteForm.params)}</code>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => copyToClipboard(getAuthorizeCommand(remoteForm.type, remoteForm.params))}>
+                            {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
                           </button>
                         </div>
-                      ) : (
-                        <input
-                          value={remoteForm.params[field.key] || ''}
-                          onChange={e => updateRemoteParam(field.key, e.target.value)}
-                          placeholder={field.placeholder}
-                          required={field.required && !editRemote}
+                        <label>Paste token here</label>
+                        <textarea
+                          className="token-paste"
+                          rows={4}
+                          value={remoteForm.params.token || ''}
+                          onChange={e => updateRemoteParam('token', e.target.value)}
+                          placeholder={'Paste the full token output from rclone authorize here...\n\nBoth the raw JSON and the "Paste the following --->" format are supported.'}
                         />
-                      )}
-                      {field.hint && <span className="form-hint">{field.hint}</span>}
-                    </div>
-                  )) || (
-                    <div className="form-group">
-                      <span className="form-hint">
-                        Enter key=value pairs for this provider. Check the <a href="https://rclone.org/overview/" target="_blank" rel="noreferrer">rclone docs</a> for available options.
-                      </span>
-                      <div className="kv-editor">
-                        {Object.entries(remoteForm.params).filter(([k]) => k !== 'type').map(([k, v]) => (
-                          <div key={k} className="kv-row">
-                            <input value={k} disabled className="kv-key" />
-                            <input value={v} onChange={e => updateRemoteParam(k, e.target.value)} className="kv-value" />
-                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
-                              const next = { ...remoteForm.params };
-                              delete next[k];
-                              setRemoteForm(f => ({ ...f, params: next }));
-                            }}><Trash2 size={12} /></button>
-                          </div>
-                        ))}
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => {
-                          const key = prompt('Parameter name:');
-                          if (key) updateRemoteParam(key, '');
-                        }}><Plus size={12} /> Add Parameter</button>
+                        {(() => {
+                          const v = validateTokenJson(remoteForm.params.token);
+                          if (v === null) return null;
+                          return v
+                            ? <span className="form-hint oauth-status connected"><CheckCircle2 size={12} /> Valid token detected</span>
+                            : <span className="form-hint danger-text">Doesn't look like valid token JSON</span>;
+                        })()}
                       </div>
+
+                      <button type="button" className="advanced-toggle" onClick={() => setShowAdvanced(a => !a)}>
+                        {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        Advanced options (custom OAuth credentials)
+                      </button>
+                      {showAdvanced && (
+                        <div className="advanced-fields">
+                          {(PROVIDER_FIELDS[remoteForm.type] || []).filter(f => f.advanced).map(f => renderFormField(f))}
+                          <span className="form-hint">
+                            Custom credentials update the authorize command above. <a href={`https://rclone.org/${remoteForm.type}/`} target="_blank" rel="noreferrer">rclone docs <ExternalLink size={11} /></a>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Credential provider wizard */
+                    <div className="credential-wizard">
+                      <div className="remote-params">
+                        {(PROVIDER_FIELDS[remoteForm.type] || []).filter(f => !f.advanced).map(f => renderFormField(f))}
+                      </div>
+
+                      {(PROVIDER_FIELDS[remoteForm.type] || []).filter(f => f.advanced).length > 0 && (
+                        <>
+                          <button type="button" className="advanced-toggle" onClick={() => setShowAdvanced(a => !a)}>
+                            {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            Advanced options
+                          </button>
+                          {showAdvanced && (
+                            <div className="advanced-fields">
+                              {(PROVIDER_FIELDS[remoteForm.type] || []).filter(f => f.advanced).map(f => renderFormField(f))}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {!PROVIDER_FIELDS[remoteForm.type] && (
+                        <div className="form-group">
+                          <span className="form-hint">
+                            Enter key=value pairs for this provider. Check the <a href="https://rclone.org/overview/" target="_blank" rel="noreferrer">rclone docs</a> for available options.
+                          </span>
+                          <div className="kv-editor">
+                            {Object.entries(remoteForm.params).filter(([k]) => k !== 'type').map(([k, v]) => (
+                              <div key={k} className="kv-row">
+                                <input value={k} disabled className="kv-key" />
+                                <input value={v} onChange={e => updateRemoteParam(k, e.target.value)} className="kv-value" />
+                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
+                                  const next = { ...remoteForm.params };
+                                  delete next[k];
+                                  setRemoteForm(f => ({ ...f, params: next }));
+                                }}><Trash2 size={12} /></button>
+                              </div>
+                            ))}
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => {
+                              const key = prompt('Parameter name:');
+                              if (key) updateRemoteParam(key, '');
+                            }}><Plus size={12} /> Add Parameter</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setWizardStep(1)}>← Back</button>
+                  <button type="submit" className="btn btn-primary">Create Remote</button>
+                </div>
+              </form>
+
+            ) : (
+              /* ---- CREATE STEP 3: Success ---- */
+              <div>
+                <div className="modal-body">
+                  <div className="wizard-success">
+                    <CheckCircle2 size={32} className="success-icon" />
+                    <h3>Remote &ldquo;{remoteForm.name}&rdquo; created</h3>
+                    {autoTesting ? (
+                      <div className="test-progress">
+                        <Loader2 size={16} className="spin" /> Testing connection...
+                      </div>
+                    ) : createTestResult ? (
+                      createTestResult.reachable ? (
+                        <div className="test-result success">
+                          <CheckCircle2 size={14} /> Connected
+                          {createTestResult.total ? ` — ${formatBytes(createTestResult.used || 0)} / ${formatBytes(createTestResult.total)}` : ''}
+                        </div>
+                      ) : (
+                        <div className="test-result failure">
+                          <XCircle size={14} /> Connection test failed
+                          <span className="form-hint">You can reconfigure and test again from the Remotes section.</span>
+                        </div>
+                      )
+                    ) : null}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowRemoteForm(false)}>Done</button>
+                  <button type="button" className="btn btn-primary" onClick={() => {
+                    setShowRemoteForm(false);
+                    setForm({ ...defaultForm(), remote_name: remoteForm.name });
+                    setShowForm(true);
+                  }}>Create Sync Job →</button>
+                </div>
               </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowRemoteForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">{editRemote ? 'Save Changes' : 'Create Remote'}</button>
-              </div>
-            </form>
+            )}
           </div>
         </div>
       )}
@@ -578,74 +863,76 @@ const PROVIDER_LABELS = {
   local: 'Local Path',
 };
 
+const OAUTH_PROVIDERS = new Set(['drive', 'onedrive', 'dropbox', 'box', 'pcloud']);
+
 const PROVIDER_FIELDS = {
   drive: [
-    { key: 'client_id', label: 'Client ID', placeholder: 'Google OAuth Client ID', sensitive: false },
-    { key: 'client_secret', label: 'Client Secret', placeholder: 'Google OAuth Client Secret', sensitive: true },
-    { key: 'token', label: 'OAuth Token (JSON)', placeholder: '{"access_token":"...","token_type":"Bearer",...}', sensitive: true, hint: 'Paste the full JSON token from rclone authorize' },
-    { key: 'root_folder_id', label: 'Root Folder ID', placeholder: 'Leave empty for root', sensitive: false },
+    { key: 'token', label: 'OAuth Token', sensitive: true, oauth: true },
+    { key: 'client_id', label: 'Client ID', placeholder: 'Leave empty to use rclone defaults', sensitive: false, advanced: true },
+    { key: 'client_secret', label: 'Client Secret', placeholder: 'Leave empty to use rclone defaults', sensitive: true, advanced: true },
+    { key: 'root_folder_id', label: 'Root Folder ID', placeholder: 'Leave empty for root', sensitive: false, advanced: true },
   ],
   onedrive: [
-    { key: 'client_id', label: 'Client ID', placeholder: 'Azure App Client ID', sensitive: false },
-    { key: 'client_secret', label: 'Client Secret', placeholder: 'Azure App Client Secret', sensitive: true },
-    { key: 'token', label: 'OAuth Token (JSON)', placeholder: '{"access_token":"..."}', sensitive: true },
-    { key: 'drive_type', label: 'Drive Type', placeholder: 'personal / business / documentLibrary', sensitive: false },
+    { key: 'token', label: 'OAuth Token', sensitive: true, oauth: true },
+    { key: 'client_id', label: 'Client ID', placeholder: 'Leave empty to use rclone defaults', sensitive: false, advanced: true },
+    { key: 'client_secret', label: 'Client Secret', placeholder: 'Leave empty to use rclone defaults', sensitive: true, advanced: true },
+    { key: 'drive_type', label: 'Drive Type', placeholder: 'personal / business / documentLibrary', sensitive: false, advanced: true },
   ],
   protondrive: [
     { key: 'username', label: 'Username', placeholder: 'your@proton.me', sensitive: false, required: true },
     { key: 'password', label: 'Password', placeholder: 'Proton account password', sensitive: true, required: true },
-    { key: '2fa', label: '2FA Code', placeholder: 'Leave empty if not set', sensitive: false },
+    { key: '2fa', label: '2FA Code', placeholder: 'Leave empty if not set', sensitive: false, advanced: true },
   ],
   s3: [
     { key: 'provider', label: 'Provider', placeholder: 'AWS / Minio / Wasabi / Other', sensitive: false },
     { key: 'access_key_id', label: 'Access Key', placeholder: 'AWS access key', sensitive: false, required: true },
     { key: 'secret_access_key', label: 'Secret Key', placeholder: 'AWS secret key', sensitive: true, required: true },
-    { key: 'region', label: 'Region', placeholder: 'us-east-1', sensitive: false },
-    { key: 'endpoint', label: 'Endpoint', placeholder: 'Leave empty for AWS', sensitive: false },
+    { key: 'region', label: 'Region', placeholder: 'us-east-1', sensitive: false, advanced: true },
+    { key: 'endpoint', label: 'Endpoint', placeholder: 'Leave empty for AWS', sensitive: false, advanced: true },
   ],
   b2: [
     { key: 'account', label: 'Account ID', placeholder: 'B2 Application Key ID', sensitive: false, required: true },
     { key: 'key', label: 'Application Key', placeholder: 'B2 Application Key', sensitive: true, required: true },
   ],
   dropbox: [
-    { key: 'client_id', label: 'Client ID', placeholder: 'Dropbox App Key', sensitive: false },
-    { key: 'client_secret', label: 'Client Secret', placeholder: 'Dropbox App Secret', sensitive: true },
-    { key: 'token', label: 'OAuth Token (JSON)', placeholder: '{"access_token":"..."}', sensitive: true },
+    { key: 'token', label: 'OAuth Token', sensitive: true, oauth: true },
+    { key: 'client_id', label: 'Client ID', placeholder: 'Leave empty to use rclone defaults', sensitive: false, advanced: true },
+    { key: 'client_secret', label: 'Client Secret', placeholder: 'Leave empty to use rclone defaults', sensitive: true, advanced: true },
   ],
   sftp: [
     { key: 'host', label: 'Host', placeholder: 'hostname or IP', sensitive: false, required: true },
     { key: 'user', label: 'Username', placeholder: 'root', sensitive: false, required: true },
-    { key: 'port', label: 'Port', placeholder: '22', sensitive: false },
-    { key: 'pass', label: 'Password', placeholder: 'Leave empty for key-based auth', sensitive: true },
-    { key: 'key_file', label: 'Key File Path', placeholder: '/root/.ssh/id_rsa', sensitive: false },
+    { key: 'port', label: 'Port', placeholder: '22', sensitive: false, advanced: true },
+    { key: 'pass', label: 'Password', placeholder: 'Leave empty for key-based auth', sensitive: true, advanced: true },
+    { key: 'key_file', label: 'Key File Path', placeholder: '/root/.ssh/id_rsa', sensitive: false, advanced: true },
   ],
   webdav: [
     { key: 'url', label: 'URL', placeholder: 'https://cloud.example.com/remote.php/webdav', sensitive: false, required: true },
-    { key: 'vendor', label: 'Vendor', placeholder: 'nextcloud / owncloud / sharepoint / other', sensitive: false },
     { key: 'user', label: 'Username', placeholder: 'admin', sensitive: false },
     { key: 'pass', label: 'Password', placeholder: 'App password', sensitive: true },
+    { key: 'vendor', label: 'Vendor', placeholder: 'nextcloud / owncloud / sharepoint / other', sensitive: false, advanced: true },
   ],
   ftp: [
     { key: 'host', label: 'Host', placeholder: 'ftp.example.com', sensitive: false, required: true },
     { key: 'user', label: 'Username', placeholder: 'anonymous', sensitive: false },
     { key: 'pass', label: 'Password', placeholder: 'FTP password', sensitive: true },
-    { key: 'port', label: 'Port', placeholder: '21', sensitive: false },
+    { key: 'port', label: 'Port', placeholder: '21', sensitive: false, advanced: true },
   ],
   mega: [
     { key: 'user', label: 'Username', placeholder: 'your@email.com', sensitive: false, required: true },
     { key: 'pass', label: 'Password', placeholder: 'MEGA password', sensitive: true, required: true },
   ],
   box: [
-    { key: 'client_id', label: 'Client ID', placeholder: 'Box App Client ID', sensitive: false },
-    { key: 'client_secret', label: 'Client Secret', placeholder: 'Box App Client Secret', sensitive: true },
-    { key: 'token', label: 'OAuth Token (JSON)', placeholder: '{"access_token":"..."}', sensitive: true },
+    { key: 'token', label: 'OAuth Token', sensitive: true, oauth: true },
+    { key: 'client_id', label: 'Client ID', placeholder: 'Leave empty to use rclone defaults', sensitive: false, advanced: true },
+    { key: 'client_secret', label: 'Client Secret', placeholder: 'Leave empty to use rclone defaults', sensitive: true, advanced: true },
   ],
   pcloud: [
-    { key: 'client_id', label: 'Client ID', placeholder: 'pCloud App Client ID', sensitive: false },
-    { key: 'client_secret', label: 'Client Secret', placeholder: 'pCloud App Client Secret', sensitive: true },
-    { key: 'token', label: 'OAuth Token (JSON)', placeholder: '{"access_token":"..."}', sensitive: true },
+    { key: 'token', label: 'OAuth Token', sensitive: true, oauth: true },
+    { key: 'client_id', label: 'Client ID', placeholder: 'Leave empty to use rclone defaults', sensitive: false, advanced: true },
+    { key: 'client_secret', label: 'Client Secret', placeholder: 'Leave empty to use rclone defaults', sensitive: true, advanced: true },
   ],
   local: [
-    { key: 'nounc', label: 'Disable UNC paths', placeholder: 'true', sensitive: false, hint: 'Usually not needed on Linux' },
+    { key: 'nounc', label: 'Disable UNC paths', placeholder: 'true', sensitive: false, advanced: true, hint: 'Usually not needed on Linux' },
   ],
 };

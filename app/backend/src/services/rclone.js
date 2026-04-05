@@ -176,7 +176,10 @@ function runRclone(args, onStderrLine = null) {
   return new Promise((resolve, reject) => {
     let proc;
     try {
-      proc = spawn('rclone', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc = spawn('rclone', args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, RCLONE_NON_INTERACTIVE: 'true' },
+      });
     } catch (err) {
       return reject(new Error(`rclone is not installed or not accessible: ${err.message}`));
     }
