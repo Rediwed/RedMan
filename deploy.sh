@@ -28,6 +28,8 @@ echo "🔄 Replacing container..."
 ssh "$REMOTE" "docker rm -f $CONTAINER 2>/dev/null; \
   docker run -d \
     --name $CONTAINER \
+    --security-opt no-new-privileges:true \
+    --cap-drop ALL \
     -p $PORT:8090 \
     -p $PEER_PORT:8091 \
     -v $DATA_DIR:/app/backend/data \

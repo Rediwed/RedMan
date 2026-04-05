@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
@@ -48,7 +49,14 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '8090');
 const PEER_PORT = parseInt(process.env.PEER_API_PORT || '8091');
 
-app.use(cors());
+app.use(helmet());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? ['https://rm.rediwed.one']
+    : ['http://localhost:5173', 'http://localhost:5175', 'http://localhost:8090'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true,
+}));
 app.use(express.json());
 
 // Health check — before auth so it's always accessible

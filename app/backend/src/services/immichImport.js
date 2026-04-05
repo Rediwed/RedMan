@@ -1,7 +1,7 @@
 // Immich import service — spawns immich-go to upload photos from drives
 // Parses output for progress tracking, handles delete-after and eject-after
 
-import { spawn, execSync } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { readdir, unlink, rmdir, stat } from 'fs/promises';
 import { join, extname } from 'path';
 import db from '../db.js';
@@ -58,7 +58,7 @@ export async function testImmichConnection() {
  */
 export function isImmichGoAvailable() {
   try {
-    execSync('immich-go --version 2>/dev/null', { encoding: 'utf-8', timeout: 5000 });
+    execFileSync('immich-go', ['--version'], { encoding: 'utf-8', timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -181,7 +181,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress) {
     if (drive.eject_after_import) {
       console.log(`[immich-import] Ejecting drive ${drive.mount_path}`);
       try {
-        execSync(`umount "${drive.mount_path}" 2>/dev/null`, { timeout: 30000 });
+        execFileSync('umount', [drive.mount_path], { timeout: 30000 });
         await sendNotification(`⏏️ Drive ejected: ${drive.name || drive.label}`, {
           title: 'Media Import — Drive ejected', tags: 'eject'
         });
@@ -285,7 +285,7 @@ async function deleteMediaFiles(dirPath) {
  */
 export function ejectDrive(mountPath) {
   try {
-    execSync(`umount "${mountPath}" 2>&1`, { encoding: 'utf-8', timeout: 30000 });
+    execFileSync('umount', [mountPath], { encoding: 'utf-8', timeout: 30000 });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };

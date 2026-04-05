@@ -1,7 +1,7 @@
 // Rsync executor service
 // Spawns rsync as a child process, parses output, stores reports
 
-import { spawn, execSync } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { mkdir, access, constants } from 'fs/promises';
 import { join } from 'path';
 import os from 'os';
@@ -80,8 +80,9 @@ export async function executeSsdBackup(configId, existingRunId = null) {
 
     // Check available disk space on destination
     try {
-      const dfOutput = execSync(`df -k "${config.dest_path}" 2>/dev/null | tail -1`, { encoding: 'utf-8' });
-      const parts = dfOutput.trim().split(/\s+/);
+      const dfOutput = execFileSync('df', ['-k', config.dest_path], { encoding: 'utf-8' });
+      const lines = dfOutput.trim().split('\n');
+      const parts = lines[lines.length - 1].trim().split(/\s+/);
       // df -k output: filesystem 1K-blocks used available capacity mountpoint
       const availableKB = parseInt(parts[3]);
       if (!isNaN(availableKB)) {

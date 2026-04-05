@@ -99,15 +99,25 @@ const versionSizes = {};        // { v1: bytes, v2: bytes, ... }
 //  Helpers
 // ═══════════════════════════════════════════════════════════════════
 
-async function api(base, method, path, body = null) {
+async function api(base, method, path, body = null, retries = 2) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${base}${path}`, opts);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(`${method} ${path} → ${res.status}: ${err.error || JSON.stringify(err)}`);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(`${base}${path}`, opts);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(`${method} ${path} → ${res.status}: ${err.error || JSON.stringify(err)}`);
+      }
+      return res.json();
+    } catch (e) {
+      if (attempt < retries && (e.cause?.code === 'ECONNRESET' || e.cause?.code === 'EPIPE')) {
+        await sleep(500);
+        continue;
+      }
+      throw e;
+    }
   }
-  return res.json();
 }
 
 async function apiRaw(base, method, path) {
@@ -1664,6 +1674,7 @@ async function main() {
   } catch (err) {
     console.error(`\n💥 Fatal error: ${err.message}`);
     console.error(err.stack);
+    if (err.cause) console.error('Cause:', err.cause);
     failed++;
     errors.push(`Fatal: ${err.message}`);
   } finally {
