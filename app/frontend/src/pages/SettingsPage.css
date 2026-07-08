@@ -82,6 +82,10 @@
   gap: var(--space-sm);
 }
 
+.notify-channel-actions .btn {
+  border: 1px solid var(--color-border);
+}
+
 .test-ok {
   display: flex;
   align-items: center;
@@ -276,4 +280,259 @@
   color: var(--color-warning);
   font-size: 0.85rem;
   font-weight: 500;
+}
+
+/* Discovery results dropdown */
+.discovery-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.discovery-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-bg);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.discovery-item:hover {
+  background: var(--color-bg-hover, rgba(99, 102, 241, 0.1));
+}
+
+.discovery-item + .discovery-item {
+  border-top: 1px solid var(--color-border);
+}
+
+.discovery-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.discovery-detail {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Peer connection status badges */
+.peer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--radius-full, 9999px);
+}
+
+.peer-status-online {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.peer-status-unreachable {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
+.peer-status-unknown,
+.peer-status-disabled {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
+}
+
+.peer-status-secure {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.peer-status-insecure {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+/* Auto-detected subnet display */
+.subnet-detected {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.subnet-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.subnet-ok {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+}
+
+.subnet-none {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+}
+
+.subnet-source {
+  font-size: 0.7rem;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+/* Pairing request cards */
+.pairing-banner {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg));
+}
+
+.pairing-request-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-sm);
+}
+
+.pairing-request-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pairing-request-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.pairing-request-detail {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.pairing-request-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* ── Date/time preview ── */
+.datetime-preview {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin-top: var(--space-sm);
+}
+
+/* ── Hidden drives ── */
+.hidden-drives-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.hidden-drive-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.hidden-drive-item code {
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.hidden-drive-add {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.hidden-drive-add input {
+  flex: 1;
+}
+
+/* ── Drive picker grid ── */
+.drive-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-xs);
+}
+
+.drive-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+  color: var(--color-text);
+}
+
+.drive-picker-item:hover {
+  background: var(--color-bg-hover, rgba(99, 102, 241, 0.08));
+  border-color: var(--color-primary);
+}
+
+.drive-picker-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.drive-picker-path {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Peer path picker (inline in modal) ── */
+.peer-path-picker {
+  margin-top: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  max-height: 280px;
+  overflow-y: auto;
 }

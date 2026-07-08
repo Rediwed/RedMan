@@ -24,6 +24,33 @@ RedMan is a homelab backup and management tool for Unraid. Express + SQLite back
 
 Graceful shutdown on SIGTERM/SIGINT: stops schedulers, notifies peers, kills rsync processes, marks active jobs as failed. Ignores SIGHUP for persistence through shell exits.
 
+## ⚠️ Mandatory Workflow Rules
+
+These rules apply to **every** code change. Do not skip them.
+
+### 1. Keep Documentation in Sync
+
+After any code change, update the relevant docs **in the same change** — never defer to a follow-up:
+
+| What changed | Update these files |
+|---|---|
+| API endpoint added/changed | `README.md` (route table), `contracts/v1.json` (additive only) |
+| DB table/column added | `README.md` (schema), `contracts/v1.json`, `seed.js`, `migrations.js` |
+| Environment variable added | `README.md` (env table) |
+| Service function added/exported | `contracts/v1.json` |
+| Frontend API function added | `contracts/v1.json` |
+| Feature behavior changed | `README.md` (feature description) |
+| CLI flag or deploy script changed | `README.md` (build & run section) |
+| Test setup changed | `test/README.md` |
+
+### 2. Send Notification After Long-Running Tasks
+
+After any task that takes more than a couple of minutes (deployments, migrations, multi-step changes, bulk operations), **always** send a push notification when done. Don't ask — just send it:
+
+```bash
+/Users/dewicadat/dev/homelab/scripts/notify.sh "RedMan: <what completed>"
+```
+
 ## Code Conventions
 
 - ES module imports (`import`/`export`), no CommonJS (`require`)
@@ -52,7 +79,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 `GET /shares` · `GET /browse?path` · `GET|POST /configs` · `GET|PUT|DELETE /configs/:id` · `POST /configs/:id/run` · `GET /runs?page&limit&config_id` · `GET /runs/:id` · `POST /configs/:id/prune` · `GET /configs/:id/snapshots` · `GET /configs/:id/browse?timestamp&path` · `GET /configs/:id/download?timestamp&path&inline` · `POST /configs/:id/restore` · `POST /configs/:id/verify-versions`
 
 **`/api/hyper-backup`** (hyperBackup.js):
-`GET|POST /jobs` · `GET|PUT|DELETE /jobs/:id` · `POST /jobs/:id/run` · `POST /test-connection` · `GET /runs?page&limit&job_id` · `GET /runs/:id`
+`GET|POST /jobs` · `GET|PUT|DELETE /jobs/:id` · `POST /jobs/:id/run` · `POST /test-connection` · `GET /remote-browse?remote_url&dir` · `GET /remote-roots?remote_url` · `GET /remote-shares?remote_url` · `GET /runs?page&limit&job_id` · `GET /runs/:id`
 
 **`/api/rclone`** (rclone.js):
 `GET /remotes` · `GET /remote/:name/ls?path` · `GET|POST /jobs` · `GET|PUT|DELETE /jobs/:id` · `POST /jobs/:id/run` · `GET /runs?page&limit&job_id` · `GET /runs/:id` · `GET /providers` · `GET /remotes/:name/config` · `POST /remotes` · `PUT|DELETE /remotes/:name` · `POST /remotes/:name/test`
@@ -70,13 +97,16 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 `GET|PUT /` · `POST /ntfy-test` · `POST /browser-notify-test` · `GET /ssh/status` · `POST /ssh/generate` · `POST /ssh/authorize-localhost` · `POST /ssh/test` · `POST /db/backup` · `POST /db/backup-all` · `GET /db/backups?dest_path` · `GET /db/recovery-scan?paths` · `GET /db/recovery-info?dest_path` · `POST /db/restore` · `GET /notifications/stream` (SSE)
 
 **`/api/peers`** (peers.js):
-`GET|POST /` · `GET|PUT|DELETE /:id` · `POST /:id/regenerate-key` · `GET /:id/audit-log?page&limit` · `GET /audit-log/all?page&limit`
+`GET|POST /` · `GET /connectivity` (probes outgoing/destination peers via `remote_url`) · `GET|PUT|DELETE /:id` · `POST /:id/regenerate-key` · `GET /:id/audit-log?page&limit` · `GET /audit-log/all?page&limit`
 
 **`/api/filesystem`** (filesystem.js):
 `GET /browse?dir` · `GET /roots`
 
+**`/api/discovery`** (discovery.js):
+`GET /subnets?refresh` · `GET /peers?refresh` · `GET /immich?refresh` · `POST /clear-cache`
+
 **Peer API** (`:8091`, peerApi.js — Bearer key auth, all logged to `peer_audit_log`):
-`GET /peer/health` · `POST /peer/backup/prepare` · `POST /peer/backup/complete` · `GET /peer/backup/status/:runId` · `POST /peer/shutdown` · `GET /peer/storage`
+`GET /peer/discover` (unauthenticated — returns service identity for network scanning) · `POST /peer/pair/request` (unauthenticated — incoming pairing request) · `POST /peer/pair/callback` (unauthenticated — pairing acceptance callback) · `GET /peer/health` · `POST /peer/backup/prepare` · `POST /peer/backup/complete` · `GET /peer/backup/status/:runId` · `POST /peer/shutdown` · `GET /peer/storage` · `GET /peer/browse?dir` · `GET /peer/roots` · `GET /peer/shares`
 
 ### Backend Route Conventions
 
@@ -105,6 +135,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 - `useJobProgress()` hook polls run detail every 1s for active jobs
 - `useBrowserNotifications()` connects to SSE stream, shows browser `Notification` popups
 - `ConnectionStatus` component polls `/api/health` every 5s, dispatches `redman:reconnected` event on recovery
+- `Navbar` fetches `instance_name` from settings on mount; renders "RedMan — InstanceName" in the title and `document.title`; also fetches `/api/peers/connectivity` to show destination peer status dots in the badge and detailed peer info in the popover
 - Feature colors in tokens.css: SSD=purple, Hyper=orange, Rclone=cyan, Docker=blue, Media=pink
 - Icons: lucide-react throughout — import from `lucide-react`
 
@@ -114,7 +145,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 - **New schema changes** go in `migrations.js` as numbered, idempotent migrations tracked in `schema_migrations` table
 - Use `better-sqlite3` synchronous API (not async)
 - WAL mode enabled, foreign keys on, busy timeout 5s
-- Tables: `settings`, `ssd_backup_configs`, `hyper_backup_jobs`, `rclone_jobs`, `backup_runs`, `backup_run_files`, `authorized_peers`, `peer_audit_log`, `container_metrics`, `media_drives`, `cache`, `schema_migrations`
+- Tables: `settings`, `ssd_backup_configs`, `hyper_backup_jobs`, `rclone_jobs`, `backup_runs`, `backup_run_files`, `authorized_peers`, `peer_audit_log`, `container_metrics`, `media_drives`, `cache`, `schema_migrations`, `pairing_requests`
 - `backup_runs` is shared across all features (keyed by `feature` + `config_id`)
 - `seed.js` drops and recreates all tables — used for dev/test resets only
 - When adding a column/table: update `seed.js` + `migrations.js` + `contracts/v1.json` (all three must stay in sync)
@@ -123,6 +154,14 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 
 - Main API protected by Authelia forward auth headers (`remote-user`, `remote-name`, etc.) — see `middleware/auth.js`
 - Peer API uses per-peer Bearer API keys validated against `authorized_peers` table; logs all access to `peer_audit_log`
+- **Noise XX handshake** for peer pairing (`services/handshake.js`):
+  - Ephemeral X25519 ECDH for forward secrecy — new keypair per pairing attempt
+  - Ed25519 static identity signatures for mutual authentication
+  - API keys derived via HKDF from ECDH shared secret — never transmitted over the wire
+  - Callback payload encrypted with NaCl secretbox (XSalsa20-Poly1305)
+  - Old-style (v1) plaintext pairing rejected with `426 Upgrade Required`
+  - Static identity keys stored in `data/identity.json` (Ed25519 keypair)
+  - Ephemeral secrets zeroed from DB after handshake completion
 - Path traversal prevention via `middleware/validation.js` (`normalizePath`, `isWithinPrefix`)
 - `AUTH_DISABLED=true` for development only — never in production (sets mock user `dev@localhost`)
 - Do not expose internal paths or database details in API error responses
@@ -133,7 +172,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 - Seed DB: `cd app && npm run seed`
 - Build frontend: `cd app && npm run build` (Vite outputs to `frontend/dist/`)
 - Docker: `docker compose up -d` (3-stage build: frontend → backend deps → alpine runtime with rsync/rdiff/immich-go)
-- Deploy to Unraid: `./deploy.sh [--seed]`
+- Deploy to Unraid: `./deploy.sh [--citadelle|--kasbah|--both] [--seed] [--force] [--check]` — defaults to both, runs syntax + compat checks before deploy, parallel deploy for multiple targets
 - Pre-push validation: `./pre-push.sh` (compat + medium integration + build) or `./pre-push.sh --quick` (small scale)
 - Test environment: `./test/setup_local_test.sh` — two instances (A: 8090/8091/5175, B: 8094/8095)
 
@@ -143,10 +182,8 @@ See the table in `README.md`. Key ones: `PORT`, `PEER_API_PORT`, `DB_PATH`, `AUT
 
 ## Documentation
 
-After any code change, update the relevant project documentation in the same change:
+See **⚠️ Mandatory Workflow Rules** above — documentation must be updated in the same change as code. The key files are:
 
 - `README.md` — features, architecture, API endpoints, environment variables, deployment
 - `test/README.md` — test environment, workflows, test data, pre-configured jobs
 - `contracts/v1.json` — when adding new endpoints, DB columns, service exports, or frontend API functions (additive only)
-
-When adding or modifying features, routes, services, environment variables, database tables/columns, API endpoints, or CLI flags, ensure the corresponding docs stay in sync.

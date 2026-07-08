@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   getSsdConfigs, createSsdConfig, updateSsdConfig, deleteSsdConfig,
-  triggerSsdBackup, getSsdRuns, getSsdRunDetail,
+  triggerSsdBackup, cancelSsdBackup, getSsdRuns, getSsdRunDetail,
   getSsdSnapshots, browseSsdSnapshot, getSsdDownloadUrl, getSsdPreviewUrl, restoreSsdFile,
 } from '../api/index.js';
 import {
@@ -12,11 +12,15 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
 import SchedulePicker, { describeCron } from '../components/SchedulePicker.jsx';
+import InfoTip from '../components/InfoTip.jsx';
 import useJobProgress from '../hooks/useJobProgress.js';
 import useReconnect from '../hooks/useReconnect.js';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatDateTime } from '../utils/dateFormat.js';
 import './SsdBackupPage.css';
 
 export default function SsdBackupPage() {
+  const { settings } = useSettings();
   const [configs, setConfigs] = useState([]);
   const [runs, setRuns] = useState({ runs: [], page: 1, totalPages: 0 });
   const [selectedRun, setSelectedRun] = useState(null);
@@ -25,6 +29,7 @@ export default function SsdBackupPage() {
   const [form, setForm] = useState(defaultForm());
   const [filterConfig, setFilterConfig] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Version browser state
   const [browserConfig, setBrowserConfig] = useState(null);
@@ -36,7 +41,7 @@ export default function SsdBackupPage() {
   const [browserLoading, setBrowserLoading] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState(null);
 
-  const { trackRun, detectRunning, getProgressForConfig } = useJobProgress(getSsdRunDetail, () => loadAll());
+  const { trackRun, detectRunning, getProgressForConfig, getRunIdForConfig } = useJobProgress(getSsdRunDetail, () => loadAll());
 
   function defaultForm() {
     return {
@@ -46,7 +51,7 @@ export default function SsdBackupPage() {
       delta_versioning: false, delta_threshold: 50,
       delta_max_chain: 10, delta_keyframe_days: 7,
       retention_policy: { hourly: 24, daily: 7, weekly: 30, monthly: 90, quarterly: 365 },
-      notify_on_success: true, notify_on_failure: true,
+      notify_mode: 'global', notify_on_start: true, notify_on_success: true, notify_on_failure: true,
     };
   }
 
@@ -78,6 +83,8 @@ export default function SsdBackupPage() {
       versioning_enabled: form.versioning_enabled ? 1 : 0,
       enabled: form.enabled ? 1 : 0,
       delta_versioning: form.delta_versioning ? 1 : 0,
+      notify_mode: form.notify_mode,
+      notify_on_start: form.notify_on_start ? 1 : 0,
       notify_on_success: form.notify_on_success ? 1 : 0,
       notify_on_failure: form.notify_on_failure ? 1 : 0,
     };
@@ -110,11 +117,14 @@ export default function SsdBackupPage() {
       delta_max_chain: config.delta_max_chain || 10,
       delta_keyframe_days: config.delta_keyframe_days || 7,
       retention_policy: retentionPolicy,
+      notify_mode: config.notify_mode || 'global',
+      notify_on_start: config.notify_on_start !== undefined ? !!config.notify_on_start : true,
       notify_on_success: !!config.notify_on_success,
       notify_on_failure: !!config.notify_on_failure,
     });
     setEditId(config.id);
     setShowForm(true);
+    setNameManual(true);
   }
 
   async function handleDelete(id) {
@@ -128,9 +138,22 @@ export default function SsdBackupPage() {
     if (result.runId) trackRun(result.runId, id);
   }
 
-  async function viewRun(id) {
-    const detail = await getSsdRunDetail(id);
+  const [fileFilter, setFileFilter] = useState('');
+  const [filePage, setFilePage] = useState(1);
+
+  const [nameManual, setNameManual] = useState(false);
+
+  function suggestName(src, dst) {
+    const seg = p => p?.replace(/\/+$/, '').split('/').pop() || '';
+    const s = seg(src), d = seg(dst);
+    return s && d ? `${s} → ${d}` : s || d || '';
+  }
+
+  async function viewRun(id, action = '', page = 1) {
+    const detail = await getSsdRunDetail(id, { action: action || undefined, filePage: page });
     setSelectedRun(detail);
+    setFileFilter(action);
+    setFilePage(page);
   }
 
   async function openBrowser(config) {
@@ -223,7 +246,7 @@ export default function SsdBackupPage() {
   function formatSnapshotDate(timestamp) {
     // YYYY-MM-DDTHH-MM-SS → readable date
     const d = timestamp.replace(/T(\d{2})-(\d{2})-(\d{2})$/, 'T$1:$2:$3');
-    return new Date(d).toLocaleString();
+    return formatDateTime(d, settings);
   }
 
   if (loading) return <div className="empty-state"><p>Loading...</p></div>;
@@ -232,7 +255,7 @@ export default function SsdBackupPage() {
     <div className="ssd-page">
       <div className="page-header">
         <h1><HardDrive size={24} /> SSD Backup</h1>
-        <button className="btn btn-primary" onClick={() => { setShowForm(true); setEditId(null); setForm(defaultForm()); }}>
+        <button className="btn btn-primary" onClick={() => { setShowForm(true); setEditId(null); setForm(defaultForm()); setNameManual(false); setShowAdvanced(false); }}>
           + New Config
         </button>
       </div>
@@ -245,7 +268,7 @@ export default function SsdBackupPage() {
               <div className="config-card-header">
                 <div>
                   <span className="config-name">{c.name}</span>
-                  <StatusBadge status={c.enabled ? 'running' : 'exited'} label={c.enabled ? 'Active' : 'Disabled'} />
+                  <StatusBadge status={getProgressForConfig(c.id) ? 'active' : c.enabled ? 'enabled' : 'disabled'} />
                 </div>
                 <div className="config-actions">
                   <button className="btn btn-primary btn-sm" onClick={() => handleTrigger(c.id)} disabled={!!getProgressForConfig(c.id)}><Play size={14} /> Run Now</button>
@@ -274,7 +297,7 @@ export default function SsdBackupPage() {
                   <span>{c.versioning_enabled ? <><Check size={14} className="inline-icon success" /> Yes</> : <><X size={14} className="inline-icon danger" /> No</>}</span>
                 </div>
               </div>
-              <JobProgress progress={getProgressForConfig(c.id)} feature="ssd-backup" />
+              <JobProgress progress={getProgressForConfig(c.id)} feature="ssd-backup" onCancel={() => { const rid = getRunIdForConfig(c.id); if (rid) cancelSsdBackup(rid).then(() => loadAll()); }} />
               {c.consecutive_skips > 0 && (
                 <div className="skip-warning">
                   <AlertTriangle size={14} />
@@ -303,17 +326,25 @@ export default function SsdBackupPage() {
               <div className="modal-body">
                 <div className="form-group">
                   <label>Name</label>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="e.g. Documents SSD → HDD" />
+                  <input value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); setNameManual(true); }} required placeholder="e.g. Documents → ssd-backup" />
                 </div>
 
                 <div className="form-group">
                   <label>Source Path</label>
-                  <PathPicker value={form.source_path} onChange={v => setForm({ ...form, source_path: v })} placeholder="/mnt/cache/Documents" />
+                  <PathPicker value={form.source_path} onChange={v => {
+                    const update = { ...form, source_path: v };
+                    if (!editId && !nameManual) update.name = suggestName(v, form.dest_path);
+                    setForm(update);
+                  }} placeholder="/mnt/cache/Documents" />
                 </div>
 
                 <div className="form-group">
                   <label>Destination Path</label>
-                  <PathPicker value={form.dest_path} onChange={v => setForm({ ...form, dest_path: v })} placeholder="/mnt/user/Backups/Documents" />
+                  <PathPicker value={form.dest_path} onChange={v => {
+                    const update = { ...form, dest_path: v };
+                    if (!editId && !nameManual) update.name = suggestName(form.source_path, v);
+                    setForm(update);
+                  }} placeholder="/mnt/user/Backups/Documents" />
                 </div>
 
                 <div className="form-group">
@@ -328,107 +359,122 @@ export default function SsdBackupPage() {
                       <span>Versioning</span>
                     </div>
                   </div>
-                  <div className="form-group">
-                    <div className="toggle-group">
-                      <div className={`toggle ${form.enabled ? 'active' : ''}`} onClick={() => setForm({ ...form, enabled: !form.enabled })} />
-                      <span>Enabled</span>
+                  {form.versioning_enabled && (
+                    <div className="form-group">
+                      <div className="toggle-group">
+                        <div className={`toggle ${form.delta_versioning ? 'active' : ''}`} onClick={() => setForm({ ...form, delta_versioning: !form.delta_versioning })} />
+                        <span>Delta Versioning<InfoTip text="Store only binary differences between versions (saves disk space)" /></span>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                {/* Delta versioning settings — only visible when versioning is on */}
-                {form.versioning_enabled && (
+                {/* Delta advanced settings — only visible when delta versioning is on */}
+                {form.versioning_enabled && form.delta_versioning && (
                   <>
-                    <div className="form-row">
-                      <div className="form-group">
-                        <div className="toggle-group">
-                          <div className={`toggle ${form.delta_versioning ? 'active' : ''}`} onClick={() => setForm({ ...form, delta_versioning: !form.delta_versioning })} />
-                          <span>Delta Versioning</span>
+                    <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 'var(--space-sm)' }}
+                      onClick={() => setShowAdvanced(v => !v)}>
+                      <ChevronRight size={14} style={{ transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+                      Advanced settings
+                    </button>
+                    {showAdvanced && (
+                      <>
+                        <div className="form-subsection">
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>Min Savings Threshold ({form.delta_threshold}%)</label>
+                              <input type="range" min="10" max="90" value={form.delta_threshold}
+                                onChange={e => setForm({ ...form, delta_threshold: parseInt(e.target.value) })} />
+                              <small className="form-hint">Only store delta if it saves at least this much</small>
+                            </div>
+                          </div>
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>Max Chain Length</label>
+                              <input type="number" min="1" max="50" value={form.delta_max_chain}
+                                onChange={e => setForm({ ...form, delta_max_chain: parseInt(e.target.value) || 10 })} />
+                            </div>
+                            <div className="form-group">
+                              <label>Keyframe Interval (days)</label>
+                              <input type="number" min="1" max="30" value={form.delta_keyframe_days}
+                                onChange={e => setForm({ ...form, delta_keyframe_days: parseInt(e.target.value) || 7 })} />
+                            </div>
+                          </div>
                         </div>
-                        <small className="form-hint">Store only binary differences between versions (saves disk space)</small>
-                      </div>
-                    </div>
 
-                    {form.delta_versioning && (
-                      <div className="form-subsection">
-                        <div className="form-row">
-                          <div className="form-group">
-                            <label>Min Savings Threshold ({form.delta_threshold}%)</label>
-                            <input type="range" min="10" max="90" value={form.delta_threshold}
-                              onChange={e => setForm({ ...form, delta_threshold: parseInt(e.target.value) })} />
-                            <small className="form-hint">Only store delta if it saves at least this much</small>
+                        <div className="form-subsection">
+                          <label className="subsection-label">Retention Policy</label>
+                          <small className="form-hint">How long to keep version snapshots at each granularity (0 = disabled)</small>
+                          <div className="retention-grid">
+                            <div className="form-group">
+                              <label>Hourly (hours)</label>
+                              <input type="number" min="0" max="168" value={form.retention_policy.hourly}
+                                onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, hourly: parseInt(e.target.value) || 0 } })} />
+                            </div>
+                            <div className="form-group">
+                              <label>Daily (days)</label>
+                              <input type="number" min="0" max="365" value={form.retention_policy.daily}
+                                onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, daily: parseInt(e.target.value) || 0 } })} />
+                            </div>
+                            <div className="form-group">
+                              <label>Weekly (days)</label>
+                              <input type="number" min="0" max="365" value={form.retention_policy.weekly}
+                                onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, weekly: parseInt(e.target.value) || 0 } })} />
+                            </div>
+                            <div className="form-group">
+                              <label>Monthly (days)</label>
+                              <input type="number" min="0" max="730" value={form.retention_policy.monthly}
+                                onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, monthly: parseInt(e.target.value) || 0 } })} />
+                            </div>
+                            <div className="form-group">
+                              <label>Quarterly (days)</label>
+                              <input type="number" min="0" max="1825" value={form.retention_policy.quarterly}
+                                onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, quarterly: parseInt(e.target.value) || 0 } })} />
+                            </div>
                           </div>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setForm({ ...form, retention_policy: { hourly: 24, daily: 7, weekly: 30, monthly: 90, quarterly: 365 } })}>
+                            Reset to defaults
+                          </button>
                         </div>
-                        <div className="form-row">
-                          <div className="form-group">
-                            <label>Max Chain Length</label>
-                            <input type="number" min="1" max="50" value={form.delta_max_chain}
-                              onChange={e => setForm({ ...form, delta_max_chain: parseInt(e.target.value) || 10 })} />
-                          </div>
-                          <div className="form-group">
-                            <label>Keyframe Interval (days)</label>
-                            <input type="number" min="1" max="30" value={form.delta_keyframe_days}
-                              onChange={e => setForm({ ...form, delta_keyframe_days: parseInt(e.target.value) || 7 })} />
-                          </div>
-                        </div>
-                      </div>
+                      </>
                     )}
-
-                    <div className="form-subsection">
-                      <label className="subsection-label">Retention Policy</label>
-                      <small className="form-hint">How long to keep version snapshots at each granularity (0 = disabled)</small>
-                      <div className="retention-grid">
-                        <div className="form-group">
-                          <label>Hourly (hours)</label>
-                          <input type="number" min="0" max="168" value={form.retention_policy.hourly}
-                            onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, hourly: parseInt(e.target.value) || 0 } })} />
-                        </div>
-                        <div className="form-group">
-                          <label>Daily (days)</label>
-                          <input type="number" min="0" max="365" value={form.retention_policy.daily}
-                            onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, daily: parseInt(e.target.value) || 0 } })} />
-                        </div>
-                        <div className="form-group">
-                          <label>Weekly (days)</label>
-                          <input type="number" min="0" max="365" value={form.retention_policy.weekly}
-                            onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, weekly: parseInt(e.target.value) || 0 } })} />
-                        </div>
-                        <div className="form-group">
-                          <label>Monthly (days)</label>
-                          <input type="number" min="0" max="730" value={form.retention_policy.monthly}
-                            onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, monthly: parseInt(e.target.value) || 0 } })} />
-                        </div>
-                        <div className="form-group">
-                          <label>Quarterly (days)</label>
-                          <input type="number" min="0" max="1825" value={form.retention_policy.quarterly}
-                            onChange={e => setForm({ ...form, retention_policy: { ...form.retention_policy, quarterly: parseInt(e.target.value) || 0 } })} />
-                        </div>
-                      </div>
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setForm({ ...form, retention_policy: { hourly: 24, daily: 7, weekly: 30, monthly: 90, quarterly: 365 } })}>
-                        Reset to defaults
-                      </button>
-                    </div>
                   </>
                 )}
 
-                <div className="form-row">
-                  <div className="form-group">
-                    <div className="toggle-group">
-                      <div className={`toggle ${form.notify_on_success ? 'active' : ''}`} onClick={() => setForm({ ...form, notify_on_success: !form.notify_on_success })} />
-                      <span>Notify on success</span>
-                    </div>
+                <div className="form-group">
+                  <label>Notifications</label>
+                  <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                    {['global', 'custom', 'silent'].map(mode => (
+                      <button key={mode} type="button" className={`btn btn-sm ${form.notify_mode === mode ? 'btn-primary' : 'btn-ghost'}`}
+                        onClick={() => setForm({ ...form, notify_mode: mode })}>
+                        {mode === 'global' ? 'Use global' : mode === 'custom' ? 'Custom' : 'Silent'}
+                      </button>
+                    ))}
                   </div>
-                  <div className="form-group">
-                    <div className="toggle-group">
-                      <div className={`toggle ${form.notify_on_failure ? 'active' : ''}`} onClick={() => setForm({ ...form, notify_on_failure: !form.notify_on_failure })} />
-                      <span>Notify on failure</span>
-                    </div>
-                  </div>
+                  {form.notify_mode === 'global' && <span className="form-hint">Follows notification settings from Settings → Notifications</span>}
+                  {form.notify_mode === 'silent' && <span className="form-hint">No notifications for this job</span>}
                 </div>
+
+                {form.notify_mode === 'custom' && (
+                  <div style={{ display: 'flex', gap: 'var(--space-md)', marginTop: 'var(--space-xs)' }}>
+                    {['notify_on_start', 'notify_on_success', 'notify_on_failure'].map(key => (
+                      <div key={key} className="toggle-group">
+                        <div className={`toggle ${form[key] ? 'active' : ''}`} onClick={() => setForm({ ...form, [key]: !form[key] })} />
+                        <span>{key === 'notify_on_start' ? 'On start' : key === 'notify_on_success' ? 'On success' : 'On failure'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">{editId ? 'Save Changes' : 'Create Config'}</button>
+                <div className="toggle-group">
+                  <div className={`toggle ${form.enabled ? 'active' : ''}`} onClick={() => setForm({ ...form, enabled: !form.enabled })} />
+                  <span>Enabled</span>
+                </div>
+                <div className="modal-footer-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary">{editId ? 'Save Changes' : 'Create Config'}</button>
+                </div>
               </div>
             </form>
           </div>
@@ -466,7 +512,7 @@ export default function SsdBackupPage() {
                     <tr key={r.id}>
                       <td><StatusBadge status={r.status} /></td>
                       <td>{configs.find(c => c.id === r.config_id)?.name || `#${r.config_id}`}</td>
-                      <td className="mono-cell">{r.started_at ? new Date(r.started_at).toLocaleString() : '—'}</td>
+                      <td className="mono-cell">{r.started_at ? formatDateTime(r.started_at, settings) : '—'}</td>
                       <td>{r.duration_seconds ? `${Math.round(r.duration_seconds)}s` : '—'}</td>
                       <td>{r.files_copied || 0}{r.files_failed ? ` (${r.files_failed} failed)` : ''}</td>
                       <td>{formatBytes(r.bytes_transferred || 0)}</td>
@@ -515,9 +561,29 @@ export default function SsdBackupPage() {
                 </div>
               )}
 
+              {selectedRun.status === 'partial' && selectedRun.error_message && (
+                <div className="alert alert-warning" style={{ marginTop: 'var(--space-md)', whiteSpace: 'pre-wrap' }}>
+                  {selectedRun.error_message}
+                </div>
+              )}
+
               {selectedRun.files && selectedRun.files.length > 0 && (
                 <div className="run-files">
-                  <h3>File Details ({selectedRun.totalFiles ?? selectedRun.files.length} files{selectedRun.totalFiles > selectedRun.files.length ? `, showing ${selectedRun.files.length}` : ''})</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
+                    <h3 style={{ margin: 0 }}>File Details ({selectedRun.totalFiles} files{fileFilter ? ` — ${fileFilter}` : ''})</h3>
+                    {selectedRun.actionCounts && (
+                      <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap' }}>
+                        <button className={`btn btn-sm ${!fileFilter ? 'btn-primary' : 'btn-ghost'}`} onClick={() => viewRun(selectedRun.id, '', 1)}>
+                          All
+                        </button>
+                        {selectedRun.actionCounts.map(({ action, count }) => (
+                          <button key={action} className={`btn btn-sm ${fileFilter === action ? 'btn-primary' : 'btn-ghost'}`} onClick={() => viewRun(selectedRun.id, action, 1)}>
+                            {action} ({count})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="table-wrapper" style={{ maxHeight: '300px', overflowY: 'auto' }}>
                     <table>
                       <thead>
@@ -540,6 +606,13 @@ export default function SsdBackupPage() {
                       </tbody>
                     </table>
                   </div>
+                  {selectedRun.filePages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)', alignItems: 'center' }}>
+                      <button className="btn btn-sm btn-ghost" disabled={filePage <= 1} onClick={() => viewRun(selectedRun.id, fileFilter, filePage - 1)}>← Prev</button>
+                      <span className="muted">Page {filePage} of {selectedRun.filePages}</span>
+                      <button className="btn btn-sm btn-ghost" disabled={filePage >= selectedRun.filePages} onClick={() => viewRun(selectedRun.id, fileFilter, filePage + 1)}>Next →</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

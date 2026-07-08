@@ -1,12 +1,53 @@
 // SSH key management service for Hyper Backup
 // Handles key generation, public key retrieval, connection testing, and localhost authorization
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, chmodSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, chmodSync, symlinkSync, lstatSync, unlinkSync, readdirSync, copyFileSync, rmSync } from 'fs';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 
-const SSH_DIR = join(homedir(), '.ssh');
+// Persist SSH keys in the data volume so they survive container rebuilds
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_SSH_DIR = join(__dirname, '..', '..', 'data', '.ssh');
+const HOME_SSH_DIR = join(homedir(), '.ssh');
+
+// On startup, ensure ~/.ssh points to the persistent data/.ssh directory
+function ensurePersistentSshDir() {
+  mkdirSync(DATA_SSH_DIR, { recursive: true, mode: 0o700 });
+
+  // If ~/.ssh exists as a real directory (not a symlink), migrate any keys to data/.ssh
+  if (existsSync(HOME_SSH_DIR)) {
+    try {
+      const stat = lstatSync(HOME_SSH_DIR);
+      if (!stat.isSymbolicLink()) {
+        const files = readdirSync(HOME_SSH_DIR);
+        for (const f of files) {
+          const src = join(HOME_SSH_DIR, f);
+          const dest = join(DATA_SSH_DIR, f);
+          if (!existsSync(dest)) copyFileSync(src, dest);
+        }
+        rmSync(HOME_SSH_DIR, { recursive: true });
+      } else {
+        unlinkSync(HOME_SSH_DIR);
+      }
+    } catch {
+      try { unlinkSync(HOME_SSH_DIR); } catch {}
+    }
+  }
+
+  // Create symlink: ~/.ssh → data/.ssh
+  try {
+    symlinkSync(DATA_SSH_DIR, HOME_SSH_DIR);
+  } catch {
+    // Symlink already exists or can't be created — not fatal
+  }
+}
+
+// Run once on module load
+ensurePersistentSshDir();
+
+const SSH_DIR = HOME_SSH_DIR;
 const KEY_PATH = join(SSH_DIR, 'id_ed25519');
 const PUB_KEY_PATH = KEY_PATH + '.pub';
 const AUTHORIZED_KEYS = join(SSH_DIR, 'authorized_keys');
@@ -57,20 +98,50 @@ export function generateKey() {
 export function authorizeLocalhost() {
   const pubKey = getPublicKey();
   if (!pubKey) throw new Error('No public key found. Generate a key first.');
+  return authorizeKey(pubKey);
+}
+
+// Host SSH authorized_keys — mounted from the host for peer key authorization
+const HOST_AUTHORIZED_KEYS = '/host-ssh/authorized_keys';
+
+// Add any public key string to authorized_keys (container + host)
+export function authorizeKey(pubKey) {
+  if (!pubKey || !pubKey.trim()) throw new Error('Empty public key');
 
   mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 });
 
-  // Check if already authorized
+  // Check if already authorized in container
+  let containerAlready = false;
   if (existsSync(AUTHORIZED_KEYS)) {
     const existing = readFileSync(AUTHORIZED_KEYS, 'utf-8');
-    if (existing.includes(pubKey)) {
-      return { alreadyAuthorized: true };
+    if (existing.includes(pubKey.trim())) {
+      containerAlready = true;
     }
   }
 
-  appendFileSync(AUTHORIZED_KEYS, '\n' + pubKey + '\n');
-  chmodSync(AUTHORIZED_KEYS, 0o600);
-  return { alreadyAuthorized: false };
+  if (!containerAlready) {
+    appendFileSync(AUTHORIZED_KEYS, '\n' + pubKey.trim() + '\n');
+    chmodSync(AUTHORIZED_KEYS, 0o600);
+  }
+
+  // Also authorize on the host so rsync-over-SSH works
+  let hostAlready = false;
+  if (existsSync(HOST_AUTHORIZED_KEYS)) {
+    try {
+      const hostExisting = readFileSync(HOST_AUTHORIZED_KEYS, 'utf-8');
+      if (hostExisting.includes(pubKey.trim())) {
+        hostAlready = true;
+      }
+      if (!hostAlready) {
+        appendFileSync(HOST_AUTHORIZED_KEYS, '\n' + pubKey.trim() + '\n');
+        console.log('[sshManager] Added peer SSH key to host authorized_keys');
+      }
+    } catch (err) {
+      console.warn('[sshManager] Could not write to host authorized_keys:', err.message);
+    }
+  }
+
+  return { alreadyAuthorized: containerAlready && hostAlready };
 }
 
 // Test SSH connection to a host (non-interactive, times out after 10s)

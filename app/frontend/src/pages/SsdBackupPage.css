@@ -57,7 +57,7 @@
 }
 
 .config-detail code,
-.config-detail span:not(.detail-label) {
+.config-detail > span:not(.detail-label) {
   font-family: var(--font-mono);
   font-size: 0.82rem;
   color: var(--color-text);
@@ -102,6 +102,9 @@
 .runs-header h2 {
   font-size: 1.15rem;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
 }
 
 .runs-header select {

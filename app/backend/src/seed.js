@@ -8,6 +8,7 @@ try { mkdirSync(dirname(db.name), { recursive: true }); } catch {}
 console.log('🌱 Seeding RedMan database...');
 
 // Drop existing tables (reverse dependency order)
+db.exec(`DROP TABLE IF EXISTS cache`);
 db.exec(`DROP TABLE IF EXISTS peer_audit_log`);
 db.exec(`DROP TABLE IF EXISTS authorized_peers`);
 db.exec(`DROP TABLE IF EXISTS backup_run_files`);
@@ -17,11 +18,12 @@ db.exec(`DROP TABLE IF EXISTS hyper_backup_jobs`);
 db.exec(`DROP TABLE IF EXISTS rclone_jobs`);
 db.exec(`DROP TABLE IF EXISTS container_metrics`);
 db.exec(`DROP TABLE IF EXISTS media_drives`);
+db.exec(`DROP TABLE IF EXISTS pairing_requests`);
 db.exec(`DROP TABLE IF EXISTS settings`);
 
 // Settings (key-value store)
 db.exec(`
-  CREATE TABLE settings (
+  CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
@@ -30,7 +32,7 @@ db.exec(`
 
 // SSD Backup configurations
 db.exec(`
-  CREATE TABLE ssd_backup_configs (
+  CREATE TABLE IF NOT EXISTS ssd_backup_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     source_path TEXT NOT NULL,
@@ -43,7 +45,10 @@ db.exec(`
     delta_max_chain INTEGER NOT NULL DEFAULT 10,
     delta_keyframe_days INTEGER NOT NULL DEFAULT 7,
     retention_policy TEXT,
+    exclude_patterns TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
+    notify_mode TEXT NOT NULL DEFAULT 'global',
+    notify_on_start INTEGER NOT NULL DEFAULT 1,
     notify_on_success INTEGER NOT NULL DEFAULT 1,
     notify_on_failure INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now')),
@@ -53,7 +58,7 @@ db.exec(`
 
 // Backup runs (shared across SSD Backup, Hyper Backup, Rclone)
 db.exec(`
-  CREATE TABLE backup_runs (
+  CREATE TABLE IF NOT EXISTS backup_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     feature TEXT NOT NULL,
     config_id INTEGER NOT NULL,
@@ -71,7 +76,7 @@ db.exec(`
 
 // Per-file details for backup runs
 db.exec(`
-  CREATE TABLE backup_run_files (
+  CREATE TABLE IF NOT EXISTS backup_run_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER NOT NULL REFERENCES backup_runs(id) ON DELETE CASCADE,
     file_path TEXT NOT NULL,
@@ -84,7 +89,7 @@ db.exec(`
 
 // Hyper Backup cross-site jobs
 db.exec(`
-  CREATE TABLE hyper_backup_jobs (
+  CREATE TABLE IF NOT EXISTS hyper_backup_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     direction TEXT NOT NULL CHECK(direction IN ('push', 'pull')),
@@ -97,6 +102,8 @@ db.exec(`
     ssh_port INTEGER DEFAULT 22,
     cron_expression TEXT NOT NULL DEFAULT '0 2 * * *',
     enabled INTEGER NOT NULL DEFAULT 1,
+    notify_mode TEXT NOT NULL DEFAULT 'global',
+    notify_on_start INTEGER NOT NULL DEFAULT 1,
     notify_on_success INTEGER NOT NULL DEFAULT 1,
     notify_on_failure INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now')),
@@ -106,7 +113,7 @@ db.exec(`
 
 // Rclone sync jobs
 db.exec(`
-  CREATE TABLE rclone_jobs (
+  CREATE TABLE IF NOT EXISTS rclone_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     local_path TEXT NOT NULL,
@@ -116,6 +123,8 @@ db.exec(`
     cron_expression TEXT NOT NULL DEFAULT '0 3 * * *',
     enabled INTEGER NOT NULL DEFAULT 1,
     bisync_resync_needed INTEGER NOT NULL DEFAULT 0,
+    notify_mode TEXT NOT NULL DEFAULT 'global',
+    notify_on_start INTEGER NOT NULL DEFAULT 1,
     notify_on_success INTEGER NOT NULL DEFAULT 1,
     notify_on_failure INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now')),
@@ -125,7 +134,7 @@ db.exec(`
 
 // Container resource metrics (24h retention)
 db.exec(`
-  CREATE TABLE container_metrics (
+  CREATE TABLE IF NOT EXISTS container_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     container_id TEXT NOT NULL,
     container_name TEXT NOT NULL,
@@ -138,7 +147,7 @@ db.exec(`
 
 // Media drives — known USB/SD card drives for Immich import
 db.exec(`
-  CREATE TABLE media_drives (
+  CREATE TABLE IF NOT EXISTS media_drives (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT,
     serial TEXT,
@@ -161,7 +170,7 @@ db.exec(`
 
 // Authorized peers — per-peer API keys for Hyper Backup
 db.exec(`
-  CREATE TABLE authorized_peers (
+  CREATE TABLE IF NOT EXISTS authorized_peers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     api_key TEXT NOT NULL UNIQUE,
@@ -169,6 +178,8 @@ db.exec(`
     storage_limit_bytes INTEGER NOT NULL DEFAULT 0,
     enabled INTEGER NOT NULL DEFAULT 1,
     last_seen_at TEXT,
+    last_seen_ip TEXT,
+    static_pubkey TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )
@@ -176,7 +187,7 @@ db.exec(`
 
 // Peer audit log — tracks all peer API activity
 db.exec(`
-  CREATE TABLE peer_audit_log (
+  CREATE TABLE IF NOT EXISTS peer_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     peer_id INTEGER REFERENCES authorized_peers(id) ON DELETE SET NULL,
     peer_name TEXT,
@@ -189,29 +200,58 @@ db.exec(`
 
 // Cache table for dashboard stats
 db.exec(`
-  CREATE TABLE cache (
+  CREATE TABLE IF NOT EXISTS cache (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
   )
 `);
 
+// Pairing requests (peer handshake flow)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pairing_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    remote_instance TEXT NOT NULL,
+    remote_url TEXT NOT NULL,
+    remote_ssh_pubkey TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    peer_id INTEGER REFERENCES authorized_peers(id),
+    api_key TEXT,
+    error TEXT,
+    remote_storage_limit INTEGER,
+    remote_allowed_path TEXT,
+    handshake_version INTEGER DEFAULT 1,
+    remote_ephemeral_pubkey TEXT,
+    remote_static_pubkey TEXT,
+    ephemeral_secret TEXT,
+    remote_fingerprint TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT DEFAULT (datetime('now', '+10 minutes'))
+  )
+`);
+
 // Indexes
-db.exec(`CREATE INDEX idx_backup_runs_feature ON backup_runs(feature)`);
-db.exec(`CREATE INDEX idx_backup_runs_config ON backup_runs(config_id)`);
-db.exec(`CREATE INDEX idx_backup_run_files_run ON backup_run_files(run_id)`);
-db.exec(`CREATE INDEX idx_container_metrics_recorded ON container_metrics(recorded_at)`);
-db.exec(`CREATE INDEX idx_container_metrics_container ON container_metrics(container_id)`);
-db.exec(`CREATE INDEX idx_media_drives_uuid ON media_drives(uuid)`);
-db.exec(`CREATE INDEX idx_media_drives_serial ON media_drives(serial)`);
-db.exec(`CREATE INDEX idx_authorized_peers_api_key ON authorized_peers(api_key)`);
-db.exec(`CREATE INDEX idx_peer_audit_log_peer ON peer_audit_log(peer_id)`);
-db.exec(`CREATE INDEX idx_peer_audit_log_created ON peer_audit_log(created_at)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_backup_runs_feature ON backup_runs(feature)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_backup_runs_config ON backup_runs(config_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_backup_run_files_run ON backup_run_files(run_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_container_metrics_recorded ON container_metrics(recorded_at)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_container_metrics_container ON container_metrics(container_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_media_drives_uuid ON media_drives(uuid)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_media_drives_serial ON media_drives(serial)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_authorized_peers_api_key ON authorized_peers(api_key)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_peer_audit_log_peer ON peer_audit_log(peer_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_peer_audit_log_created ON peer_audit_log(created_at)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_pairing_token ON pairing_requests(token)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_pairing_status ON pairing_requests(status)`);
 
 // Seed default settings
 const upsert = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
 const seedSettings = db.transaction(() => {
   upsert.run('instance_name', 'RedMan');
+  upsert.run('user_name', '');
 
   // Notification channels
   upsert.run('ntfy_enabled', 'false');
@@ -242,6 +282,7 @@ const seedSettings = db.transaction(() => {
   // Docker
   upsert.run('docker_socket', '/var/run/docker.sock');
   upsert.run('peer_api_port', '8091');
+  upsert.run('peer_api_url', '');
   upsert.run('metrics_poll_interval', '30');
   upsert.run('metrics_retention_hours', '24');
 
@@ -249,6 +290,16 @@ const seedSettings = db.transaction(() => {
   upsert.run('immich_server_url', '');
   upsert.run('immich_api_key', '');
   upsert.run('media_import_poll_interval', '10');
+
+  // Network Discovery
+  upsert.run('discovery_subnets', '');
+
+  // General — localization & display
+  upsert.run('timezone', process.env.TZ || 'UTC');
+  upsert.run('date_format', 'system');
+  upsert.run('time_format', 'system');
+  upsert.run('hidden_drives', '[]');
+  upsert.run('hidden_remote_drives', '[]');
 });
 
 seedSettings();

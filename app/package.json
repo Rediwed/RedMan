@@ -7,7 +7,12 @@
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w frontend",
-    "seed": "npm run seed -w backend"
+    "seed": "npm run seed -w backend",
+    "reseed": "npm run seed && echo '\nRe-seeded. Restart the server to pick up changes.'",
+    "stop": "lsof -ti:8090,5173,5174,5175 | xargs kill -9 2>/dev/null && echo 'Servers stopped.' || echo 'No servers running.'",
+    "restart": "npm run stop && npm run dev",
+    "clean": "rm -f backend/data/*.db backend/data/*.db-wal backend/data/*.db-shm && echo 'Database removed.'",
+    "fresh": "npm run clean && npm run seed && echo 'Fresh database ready.'"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

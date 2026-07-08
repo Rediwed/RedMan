@@ -69,6 +69,7 @@
   font-size: 0.78rem;
   font-weight: 500;
   color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 .feature-stat-label {
@@ -93,6 +94,9 @@
 }
 
 .run-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   font-weight: 600;
 }
 

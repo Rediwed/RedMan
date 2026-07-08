@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, XCircle } from 'lucide-react';
 import './JobProgress.css';
 
 /**
@@ -9,7 +9,7 @@ import './JobProgress.css';
  * @param {{ progress: object, feature: string }} props
  * feature: 'ssd-backup' | 'hyper-backup' | 'rclone' | 'media-import'
  */
-export default function JobProgress({ progress, feature }) {
+export default function JobProgress({ progress, feature, onCancel }) {
   const [elapsed, setElapsed] = useState(0);
 
   // Tick elapsed every second for a smooth counter
@@ -34,7 +34,19 @@ export default function JobProgress({ progress, feature }) {
   };
   const label = feature === 'hyper-backup' && stageLabels[progress.status]
     ? stageLabels[progress.status]
-    : 'Running...';
+    : feature === 'media-import'
+      ? (progress.uploaded > 0 ? 'Uploading...' : 'Scanning...')
+      : 'Running...';
+
+  // Media import: dual-phase progress (scan + upload)
+  const isMediaImport = feature === 'media-import';
+  const scanPercent = isMediaImport ? Math.min(progress.percent || 0, 100) : 0;
+  const uploadPercent = isMediaImport && progress.assetsFound > 0
+    ? Math.min(Math.round((progress.uploaded || 0) / progress.assetsFound * 100), 100)
+    : 0;
+  const overallPercent = isMediaImport
+    ? (uploadPercent > 0 ? uploadPercent : scanPercent)
+    : percent;
 
   return (
     <div className="job-progress">
@@ -46,16 +58,39 @@ export default function JobProgress({ progress, feature }) {
         {progress.startedAt && (
           <span className="job-progress-elapsed">{formatElapsed(elapsed)}</span>
         )}
+        {onCancel && (
+          <button type="button" className="btn btn-ghost btn-sm job-progress-cancel" onClick={onCancel} title="Cancel">
+            <XCircle size={14} /> Cancel
+          </button>
+        )}
       </div>
 
       <div className="job-progress-bar-row">
         <div className="job-progress-bar">
-          <div
-            className={`job-progress-fill ${percent == null ? 'indeterminate' : ''}`}
-            style={percent != null ? { width: `${percent}%` } : undefined}
-          />
+          {isMediaImport ? (
+            <>
+              <div
+                className="job-progress-fill scan-phase"
+                style={{ width: `${scanPercent}%` }}
+              />
+              {uploadPercent > 0 && (
+                <div
+                  className="job-progress-fill upload-phase"
+                  style={{ width: `${uploadPercent}%` }}
+                />
+              )}
+            </>
+          ) : (
+            <div
+              className={`job-progress-fill ${percent == null ? 'indeterminate' : ''}`}
+              style={percent != null ? { width: `${percent}%` } : undefined}
+            />
+          )}
         </div>
-        {percent != null && <span className="job-progress-pct">{percent}%</span>}
+        {isMediaImport
+          ? <span className={`job-progress-pct ${uploadPercent > 0 ? 'upload-color' : ''}`}>{overallPercent}%</span>
+          : percent != null && <span className="job-progress-pct">{percent}%</span>
+        }
       </div>
 
       <div className="job-progress-stats">
@@ -75,7 +110,6 @@ function renderStats(p, feature) {
   const parts = [];
 
   if (feature === 'rclone') {
-    if (p.percent != null) parts.push(`${p.percent}%`);
     if (p.bytesTransferred > 0) {
       let text = formatBytes(p.bytesTransferred);
       if (p.bytesTotal > 0) text += ` / ${formatBytes(p.bytesTotal)}`;

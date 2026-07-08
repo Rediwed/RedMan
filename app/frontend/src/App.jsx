@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { SettingsProvider } from './contexts/SettingsContext.jsx';
 import Navbar from './components/Navbar.jsx';
+import PairingToast from './components/PairingToast.jsx';
 import useBrowserNotifications from './hooks/useBrowserNotifications.js';
 import OverviewPage from './pages/OverviewPage.jsx';
 import SsdBackupPage from './pages/SsdBackupPage.jsx';
@@ -13,8 +15,10 @@ export default function App() {
   useBrowserNotifications();
   return (
     <BrowserRouter>
+      <SettingsProvider>
       <div className="app">
         <Navbar />
+        <PairingToast />
         <main className="main-content">
           <Routes>
             <Route path="/" element={<OverviewPage />} />
@@ -26,6 +30,7 @@ export default function App() {
           </Routes>
         </main>
       </div>
+      </SettingsProvider>
     </BrowserRouter>
   );
 }

@@ -1,8 +1,9 @@
 // Immich import service — spawns immich-go to upload photos from drives
 // Parses output for progress tracking, handles delete-after and eject-after
 
-import { spawn, execFileSync } from 'child_process';
-import { readdir, unlink, rmdir, stat } from 'fs/promises';
+import { spawn, execFileSync, execSync } from 'child_process';
+import { readdir, unlink, rmdir, stat, readFile } from 'fs/promises';
+import { readdirSync, readFileSync, existsSync, mkdirSync, symlinkSync, unlinkSync, rmdirSync, statSync } from 'fs';
 import { join, extname } from 'path';
 import db from '../db.js';
 import {
@@ -12,6 +13,7 @@ import {
 
 // Active imports tracked for progress polling
 const activeImports = new Map();
+const activeImportProcesses = new Map(); // runId -> ChildProcess
 
 const MEDIA_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.heic', '.heif',
@@ -21,6 +23,15 @@ const MEDIA_EXTENSIONS = new Set([
 
 export function getActiveImport(runId) {
   return activeImports.get(runId);
+}
+
+export function cancelImport(runId) {
+  const proc = activeImportProcesses.get(runId);
+  if (proc) {
+    proc.kill('SIGTERM');
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -79,10 +90,14 @@ export async function startImport(driveId) {
     throw new Error('Immich server URL and API key must be configured in Settings');
   }
 
-  // Check for existing active import on this drive
-  for (const [, imp] of activeImports) {
+  // Check for existing active import on this drive (only block on running imports)
+  for (const [runId, imp] of activeImports) {
     if (imp.driveId === driveId) {
-      throw new Error('Import already running on this drive');
+      if (imp.status === 'running') {
+        throw new Error('Import already running on this drive');
+      }
+      // Clear stale completed/failed imports
+      activeImports.delete(runId);
     }
   }
 
@@ -129,8 +144,62 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress) {
 
     const result = await spawnImmichGo(args, runId, progress);
 
+    // Retry failed files once — parse log for failed paths, symlink them into a temp dir
+    if (result.exitCode !== 0 && progress.errors > 0 && progress.uploaded > 0) {
+      const failedPaths = getFailedPathsFromLog(drive.mount_path);
+      if (failedPaths.length > 0 && failedPaths.length <= 50) {
+        console.log(`[immich-import] Retrying ${failedPaths.length} failed file(s)...`);
+        const retryDir = '/tmp/immich-retry';
+        try {
+          // Create temp dir with symlinks to failed files
+          execSync(`rm -rf ${retryDir}`);
+          mkdirSync(retryDir, { recursive: true });
+          for (const fp of failedPaths) {
+            if (existsSync(fp)) {
+              const linkName = join(retryDir, fp.replace(/\//g, '_'));
+              symlinkSync(fp, linkName);
+            }
+          }
+
+          const retryArgs = [
+            'upload', 'from-folder',
+            `--server=${serverUrl}`,
+            `--api-key=${apiKey}`,
+            '--no-ui',
+            '--on-errors', 'continue',
+            retryDir,
+          ];
+          const retryProgress = { errors: 0, uploaded: 0, assetsFound: 0, duplicates: 0, percent: 0 };
+          const retryResult = await spawnImmichGo(retryArgs, runId, retryProgress);
+          const recovered = retryProgress.uploaded || 0;
+          if (recovered > 0) {
+            progress.uploaded += recovered;
+            progress.errors = Math.max(0, progress.errors - recovered);
+            console.log(`[immich-import] Retry recovered ${recovered} file(s)`);
+          }
+          if (retryResult.exitCode === 0) {
+            result.exitCode = 0;
+            result.errorOutput = null;
+          }
+        } catch (retryErr) {
+          console.warn(`[immich-import] Retry failed:`, retryErr.message);
+        } finally {
+          execSync(`rm -rf ${retryDir}`);
+        }
+      }
+    }
+
     const duration = (Date.now() - startTime) / 1000;
-    const status = result.exitCode === 0 ? 'completed' : 'failed';
+
+    // Determine status: completed, partial, or failed
+    let status;
+    if (result.exitCode === 0) {
+      status = 'completed';
+    } else if (progress.uploaded > 0 && progress.errors < progress.uploaded) {
+      status = 'partial';
+    } else {
+      status = 'failed';
+    }
 
     db.prepare(`
       UPDATE backup_runs SET
@@ -143,8 +212,11 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress) {
       progress.errors, duration, result.errorOutput || null, runId
     );
 
+    // Parse log file for per-file details
+    parseLogFileToDb(runId);
+
     // Update drive last_import_at
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'partial') {
       db.prepare(`
         UPDATE media_drives SET last_import_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ?
@@ -159,7 +231,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress) {
     }
 
     // Send notification
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'partial') {
       notifyImportCompleted(drive.name || drive.label, {
         uploaded: progress.uploaded, duplicates: progress.duplicates,
         errors: progress.errors, duration,
@@ -168,7 +240,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress) {
       notifyImportError(drive.name || drive.label, result.errorOutput);
     }
 
-    // Handle delete-after-import
+    // Handle delete-after-import (only on full success)
     if (status === 'completed' && drive.delete_after_import && progress.uploaded > 0) {
       console.log(`[immich-import] Deleting imported files from ${drive.mount_path}`);
       await deleteMediaFiles(drive.mount_path);
@@ -204,14 +276,19 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress) {
     progress.status = 'failed';
     throw err;
   } finally {
-    // Keep progress available for 5 minutes after completion
-    setTimeout(() => activeImports.delete(runId), 5 * 60 * 1000);
+    // Keep completed progress available for 5 minutes; remove failures immediately
+    if (progress.status === 'failed') {
+      activeImports.delete(runId);
+    } else {
+      setTimeout(() => activeImports.delete(runId), 5 * 60 * 1000);
+    }
   }
 }
 
 function spawnImmichGo(args, runId, progress) {
   return new Promise((resolve, reject) => {
     const proc = spawn('immich-go', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    activeImportProcesses.set(runId, proc);
 
     let errorOutput = '';
 
@@ -241,10 +318,12 @@ function spawnImmichGo(args, runId, progress) {
     });
 
     proc.on('close', (exitCode) => {
+      activeImportProcesses.delete(runId);
       resolve({ exitCode, errorOutput: errorOutput.trim() || null });
     });
 
     proc.on('error', (err) => {
+      activeImportProcesses.delete(runId);
       reject(new Error(`Failed to start immich-go: ${err.message}. Is it installed?`));
     });
   });
@@ -289,6 +368,133 @@ export function ejectDrive(mountPath) {
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Extract absolute paths of failed files from the most recent immich-go log.
+ * Log lines: ERR server error file=DriveName:relative/path.TIF error=...
+ */
+function getFailedPathsFromLog(mountPath) {
+  try {
+    const cacheDir = '/root/.cache/immich-go';
+    if (!existsSync(cacheDir)) return [];
+
+    const files = readdirSync(cacheDir).filter(f => f.endsWith('.log')).sort().reverse();
+    if (files.length === 0) return [];
+
+    const content = readFileSync(join(cacheDir, files[0]), 'utf-8');
+    const failed = [];
+
+    for (const line of content.split('\n')) {
+      const match = line.match(/ERR\s+server error\s+file=(.+?)\s+error=/);
+      if (match) {
+        const fileRef = match[1].trim();
+        // fileRef is "DriveName:relative/path.TIF" — extract relative path after colon
+        const colonIdx = fileRef.indexOf(':');
+        const relPath = colonIdx >= 0 ? fileRef.slice(colonIdx + 1) : fileRef;
+        // Build absolute path using the mount path's parent
+        // mountPath is e.g. /mnt/disks/USB_SanDisk_32GB, relPath is e.g. Dia's Familie/bak3 slee1/47440004.TIF
+        failed.push(join(mountPath, relPath));
+      }
+    }
+
+    return failed;
+  } catch (err) {
+    console.warn(`[immich-import] Failed to parse log for retry paths:`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Parse immich-go log file and insert per-file records into backup_run_files.
+ * Also stats each file to capture the file's modification date (= photo date in Immich).
+ * Log lines look like:
+ *   2026-04-08 13:47:31 INF uploaded successfully file=USB_SanDisk_32GB:path/to/file.TIF
+ *   2026-04-08 13:47:51 ERR server error file=USB_SanDisk_32GB:path/to/file.TIF error=...
+ */
+function parseLogFileToDb(runId) {
+  try {
+    const cacheDir = '/root/.cache/immich-go';
+    if (!existsSync(cacheDir)) return;
+
+    // Find the most recent log file
+    const files = readdirSync(cacheDir)
+      .filter(f => f.endsWith('.log'))
+      .sort()
+      .reverse();
+    if (files.length === 0) return;
+
+    const logPath = join(cacheDir, files[0]);
+    const content = readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n');
+
+    const insert = db.prepare(`
+      INSERT INTO backup_run_files (run_id, file_path, action, size, error, file_date)
+      VALUES (?, ?, ?, 0, ?, ?)
+    `);
+
+    const tx = db.transaction(() => {
+      for (const line of lines) {
+        let fileRef = null;
+        let action = null;
+        let error = null;
+
+        // Uploaded successfully
+        const uploadMatch = line.match(/INF\s+uploaded successfully\s+file=(.+)$/);
+        if (uploadMatch) {
+          fileRef = uploadMatch[1].trim();
+          action = 'uploaded';
+        }
+
+        // Server error (with file)
+        if (!action) {
+          const errorMatch = line.match(/ERR\s+server error\s+file=(.+?)\s+error=(.+)$/);
+          if (errorMatch) {
+            fileRef = errorMatch[1].trim();
+            action = 'error';
+            error = errorMatch[2].trim();
+          }
+        }
+
+        // Duplicate
+        if (!action) {
+          const dupeMatch = line.match(/INF\s+server has (?:same|duplicate|better)\s+.*file=(.+)$/);
+          if (dupeMatch) {
+            fileRef = dupeMatch[1].trim();
+            action = 'duplicate';
+          }
+        }
+
+        if (!fileRef || !action) continue;
+
+        // Resolve file path and get modification date
+        const fileDate = getFileDate(fileRef);
+        insert.run(runId, fileRef, action, error, fileDate);
+      }
+    });
+    tx();
+  } catch (err) {
+    console.warn(`[immich-import] Failed to parse log file for run ${runId}:`, err.message);
+  }
+}
+
+/**
+ * Get file modification date from an immich-go file reference.
+ * Format: "DriveName:relative/path/file.TIF" → stat /mnt/disks/DriveName/relative/path/file.TIF
+ */
+function getFileDate(fileRef) {
+  try {
+    const colonIdx = fileRef.indexOf(':');
+    if (colonIdx < 0) return null;
+    const driveName = fileRef.slice(0, colonIdx);
+    const relPath = fileRef.slice(colonIdx + 1);
+    const absPath = join('/mnt/disks', driveName, relPath);
+    if (!existsSync(absPath)) return null;
+    const st = statSync(absPath);
+    return st.mtime.toISOString();
+  } catch {
+    return null;
   }
 }
 

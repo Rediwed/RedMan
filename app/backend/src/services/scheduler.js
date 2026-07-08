@@ -191,6 +191,10 @@ export function getActiveJobCount() {
   return activeJobs.size;
 }
 
+export function getRunningJobCount() {
+  return runningJobs.size;
+}
+
 // Look up a human-readable job name from DB
 function getJobName(feature, configId) {
   try {

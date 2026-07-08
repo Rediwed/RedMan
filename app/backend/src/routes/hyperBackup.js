@@ -2,9 +2,9 @@
 
 import { Router } from 'express';
 import db from '../db.js';
-import { executeHyperBackup, testPeerConnection, getActiveHyperRun } from '../services/hyperBackup.js';
+import { executeHyperBackup, testPeerConnection, browsePeerDirectory, getPeerRoots, getPeerShares, getActiveHyperRun, cancelHyperRun } from '../services/hyperBackup.js';
 import { scheduleJob, removeJob, getJobSkipCount, isJobRunning } from '../services/scheduler.js';
-import { normalizePath, validateSshPort, validateUrl } from '../middleware/validation.js';
+import { normalizePath, validateSshPort, validateSshHost, validateSshUser, validateUrl } from '../middleware/validation.js';
 const router = Router();
 
 // List all Hyper Backup jobs
@@ -30,7 +30,14 @@ router.get('/jobs/:id', (req, res) => {
 
 // Create a new Hyper Backup job
 router.post('/jobs', (req, res) => {
-  const { name, direction, remote_url, remote_api_key, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_on_success, notify_on_failure } = req.body;
+  const { name, direction, remote_url, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_mode, notify_on_start, notify_on_success, notify_on_failure } = req.body;
+  let { remote_api_key } = req.body;
+
+  // Auto-fill API key from pairing record when not provided (form uses destination picker)
+  if (!remote_api_key && remote_url) {
+    const pairing = getPairingKey(remote_url);
+    if (pairing?.api_key) remote_api_key = pairing.api_key;
+  }
 
   if (!name || !direction || !remote_url || !remote_api_key || !local_path || !remote_path) {
     return res.status(400).json({ error: 'name, direction, remote_url, remote_api_key, local_path, and remote_path are required' });
@@ -58,15 +65,25 @@ router.post('/jobs', (req, res) => {
     return res.status(400).json({ error: 'ssh_port must be between 1 and 65535' });
   }
 
+  if (ssh_host && !validateSshHost(ssh_host)) {
+    return res.status(400).json({ error: 'ssh_host must be a valid hostname or IP (letters, digits, dot, dash, underscore)' });
+  }
+
+  if (ssh_user && !validateSshUser(ssh_user)) {
+    return res.status(400).json({ error: 'ssh_user must contain only letters, digits, dot, dash, underscore' });
+  }
+
   const result = db.prepare(`
-    INSERT INTO hyper_backup_jobs (name, direction, remote_url, remote_api_key, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_on_success, notify_on_failure)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO hyper_backup_jobs (name, direction, remote_url, remote_api_key, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_mode, notify_on_start, notify_on_success, notify_on_failure)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     name, direction, remote_url, remote_api_key, normalizedLocal, normalizedRemote,
     ssh_user || 'root',
     ssh_host || null,
     ssh_port || 22,
     cron_expression || '0 2 * * *',
+    notify_mode || 'global',
+    notify_on_start !== undefined ? (notify_on_start ? 1 : 0) : 1,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : 1,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : 1,
   );
@@ -89,7 +106,7 @@ router.put('/jobs/:id', (req, res) => {
   const {
     name, direction, remote_url, remote_api_key, local_path, remote_path,
     ssh_user, ssh_host, ssh_port, cron_expression, enabled,
-    notify_on_success, notify_on_failure,
+    notify_mode, notify_on_start, notify_on_success, notify_on_failure,
   } = req.body;
 
   if (direction && !['push', 'pull'].includes(direction)) {
@@ -107,13 +124,19 @@ router.put('/jobs/:id', (req, res) => {
   if (ssh_port && !validateSshPort(ssh_port)) {
     return res.status(400).json({ error: 'ssh_port must be between 1 and 65535' });
   }
+  if (ssh_host && !validateSshHost(ssh_host)) {
+    return res.status(400).json({ error: 'ssh_host must be a valid hostname or IP (letters, digits, dot, dash, underscore)' });
+  }
+  if (ssh_user && !validateSshUser(ssh_user)) {
+    return res.status(400).json({ error: 'ssh_user must contain only letters, digits, dot, dash, underscore' });
+  }
 
   db.prepare(`
     UPDATE hyper_backup_jobs SET
       name = ?, direction = ?, remote_url = ?, remote_api_key = ?,
       local_path = ?, remote_path = ?, ssh_user = ?, ssh_host = ?,
       ssh_port = ?, cron_expression = ?, enabled = ?,
-      notify_on_success = ?, notify_on_failure = ?,
+      notify_mode = ?, notify_on_start = ?, notify_on_success = ?, notify_on_failure = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).run(
@@ -129,6 +152,8 @@ router.put('/jobs/:id', (req, res) => {
     ssh_port ?? existing.ssh_port,
     cron_expression ?? existing.cron_expression,
     enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
+    notify_mode || existing.notify_mode || 'global',
+    notify_on_start !== undefined ? (notify_on_start ? 1 : 0) : existing.notify_on_start,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : existing.notify_on_success,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : existing.notify_on_failure,
     req.params.id,
@@ -173,6 +198,21 @@ router.post('/jobs/:id/run', async (req, res) => {
   res.json({ runId, status: 'started' });
 });
 
+// Cancel a running backup
+router.post('/runs/:id/cancel', (req, res) => {
+  const runId = parseInt(req.params.id);
+  const run = db.prepare('SELECT * FROM backup_runs WHERE id = ?').get(runId);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  if (run.status !== 'running') return res.status(400).json({ error: 'Run is not active' });
+  const killed = cancelHyperRun(runId);
+  if (killed) {
+    db.prepare("UPDATE backup_runs SET status = 'cancelled', completed_at = datetime('now'), error_message = 'Cancelled by user' WHERE id = ?").run(runId);
+    res.json({ status: 'cancelled' });
+  } else {
+    res.status(400).json({ error: 'Could not cancel — process not found' });
+  }
+});
+
 // Test connection to remote peer
 router.post('/test-connection', async (req, res) => {
   const { remote_url, remote_api_key } = req.body;
@@ -182,6 +222,101 @@ router.post('/test-connection', async (req, res) => {
 
   const result = await testPeerConnection(remote_url, remote_api_key);
   res.json(result);
+});
+
+// Helper: look up API key for a paired remote URL
+function getPairingKey(remoteUrl) {
+  return db.prepare(`
+    SELECT api_key FROM pairing_requests
+    WHERE direction = 'outgoing' AND status = 'accepted' AND remote_url = ?
+    ORDER BY id DESC LIMIT 1
+  `).get(remoteUrl);
+}
+
+// Browse directories on a remote peer (proxy to peer API)
+router.get('/remote-browse', async (req, res) => {
+  const { remote_url, dir } = req.query;
+
+  if (!remote_url || !validateUrl(remote_url)) {
+    return res.status(400).json({ error: 'remote_url query parameter is required and must be a valid URL' });
+  }
+
+  const pairing = getPairingKey(remote_url);
+  if (!pairing?.api_key) {
+    return res.status(404).json({ error: 'No accepted pairing found for this remote URL' });
+  }
+
+  try {
+    const result = await browsePeerDirectory(remote_url, pairing.api_key, dir || '');
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Get filesystem roots on a remote peer (proxy to peer API)
+router.get('/remote-roots', async (req, res) => {
+  const { remote_url } = req.query;
+
+  if (!remote_url || !validateUrl(remote_url)) {
+    return res.status(400).json({ error: 'remote_url query parameter is required and must be a valid URL' });
+  }
+
+  const pairing = getPairingKey(remote_url);
+  if (!pairing?.api_key) {
+    return res.status(404).json({ error: 'No accepted pairing found for this remote URL' });
+  }
+
+  try {
+    let result = await getPeerRoots(remote_url, pairing.api_key);
+
+    // Filter out hidden remote drives
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'hidden_remote_drives'").get();
+      const hidden = JSON.parse(row?.value || '[]');
+      if (hidden.length > 0) {
+        result = result.filter(r => !hidden.some(h => r.path === h || r.path.startsWith(h + '/')));
+      }
+    } catch { /* ignore */ }
+
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Get shares on a remote peer (proxy to peer API)
+router.get('/remote-shares', async (req, res) => {
+  const { remote_url } = req.query;
+
+  if (!remote_url || !validateUrl(remote_url)) {
+    return res.status(400).json({ error: 'remote_url query parameter is required and must be a valid URL' });
+  }
+
+  const pairing = getPairingKey(remote_url);
+  if (!pairing?.api_key) {
+    return res.status(404).json({ error: 'No accepted pairing found for this remote URL' });
+  }
+
+  try {
+    let result = await getPeerShares(remote_url, pairing.api_key);
+
+    // Filter out hidden remote drives
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'hidden_remote_drives'").get();
+      const hidden = JSON.parse(row?.value || '[]');
+      if (hidden.length > 0) {
+        result = result.filter(s => {
+          const paths = [s.userPath, s.cachePath, s.path].filter(Boolean);
+          return !paths.some(p => hidden.some(h => p === h || p.startsWith(h + '/')));
+        });
+      }
+    } catch { /* ignore */ }
+
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // List runs

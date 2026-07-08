@@ -3,11 +3,15 @@
 
 import os from 'os';
 import db from '../db.js';
-import { runRsyncWithSsh, parseItemizeAction } from './rsync.js';
-import { notifyBackupResult } from './notify.js';
+import { runRsyncWithSsh, parseItemizeAction, cancelSsdRun } from './rsync.js';
+import { notifyBackupResult, shouldNotify } from './notify.js';
 
 const IS_MAC = os.platform() === 'darwin';
 const activeRuns = new Map();
+
+export function cancelHyperRun(runId) {
+  return cancelSsdRun(runId);
+}
 
 // Rsync exit codes → user-friendly descriptions
 const RSYNC_EXIT_MESSAGES = {
@@ -73,7 +77,9 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
     const sshPort = job.ssh_port || 22;
 
     const args = [
-      '-avz', '--delete',
+      '-avz', '--delete-after',
+      '--no-owner', '--no-group', '--omit-dir-times',
+      '--mkpath',
       '--itemize-changes', '--stats',
       // Resume partial transfers on interruption (critical for multi-TB datasets)
       '--partial',
@@ -98,7 +104,7 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
         status: 'transferring', startedAt: startTime,
         ...rsyncProgress,
       });
-    });
+    }, runId);
     activeRuns.set(runId, { status: 'completing', startedAt: startTime, ...result.progress });
 
     // Step 3: Notify remote peer that transfer is complete
@@ -151,12 +157,12 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
     );
 
     // Notification
-    if (job.notify_on_success && status === 'completed') {
+    if (status === 'completed' && shouldNotify(job, 'success')) {
       await notifyBackupResult('Hyper Backup', job.name, 'completed', {
         filesCopied: result.progress.filesCopied, filesFailed: result.progress.filesFailed,
         bytesTransferred: result.progress.bytesTransferred, duration,
       });
-    } else if (job.notify_on_failure && status === 'failed') {
+    } else if (status === 'failed' && shouldNotify(job, 'failure')) {
       await notifyBackupResult('Hyper Backup', job.name, 'failed', {
         filesCopied: result.progress.filesCopied, bytesTransferred: result.progress.bytesTransferred, duration,
       });
@@ -171,7 +177,7 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
       WHERE id = ?
     `).run(err.message, duration, runId);
 
-    if (job.notify_on_failure) {
+    if (shouldNotify(job, 'failure')) {
       await notifyBackupResult('Hyper Backup', job.name, 'failed', { duration });
     }
     throw err;
@@ -188,6 +194,22 @@ export async function testPeerConnection(remoteUrl, apiKey) {
   } catch (err) {
     return { reachable: false, error: err.message };
   }
+}
+
+// Browse directories on a remote peer
+export async function browsePeerDirectory(remoteUrl, apiKey, dir) {
+  const query = dir ? `?dir=${encodeURIComponent(dir)}` : '';
+  return callPeerApi(remoteUrl, apiKey, 'GET', `/peer/browse${query}`);
+}
+
+// Get filesystem roots on a remote peer
+export async function getPeerRoots(remoteUrl, apiKey) {
+  return callPeerApi(remoteUrl, apiKey, 'GET', '/peer/roots');
+}
+
+// Get Unraid shares on a remote peer
+export async function getPeerShares(remoteUrl, apiKey) {
+  return callPeerApi(remoteUrl, apiKey, 'GET', '/peer/shares');
 }
 
 // Notify all known Hyper Backup peers that this instance is shutting down.

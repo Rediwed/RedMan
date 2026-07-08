@@ -1,18 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getSettings, saveSettings, testNtfy, testBrowserNotify, testImmichConnection, getSshStatus, generateSshKey, authorizeLocalSsh, testSshConnection, getPeers, createPeer, updatePeer, deletePeer, regeneratePeerKey, getPeerAuditLog } from '../api/index.js';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { getSettings, saveSettings, testNtfy, testBrowserNotify, testImmichConnection, getPeers, getPeerConnectivity, createPeer, updatePeer, deletePeer, regeneratePeerKey, getPeerAuditLog, discoverImmich, discoverPeers, getDiscoverySubnets, getPairingIncoming, acceptPairing as apiAcceptPairing, declinePairing as apiDeclinePairing, deletePairing as apiDeletePairing, syncPairings, getAllFilesystemRoots, getSsdShares } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatPreview, formatDateTime } from '../utils/dateFormat.js';
 import {
-  Settings, Bell, Link, Container, Camera, Save, Eye, EyeOff, Undo2,
-  CheckCircle, XCircle, AlertTriangle, Info, Key, Copy, Shield, Terminal, Send,
-  Users, Plus, Trash2, RefreshCw, Clock, FolderLock, Activity,
+  Settings as SettingsIcon, Bell, Link, Container, Camera, Save, Eye, EyeOff, Undo2, Monitor,
+  CheckCircle, XCircle, AlertTriangle, Info, Copy, Shield, ShieldCheck, ShieldAlert, Send,
+  Users, Plus, Trash2, RefreshCw, Clock, FolderLock, Activity, Radar, Wifi, WifiOff, ArrowUpRight, ArrowDownLeft,
+  Globe, X, HardDrive, Key, Folder, FolderOpen,
 } from 'lucide-react';
 import PillTabs from '../components/PillTabs.jsx';
+import InfoTip from '../components/InfoTip.jsx';
 import './SettingsPage.css';
 
 const SETTINGS_TABS = [
   { label: 'General', value: 'general' },
   { label: 'Notifications', value: 'notifications' },
-  { label: 'Authorized Peers', value: 'peers' },
+  { label: 'Peers', value: 'peers' },
   { label: 'Integrations', value: 'integrations' },
   { label: 'Infrastructure', value: 'infrastructure' },
 ];
@@ -32,6 +36,7 @@ function formatInterval(seconds) {
 }
 
 export default function SettingsPage() {
+  const { refresh: refreshGlobalSettings } = useSettings();
   const [settings, setSettings] = useState({});
   const [savedSettings, setSavedSettings] = useState({});
   const [saved, setSaved] = useState(false);
@@ -42,39 +47,89 @@ export default function SettingsPage() {
   const [browserTestResult, setBrowserTestResult] = useState(null);
   const [immichTestResult, setImmichTestResult] = useState(null);
   const [showNtfyConfig, setShowNtfyConfig] = useState(false);
-  const [ssh, setSsh] = useState({ keyExists: false, publicKey: null });
-  const [sshTestResult, setSshTestResult] = useState(null);
-  const [sshTestHost, setSshTestHost] = useState('');
-  const [sshTestUser, setSshTestUser] = useState('root');
-  const [sshGenerating, setSshGenerating] = useState(false);
-  const [sshCopied, setSshCopied] = useState(false);
 
   // Peers state
   const [peers, setPeers] = useState([]);
+  const [outgoingPeers, setOutgoingPeers] = useState([]);
   const [showPeerForm, setShowPeerForm] = useState(false);
   const [editingPeer, setEditingPeer] = useState(null);
-  const [peerForm, setPeerForm] = useState({ name: '', allowed_path_prefix: '/' });
+  const [peerForm, setPeerForm] = useState({ name: '', allowed_path_prefix: '/', storage_limit_gb: '' });
   const [newPeerKey, setNewPeerKey] = useState(null);
   const [peerKeyCopied, setPeerKeyCopied] = useState(false);
   const [peerAuditLog, setPeerAuditLog] = useState(null);
   const [auditPeerId, setAuditPeerId] = useState(null);
   const [confirmDeletePeer, setConfirmDeletePeer] = useState(null);
   const [confirmRegeneratePeer, setConfirmRegeneratePeer] = useState(null);
+  const [peerConnectivity, setPeerConnectivity] = useState({});
+  const [checkingConnectivity, setCheckingConnectivity] = useState(false);
+  const [subnetInfo, setSubnetInfo] = useState(null);
+  const [detectingSubnets, setDetectingSubnets] = useState(false);
+  const [incomingPairings, setIncomingPairings] = useState([]);
+  const [pairingProcessing, setPairingProcessing] = useState(null);
+  const [confirmUnpair, setConfirmUnpair] = useState(null);
+  const [discoveredImmich, setDiscoveredImmich] = useState([]);
+  const [discoveringImmich, setDiscoveringImmich] = useState(false);
+  const [immichDiscoveryError, setImmichDiscoveryError] = useState(null);
+  const [hiddenDriveInput, setHiddenDriveInput] = useState('');
+  const [availableDrives, setAvailableDrives] = useState([]);
+  const [showHiddenDriveModal, setShowHiddenDriveModal] = useState(false);
+  const [hiddenDriveScope, setHiddenDriveScope] = useState('local');
+  const [showPeerPathPicker, setShowPeerPathPicker] = useState(false);
 
   useEffect(() => { loadSettings(); }, []);
   useReconnect(useCallback(() => loadSettings(), []));
 
   function loadSettings() {
-    Promise.all([getSettings(), getSshStatus(), getPeers()])
-      .then(([s, sshData, peersData]) => {
+    Promise.all([getSettings(), getPeers()])
+      .then(([s, peersData]) => {
         setSettings(s);
         setSavedSettings(s);
-        setSsh(sshData);
-        setPeers(peersData);
+        setPeers(peersData.incoming || peersData);
+        setOutgoingPeers(peersData.outgoing || []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
+    // Load extra data in background
+    getDiscoverySubnets().then(setSubnetInfo).catch(() => {});
+    loadIncomingPairings();
   }
+
+  function loadIncomingPairings() {
+    getPairingIncoming().then(setIncomingPairings).catch(() => {});
+  }
+
+  // Poll for incoming pairing requests every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(loadIncomingPairings, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load available drives when General or Peers tab is active
+  useEffect(() => {
+    if (activeTab !== 'general' && activeTab !== 'peers') return;
+    if (availableDrives.length > 0) return; // already loaded
+    Promise.all([
+      getAllFilesystemRoots().catch(() => []),
+      getSsdShares().catch(() => []),
+    ]).then(([roots, shares]) => {
+      const drives = [];
+      const seen = new Set();
+      for (const r of roots) {
+        if (r.path !== '/' && r.icon !== 'home' && !seen.has(r.path)) {
+          seen.add(r.path);
+          drives.push({ path: r.path, name: r.name, type: 'root' });
+        }
+      }
+      for (const s of shares) {
+        const p = s.userPath || s.cachePath || s.path;
+        if (p && !seen.has(p)) {
+          seen.add(p);
+          drives.push({ path: p, name: s.name || p, type: 'share' });
+        }
+      }
+      setAvailableDrives(drives);
+    });
+  }, [activeTab]);
 
   const hasChanges = Object.keys(settings).some(k => settings[k] !== savedSettings[k])
     || Object.keys(savedSettings).some(k => settings[k] !== savedSettings[k]);
@@ -83,46 +138,10 @@ export default function SettingsPage() {
     try { await saveSettings(s || settings); } catch { /* silent */ }
   }, [settings]);
 
-  // SSH handlers
-  async function handleGenerateKey() {
-    setSshGenerating(true);
-    try {
-      const result = await generateSshKey();
-      if (result.success) setSsh({ keyExists: true, publicKey: result.publicKey, keyPath: null });
-    } catch (err) {
-      console.error('Key generation failed:', err);
-    }
-    setSshGenerating(false);
-  }
-
-  async function handleAuthorizeLocalhost() {
-    try {
-      await authorizeLocalSsh();
-      setSshTestResult({ ok: true, message: 'Localhost authorized!' });
-      setTimeout(() => setSshTestResult(null), 5000);
-    } catch (err) {
-      setSshTestResult({ ok: false, error: err.message });
-    }
-  }
-
-  async function handleSshTest() {
-    if (!sshTestHost) return;
-    setSshTestResult(null);
-    const result = await testSshConnection({ host: sshTestHost, user: sshTestUser || 'root', port: 22 });
-    setSshTestResult(result);
-  }
-
-  function copyPublicKey() {
-    if (ssh.publicKey) {
-      navigator.clipboard.writeText(ssh.publicKey);
-      setSshCopied(true);
-      setTimeout(() => setSshCopied(false), 3000);
-    }
-  }
-
   async function handleSave() {
     await saveSettings(settings);
     setSavedSettings({ ...settings });
+    refreshGlobalSettings();
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
@@ -205,17 +224,89 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleDiscoverImmich() {
+    setDiscoveringImmich(true);
+    setImmichDiscoveryError(null);
+    setDiscoveredImmich([]);
+    try {
+      const result = await discoverImmich(true);
+      if (result.error) {
+        setImmichDiscoveryError(result.message);
+      } else {
+        setDiscoveredImmich(result);
+        if (result.length === 0) setImmichDiscoveryError('No Immich instances found on configured subnets.');
+      }
+    } catch (err) {
+      setImmichDiscoveryError(err.message);
+    }
+    setDiscoveringImmich(false);
+  }
+
+  function selectDiscoveredImmich(instance) {
+    update('immich_server_url', instance.url);
+    setDiscoveredImmich([]);
+    setImmichDiscoveryError(null);
+  }
+
+  async function handleRedetectSubnets() {
+    setDetectingSubnets(true);
+    try {
+      const info = await getDiscoverySubnets(true);
+      setSubnetInfo(info);
+    } catch { /* silent */ }
+    setDetectingSubnets(false);
+  }
+
+  async function handleAcceptPairing(id) {
+    setPairingProcessing(id);
+    try {
+      const result = await apiAcceptPairing(id);
+      if (result.error) {
+        alert(result.error);
+      } else {
+        loadIncomingPairings();
+        await loadPeers();
+      }
+    } catch (err) {
+      alert(err.message);
+    }
+    setPairingProcessing(null);
+  }
+
+  async function handleDeclinePairing(id) {
+    setPairingProcessing(id);
+    try {
+      await apiDeclinePairing(id);
+      loadIncomingPairings();
+    } catch (err) {
+      alert(err.message);
+    }
+    setPairingProcessing(null);
+  }
+
   // ── Peer handlers ──
   async function loadPeers() {
-    try { setPeers(await getPeers()); } catch { /* silent */ }
+    try {
+      const data = await getPeers();
+      setPeers(data.incoming || data);
+      setOutgoingPeers(data.outgoing || []);
+      // Sync outgoing quotas from remotes in background, then reload
+      if (data.outgoing?.length > 0) {
+        syncPairings().then(() => getPeers()).then(d => {
+          setOutgoingPeers(d.outgoing || []);
+        }).catch(() => {});
+      }
+    } catch { /* silent */ }
   }
 
   async function handleCreatePeer(e) {
     e.preventDefault();
     try {
-      const result = await createPeer(peerForm);
+      const data = { ...peerForm, storage_limit_bytes: peerForm.storage_limit_gb ? Math.round(parseFloat(peerForm.storage_limit_gb) * 1024 ** 3) : 0 };
+      delete data.storage_limit_gb;
+      const result = await createPeer(data);
       setNewPeerKey(result.api_key);
-      setPeerForm({ name: '', allowed_path_prefix: '/' });
+      setPeerForm({ name: '', allowed_path_prefix: '/', storage_limit_gb: '' });
       setShowPeerForm(false);
       await loadPeers();
     } catch (err) {
@@ -226,7 +317,9 @@ export default function SettingsPage() {
   async function handleUpdatePeer(e) {
     e.preventDefault();
     try {
-      await updatePeer(editingPeer.id, peerForm);
+      const data = { ...peerForm, storage_limit_bytes: peerForm.storage_limit_gb ? Math.round(parseFloat(peerForm.storage_limit_gb) * 1024 ** 3) : 0 };
+      delete data.storage_limit_gb;
+      await updatePeer(editingPeer.id, data);
       setEditingPeer(null);
       setPeerForm({ name: '', allowed_path_prefix: '/' });
       await loadPeers();
@@ -265,6 +358,19 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleCheckConnectivity() {
+    setCheckingConnectivity(true);
+    try {
+      const results = await getPeerConnectivity();
+      const map = {};
+      for (const r of results) map[r.id] = r;
+      setPeerConnectivity(map);
+    } catch (err) {
+      console.error('Connectivity check failed:', err);
+    }
+    setCheckingConnectivity(false);
+  }
+
   function copyPeerKey() {
     if (newPeerKey) {
       navigator.clipboard.writeText(newPeerKey);
@@ -277,27 +383,179 @@ export default function SettingsPage() {
   const progressIdx = PROGRESS_TICKS.indexOf(parseInt(settings.ntfy_progress_interval || '60'));
   const progressSliderIdx = progressIdx >= 0 ? progressIdx : 0;
 
+  // Timezone list from browser Intl API
+  const timezones = useMemo(() => {
+    try { return Intl.supportedValuesOf('timeZone'); }
+    catch { return ['UTC', 'Europe/Amsterdam', 'Europe/London', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Asia/Tokyo', 'Asia/Shanghai', 'Australia/Sydney']; }
+  }, []);
+
+  // Date/time preview
+  const dateTimePreview = useMemo(() => formatPreview(settings), [settings.timezone, settings.date_format, settings.time_format]);
+
+  // Hidden drives helpers
+  const hiddenDrives = useMemo(() => {
+    try { return JSON.parse(settings.hidden_drives || '[]'); }
+    catch { return []; }
+  }, [settings.hidden_drives]);
+
+  function addHiddenDrive() {
+    const path = hiddenDriveInput.trim();
+    if (!path || hiddenDrives.includes(path)) return;
+    update('hidden_drives', JSON.stringify([...hiddenDrives, path]));
+    setHiddenDriveInput('');
+  }
+
+  function removeHiddenDrive(path) {
+    update('hidden_drives', JSON.stringify(hiddenDrives.filter(d => d !== path)));
+  }
+
+  // Remote hidden drives helpers
+  const hiddenRemoteDrives = useMemo(() => {
+    try { return JSON.parse(settings.hidden_remote_drives || '[]'); }
+    catch { return []; }
+  }, [settings.hidden_remote_drives]);
+
+  function addHiddenRemoteDrive() {
+    const path = hiddenDriveInput.trim();
+    if (!path || hiddenRemoteDrives.includes(path)) return;
+    update('hidden_remote_drives', JSON.stringify([...hiddenRemoteDrives, path]));
+    setHiddenDriveInput('');
+  }
+
+  function removeHiddenRemoteDrive(path) {
+    update('hidden_remote_drives', JSON.stringify(hiddenRemoteDrives.filter(d => d !== path)));
+  }
+
   if (loading) return <div className="empty-state"><p>Loading...</p></div>;
 
   return (
     <div className="settings-page">
       <div className="page-header">
         <div>
-          <h1><Settings size={24} /> Settings</h1>
+          <h1><SettingsIcon size={24} /> Settings</h1>
           <p className="page-subtitle">Configure RedMan instance settings</p>
         </div>
       </div>
 
-      <PillTabs tabs={SETTINGS_TABS} active={activeTab} onChange={setActiveTab} />
+      <PillTabs tabs={SETTINGS_TABS.map(t => {
+        if (t.value === 'peers') {
+          const total = peers.length + outgoingPeers.length;
+          const badge = incomingPairings.length > 0 ? ` (${incomingPairings.length} new)` : total > 0 ? ` (${total})` : '';
+          return { ...t, label: `Peers${badge}` };
+        }
+        return t;
+      })} active={activeTab} onChange={setActiveTab} />
 
       {/* ── General ── */}
       {activeTab === 'general' && (
-        <div className="card">
-          <div className="card-header"><h3><Settings size={16} /> General</h3></div>
-          <div className="form-group">
-            <label>Instance Name</label>
-            <input value={settings.instance_name || ''} onChange={e => update('instance_name', e.target.value)} placeholder="RedMan" />
-            <span className="form-hint">Displayed in the peer API health response and notifications</span>
+        <div className="settings-cards-grid">
+          {/* Instance Name */}
+          <div className="card">
+            <div className="card-header"><h3><SettingsIcon size={16} /> General</h3></div>
+            <div className="form-group">
+              <label>Instance Name<InfoTip text="A friendly name for this RedMan instance. Shown in notifications, the peer API, and the browser title bar." /></label>
+              <input value={settings.instance_name || ''} onChange={e => update('instance_name', e.target.value)} placeholder="RedMan" />
+            </div>
+            <div className="form-group">
+              <label>User Name<InfoTip text="Your personal name or identifier." /></label>
+              <input value={settings.user_name || ''} onChange={e => update('user_name', e.target.value)} placeholder="User" />
+            </div>
+          </div>
+
+          {/* Date & Time Display */}
+          <div className="card">
+            <div className="card-header"><h3><Clock size={16} /> Date & Time Display</h3></div>
+            <div className="form-group">
+              <label>Timezone<InfoTip text="Controls how dates and times are displayed throughout the app. Also sets the container's internal clock." /></label>
+              <select value={settings.timezone || 'UTC'} onChange={e => update('timezone', e.target.value)}>
+                <option value="system">System Default</option>
+                {timezones.map(tz => <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Date Format</label>
+              <select value={settings.date_format || 'system'} onChange={e => update('date_format', e.target.value)}>
+                <option value="system">System Default</option>
+                <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                <option value="MMM D, YYYY">MMM D, YYYY</option>
+                <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Time Format</label>
+              <select value={settings.time_format || 'system'} onChange={e => update('time_format', e.target.value)}>
+                <option value="system">System Default</option>
+                <option value="24h">24-hour</option>
+                <option value="12h">12-hour</option>
+              </select>
+            </div>
+            <p className="datetime-preview">Preview: {dateTimePreview}</p>
+          </div>
+
+          {/* Hidden Drives */}
+          <div className="card" style={{ gridColumn: '1 / -1' }}>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3><EyeOff size={16} /> Hidden Drives</h3>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setHiddenDriveInput(''); setShowHiddenDriveModal(true); }}>
+                <Plus size={14} /> Add
+              </button>
+            </div>
+
+            <PillTabs
+              tabs={[
+                { value: 'local', label: `Local${hiddenDrives.length ? ` (${hiddenDrives.length})` : ''}` },
+                { value: 'remote', label: `Remote${hiddenRemoteDrives.length ? ` (${hiddenRemoteDrives.length})` : ''}` },
+              ]}
+              active={hiddenDriveScope}
+              onChange={setHiddenDriveScope}
+            />
+
+            {hiddenDriveScope === 'local' && (
+              <>
+                <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+                  Hidden from the local filesystem browser, SSD Backup shares, and Media Import drives.
+                </p>
+                {hiddenDrives.length === 0 && (
+                  <p className="form-hint" style={{ fontStyle: 'italic' }}>No local drives are hidden.</p>
+                )}
+                {hiddenDrives.length > 0 && (
+                  <div className="hidden-drives-list">
+                    {hiddenDrives.map(path => (
+                      <div key={path} className="hidden-drive-item">
+                        <code>{path}</code>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeHiddenDrive(path)} title="Remove">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {hiddenDriveScope === 'remote' && (
+              <>
+                <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+                  Hidden from the remote file picker when browsing Hyper Backup peer destinations.
+                </p>
+                {hiddenRemoteDrives.length === 0 && (
+                  <p className="form-hint" style={{ fontStyle: 'italic' }}>No remote drives are hidden.</p>
+                )}
+                {hiddenRemoteDrives.length > 0 && (
+                  <div className="hidden-drives-list">
+                    {hiddenRemoteDrives.map(path => (
+                      <div key={path} className="hidden-drive-item">
+                        <code>{path}</code>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeHiddenRemoteDrive(path)} title="Remove">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -319,20 +577,22 @@ export default function SettingsPage() {
                     checked={settings.browser_notify_enabled === 'true'}
                     onChange={e => handleBrowserToggle(e.target.checked)}
                   />
-                  Browser Notifications
+                  <Monitor size={14} style={{ marginRight: 4, opacity: 0.6 }} /> Browser Notifications<InfoTip text="Native push notifications via the browser. Works on desktop and mobile. Requires granting notification permission." />
                 </label>
                 <div className="notify-channel-actions">
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={handleBrowserTest}>Test</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={handleBrowserTest}><Send size={14} /> Test</button>
                   {browserTestResult === 'sent' && <span className="test-ok"><CheckCircle size={14} /> Sent!</span>}
                   {browserTestResult === 'failed' && <span className="test-fail"><XCircle size={14} /> Failed</span>}
                 </div>
               </div>
-              <span className="form-hint">Native desktop & mobile push notifications (requires browser permission)</span>
               {'Notification' in window && Notification.permission === 'denied' && (
                 <div className="alert alert-error" style={{ marginTop: 'var(--space-sm)', padding: 'var(--space-sm)' }}>
-                  <AlertTriangle size={14} /> Browser notifications are blocked. Allow them in your browser settings.
+                  <AlertTriangle size={14} /> Notifications are blocked. Allow them in your browser's site settings.
                 </div>
               )}
+              <p className="form-hint" style={{ marginTop: 'var(--space-xs)' }}>
+                Native desktop &amp; Android notifications. On iOS, add RedMan to your home screen (requires iOS 16.4+).
+              </p>
             </div>
 
             <div className="notify-channel">
@@ -344,17 +604,18 @@ export default function SettingsPage() {
                     checked={settings.ntfy_enabled === 'true'}
                     onChange={e => handleNtfyToggle(e.target.checked)}
                   />
-                  ntfy.sh
+                  <Bell size={14} style={{ marginRight: 4, opacity: 0.6 }} /> ntfy.sh<InfoTip text="Push notifications via ntfy.sh — self-hosted or the public server. Delivers to any device with the ntfy app installed." />
                 </label>
                 <div className="notify-channel-actions">
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={handleNtfyTest}>Test</button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowNtfyConfig(true)}>Configure</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={handleNtfyTest}><Send size={14} /> Test</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowNtfyConfig(true)}><SettingsIcon size={14} /> Configure</button>
                   {ntfyTestResult === 'sent' && <span className="test-ok"><CheckCircle size={14} /> Sent!</span>}
                   {ntfyTestResult === 'failed' && <span className="test-fail"><XCircle size={14} /> Failed</span>}
                 </div>
               </div>
-              {settings.ntfy_topic && <span className="form-hint">Topic: {settings.ntfy_topic}</span>}
-              {!settings.ntfy_topic && <span className="form-hint">Push notifications via ntfy.sh (self-hosted or public)</span>}
+              <p className="form-hint" style={{ marginTop: 'var(--space-xs)' }}>
+                Push notifications via <a href="https://ntfy.sh" target="_blank" rel="noreferrer">ntfy.sh</a> or a self-hosted server.{settings.ntfy_topic && <> Topic: <code>{settings.ntfy_topic}</code></>}
+              </p>
             </div>
           </div>
 
@@ -362,13 +623,13 @@ export default function SettingsPage() {
           <div className="card">
             <div className="card-header"><h3><Send size={16} /> Events</h3></div>
             <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
-              Choose which events trigger notifications.
+              These are the global defaults. Individual jobs can override with custom or silent notification rules.
               {notifyDisabled && <em> Enable at least one channel to activate.</em>}
             </p>
 
             <div className="event-toggles">
               <span className="event-group-label">Backup Jobs</span>
-              <span className="form-hint" style={{ marginBottom: 'var(--space-sm)' }}>SSD Backup, Hyper Backup, and Rclone Sync jobs</span>
+              <span className="form-hint" style={{ marginBottom: 'var(--space-sm)' }}>SSD Backup, Hyper Backup, and Cloud Backup jobs</span>
               <label className="toggle-label" data-disabled={notifyDisabled}>
                 <input type="checkbox" className="toggle" disabled={notifyDisabled}
                   checked={settings.ntfy_on_job_start === 'true'}
@@ -438,34 +699,136 @@ export default function SettingsPage() {
       {/* ── Authorized Peers ── */}
       {activeTab === 'peers' && (
         <div className="settings-cards-grid">
+          {/* Incoming pairing requests banner */}
+          {incomingPairings.length > 0 && (
+            <div className="card pairing-banner" style={{ gridColumn: '1 / -1' }}>
+              <div className="card-header" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                <Radar size={16} style={{ color: 'var(--color-primary)' }} />
+                <h3 style={{ margin: 0 }}>Connection Request{incomingPairings.length > 1 ? 's' : ''}</h3>
+              </div>
+              {incomingPairings.map(p => (
+                <div key={p.id} className="pairing-request-card">
+                  <div className="pairing-request-info">
+                    <span className="pairing-request-name">{p.remote_instance}</span>
+                    <span className="pairing-request-detail">wants to connect · {p.remote_url}</span>
+                  </div>
+                  <div className="pairing-request-actions">
+                    <button className="btn btn-primary btn-sm" onClick={() => handleAcceptPairing(p.id)} disabled={pairingProcessing === p.id}>
+                      {pairingProcessing === p.id ? 'Connecting...' : 'Accept'}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleDeclinePairing(p.id)} disabled={pairingProcessing === p.id}>
+                      Decline
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Destinations — peers we push backups TO */}
+          {outgoingPeers.length > 0 && (
+            <div className="card" style={{ gridColumn: '1 / -1' }}>
+              <div className="card-header">
+                <h3><ArrowUpRight size={16} /> Destinations</h3>
+              </div>
+              <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+                Instances this RedMan pushes backups to. Paired via auto-discovery.
+              </p>
+              <div className="peer-list">
+                {outgoingPeers.map(p => (
+                  <div key={`out-${p.id}`} className="config-card">
+                    <div className="config-card-header">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+                        <span className="config-name">{p.name}</span>
+                        <span className="peer-status peer-status-online"><Wifi size={12} /> Paired</span>
+                        {p.handshake_version >= 2
+                          ? <span className="peer-status peer-status-secure" title={p.remote_fingerprint ? `Secure — Fingerprint: ${p.remote_fingerprint}` : 'Secure — Noise XX handshake'}><ShieldCheck size={12} /></span>
+                          : <span className="peer-status peer-status-insecure" title="Legacy pairing — re-pair to upgrade"><ShieldAlert size={12} /></span>}
+                      </div>
+                      <div className="config-actions">
+                        <button type="button" className="btn btn-ghost btn-sm btn-danger" title="Unpair" onClick={() => setConfirmUnpair(p)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="config-details">
+                      <div className="config-detail">
+                        <span className="detail-label"><ArrowUpRight size={12} /> URL</span>
+                        <code>{p.remote_url}</code>
+                      </div>
+                      {p.remote_storage_limit > 0 && (
+                        <div className="config-detail">
+                          <span className="detail-label">Quota</span>
+                          <span>{(p.remote_storage_limit / (1024 ** 3)).toFixed(0)} GB (set by remote)</span>
+                        </div>
+                      )}
+                      {p.remote_allowed_path && p.remote_allowed_path !== '/' && (
+                        <div className="config-detail">
+                          <span className="detail-label"><FolderLock size={12} /> Allowed Path</span>
+                          <code>{p.remote_allowed_path}</code>
+                        </div>
+                      )}
+                      {p.created_at && (
+                        <div className="config-detail">
+                          <span className="detail-label"><Clock size={12} /> Paired</span>
+                          <span>{formatDateTime(p.created_at, settings)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sources — peers authorized to push backups HERE */}
           <div className="card" style={{ gridColumn: '1 / -1' }}>
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3><Users size={16} /> Authorized Peers</h3>
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => {
-                setPeerForm({ name: '', allowed_path_prefix: '/' });
-                setEditingPeer(null);
-                setShowPeerForm(true);
-              }}>
-                <Plus size={14} /> Add Peer
-              </button>
+              <h3><ArrowDownLeft size={16} /> Sources</h3>
+              <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={handleCheckConnectivity} disabled={checkingConnectivity || peers.length === 0}>
+                  {checkingConnectivity ? <><Wifi size={14} className="spin" /> Checking...</> : <><Wifi size={14} /> Check Status</>}
+                </button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => {
+                  setPeerForm({ name: '', allowed_path_prefix: '/', storage_limit_gb: '' });
+                  setEditingPeer(null);
+                  setShowPeerForm(true);
+                }}>
+                  <Plus size={14} /> Add Peer
+                </button>
+              </div>
             </div>
             <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
-              Each peer gets a unique API key. Remote RedMan instances use this key to authenticate when pushing backups here.
+              Instances authorized to push backups to this RedMan. Created automatically during pairing.
             </p>
 
             {peers.length === 0 ? (
               <div className="empty-state" style={{ padding: 'var(--space-lg)' }}>
-                <Users size={32} style={{ opacity: 0.3 }} />
-                <p>No authorized peers yet. Add one to allow remote RedMan instances to back up here.</p>
+                <ArrowDownLeft size={32} style={{ opacity: 0.3 }} />
+                <p>No incoming peers yet. When another instance pairs with this one, it will appear here.</p>
               </div>
             ) : (
               <div className="peer-list">
                 {peers.map(p => (
                   <div key={p.id} className="config-card" style={{ opacity: p.enabled ? 1 : 0.6 }}>
                     <div className="config-card-header">
-                      <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', flexWrap: 'wrap' }}>
                         <span className="config-name">{p.name}</span>
-                        {!p.enabled && <span className="badge badge-muted" style={{ marginLeft: 'var(--space-xs)' }}>Disabled</span>}
+                        {!p.enabled && <span className="badge badge-muted" style={{ marginLeft: 0 }}>Disabled</span>}
+                        {p.static_pubkey
+                          ? <span className="peer-status peer-status-secure" title="Secure — Noise XX handshake"><ShieldCheck size={12} /></span>
+                          : <span className="peer-status peer-status-insecure" title="Legacy pairing — re-pair to upgrade"><ShieldAlert size={12} /></span>}
+                        {peerConnectivity[p.id] && (
+                          <span className={`peer-status peer-status-${peerConnectivity[p.id].status}`}>
+                            {peerConnectivity[p.id].status === 'online'
+                              ? <><Wifi size={12} /> Online{peerConnectivity[p.id].instance ? ` (${peerConnectivity[p.id].instance})` : ''}</>
+                              : peerConnectivity[p.id].status === 'unknown'
+                                ? <><WifiOff size={12} /> Never connected</>
+                                : peerConnectivity[p.id].status === 'disabled'
+                                  ? <><WifiOff size={12} /> Disabled</>
+                                  : <><WifiOff size={12} /> Unreachable</>}
+                          </span>
+                        )}
                       </div>
                       <div className="config-actions">
                         <button type="button" className="btn btn-ghost btn-sm" title="View audit log" onClick={() => handleViewAuditLog(p.id)}>
@@ -476,7 +839,7 @@ export default function SettingsPage() {
                         </button>
                         <button type="button" className="btn btn-ghost btn-sm" title="Edit" onClick={() => {
                           setEditingPeer(p);
-                          setPeerForm({ name: p.name, allowed_path_prefix: p.allowed_path_prefix, enabled: !!p.enabled });
+                          setPeerForm({ name: p.name, allowed_path_prefix: p.allowed_path_prefix, enabled: !!p.enabled, storage_limit_gb: p.storage_limit_bytes ? (p.storage_limit_bytes / (1024 ** 3)).toFixed(0) : '' });
                           setShowPeerForm(true);
                         }}>
                           Edit
@@ -495,10 +858,16 @@ export default function SettingsPage() {
                         <span className="detail-label"><Key size={12} /> API Key</span>
                         <code>{p.api_key}</code>
                       </div>
+                      {p.storage_limit_bytes > 0 && (
+                        <div className="config-detail">
+                          <span className="detail-label">Storage Limit</span>
+                          <span>{(p.storage_limit_bytes / (1024 ** 3)).toFixed(0)} GB (soft)</span>
+                        </div>
+                      )}
                       {p.last_seen_at && (
                         <div className="config-detail">
                           <span className="detail-label"><Clock size={12} /> Last Seen</span>
-                          <span>{new Date(p.last_seen_at + 'Z').toLocaleString()}</span>
+                          <span>{formatDateTime(p.last_seen_at, settings)}{p.last_seen_ip ? ` from ${p.last_seen_ip}` : ''}</span>
                         </div>
                       )}
                     </div>
@@ -539,7 +908,7 @@ export default function SettingsPage() {
 
       {/* Add/Edit Peer Modal */}
       {showPeerForm && (
-        <div className="modal-overlay" onClick={() => { setShowPeerForm(false); setEditingPeer(null); }}>
+        <div className="modal-overlay" onClick={() => { setShowPeerForm(false); setEditingPeer(null); setShowPeerPathPicker(false); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <form onSubmit={editingPeer ? handleUpdatePeer : handleCreatePeer}>
               <div className="modal-header"><h3>{editingPeer ? 'Edit Peer' : 'Add Authorized Peer'}</h3></div>
@@ -551,8 +920,63 @@ export default function SettingsPage() {
                 </div>
                 <div className="form-group">
                   <label>Allowed Path Prefix</label>
-                  <input value={peerForm.allowed_path_prefix} onChange={e => setPeerForm(f => ({ ...f, allowed_path_prefix: e.target.value }))} placeholder="/" required />
+                  <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                    <input style={{ flex: 1 }} value={peerForm.allowed_path_prefix} onChange={e => setPeerForm(f => ({ ...f, allowed_path_prefix: e.target.value }))} placeholder="/" required />
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowPeerPathPicker(!showPeerPathPicker)}>
+                      <FolderOpen size={14} /> Browse
+                    </button>
+                  </div>
                   <span className="form-hint">This peer can only write to paths under this prefix (e.g. <code>/backups/from-dad</code>). Use <code>/</code> for unrestricted.</span>
+                  {showPeerPathPicker && (() => {
+                    const roots = availableDrives.filter(d => d.type === 'root');
+                    const shares = availableDrives.filter(d => d.type === 'share');
+                    return (
+                      <div className="peer-path-picker">
+                        {roots.length > 0 && (
+                          <>
+                            <span className="event-group-label" style={{ marginBottom: 'var(--space-xs)', display: 'block' }}>Mount Points</span>
+                            <div className="drive-picker-grid">
+                              {roots.map(d => (
+                                <button key={d.path} type="button" className="drive-picker-item" onClick={() => {
+                                  setPeerForm(f => ({ ...f, allowed_path_prefix: d.path }));
+                                  setShowPeerPathPicker(false);
+                                }}>
+                                  <HardDrive size={14} />
+                                  <span className="drive-picker-name">{d.name}</span>
+                                  <code className="drive-picker-path">{d.path}</code>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {shares.length > 0 && (
+                          <>
+                            <span className="event-group-label" style={{ marginTop: roots.length > 0 ? 'var(--space-md)' : 0, marginBottom: 'var(--space-xs)', display: 'block' }}>Unraid Shares</span>
+                            <div className="drive-picker-grid">
+                              {shares.map(d => (
+                                <button key={d.path} type="button" className="drive-picker-item" onClick={() => {
+                                  setPeerForm(f => ({ ...f, allowed_path_prefix: d.path }));
+                                  setShowPeerPathPicker(false);
+                                }}>
+                                  <Folder size={14} />
+                                  <span className="drive-picker-name">{d.name}</span>
+                                  <code className="drive-picker-path">{d.path}</code>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {availableDrives.length === 0 && (
+                          <p className="form-hint" style={{ fontStyle: 'italic' }}>No drives detected. Type a path manually.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="form-group">
+                  <label>Storage Limit (GB)</label>
+                  <input type="number" min="0" value={peerForm.storage_limit_gb} onChange={e => setPeerForm(f => ({ ...f, storage_limit_gb: e.target.value }))} placeholder="Unlimited" />
+                  <span className="form-hint">Soft cap — checked before each backup starts. A running backup may temporarily exceed this limit. Set lower than available disk space to leave headroom.</span>
                 </div>
                 {editingPeer && (
                   <div className="form-group">
@@ -565,7 +989,7 @@ export default function SettingsPage() {
                 )}
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-ghost" onClick={() => { setShowPeerForm(false); setEditingPeer(null); }}>Cancel</button>
+                <button type="button" className="btn btn-ghost" onClick={() => { setShowPeerForm(false); setEditingPeer(null); setShowPeerPathPicker(false); }}>Cancel</button>
                 <button type="submit" className="btn btn-primary">{editingPeer ? 'Save' : 'Create Peer'}</button>
               </div>
             </form>
@@ -606,6 +1030,25 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Unpair Destination Confirmation */}
+      {confirmUnpair && (
+        <div className="modal-overlay" onClick={() => setConfirmUnpair(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>Unpair</h3></div>
+            <div className="modal-body">
+              <p>Unpair from <strong>{confirmUnpair.name}</strong>? You can re-pair later via auto-discovery.</p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setConfirmUnpair(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" onClick={async () => {
+                try { await apiDeletePairing(confirmUnpair.id); loadPeers(); } catch (err) { alert(err.message); }
+                setConfirmUnpair(null);
+              }}>Unpair</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Peer Audit Log Modal */}
       {peerAuditLog && (
         <div className="modal-overlay" onClick={() => { setPeerAuditLog(null); setAuditPeerId(null); }}>
@@ -621,7 +1064,7 @@ export default function SettingsPage() {
                     <tbody>
                       {peerAuditLog.entries.map(e => (
                         <tr key={e.id}>
-                          <td style={{ whiteSpace: 'nowrap' }}>{new Date(e.created_at + 'Z').toLocaleString()}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(e.created_at, settings)}</td>
                           <td><code>{e.action}</code></td>
                           <td><code>{e.ip_address}</code></td>
                           <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.details || '—'}</td>
@@ -646,11 +1089,27 @@ export default function SettingsPage() {
           <div className="card">
             <div className="card-header"><h3><Camera size={16} /> Immich</h3></div>
             <div className="form-group">
-              <label>Server URL</label>
-              <input value={settings.immich_server_url || ''} onChange={e => update('immich_server_url', e.target.value)} placeholder="http://immich:2283" />
+              <label>Server URL<InfoTip text="The URL of your Immich instance. Click Discover to auto-detect it on your network." /></label>
+              <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                <input style={{ flex: 1 }} value={settings.immich_server_url || ''} onChange={e => update('immich_server_url', e.target.value)} placeholder="http://immich:2283" />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={handleDiscoverImmich} disabled={discoveringImmich} title="Scan network for Immich instances">
+                  {discoveringImmich ? <><Radar size={14} className="spin" /> Scanning...</> : <><Radar size={14} /> Discover</>}
+                </button>
+              </div>
+              {discoveredImmich.length > 0 && (
+                <div className="discovery-results">
+                  {discoveredImmich.map(inst => (
+                    <button key={inst.ip} type="button" className="discovery-item" onClick={() => selectDiscoveredImmich(inst)}>
+                      <span className="discovery-name">Immich @ {inst.ip}</span>
+                      <span className="discovery-detail">{inst.url} — v{inst.version}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {immichDiscoveryError && <span className="form-hint" style={{ color: 'var(--warning)' }}>{immichDiscoveryError}</span>}
             </div>
             <div className="form-group">
-              <label>API Key</label>
+              <label>API Key<InfoTip text="Generate this in Immich under Administration → API Keys. Needed for uploading media." /></label>
               <div className="token-input">
                 <input
                   type={showTokens.immich_api_key ? 'text' : 'password'}
@@ -676,7 +1135,7 @@ export default function SettingsPage() {
                 </span>
               )}
             </div>
-            <div className="alert alert-info" style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-start' }}>
+            <div className="alert alert-info" style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-start', marginTop: 'var(--space-md)' }}>
               <Info size={16} style={{ flexShrink: 0, marginTop: 2 }} />
               <div>
                 <strong>Mount propagation required</strong> — For drive detection to work inside Docker, mount <code>/mnt/disks</code> with <code>rslave</code> propagation in your <code>docker-compose.yml</code>.
@@ -684,97 +1143,151 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Peer API Port */}
-          <div className="card">
-            <div className="card-header"><h3><Link size={16} /> Peer API (Hyper Backup)</h3></div>
-            <div className="form-group">
-              <label>Peer API Port</label>
-              <input type="number" value={settings.peer_api_port || '8091'} onChange={e => update('peer_api_port', e.target.value)} />
-              <span className="form-hint">Requires restart to take effect. Manage authorized peers in the Authorized Peers tab.</span>
-            </div>
-          </div>
         </div>
       )}
 
       {/* ── Infrastructure ── */}
       {activeTab === 'infrastructure' && (
         <div className="settings-cards-grid">
-          {/* SSH Keys */}
-          <div className="card ssh-setup">
-            <div className="card-header"><h3><Key size={16} /> SSH Keys</h3></div>
-            <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>Used by Hyper Backup for rsync over SSH to remote hosts.</p>
-            {!ssh.keyExists ? (
-              <div className="ssh-no-key">
-                <p className="form-hint">No SSH key found. Generate one to enable Hyper Backup.</p>
-                <button type="button" className="btn btn-primary btn-sm" onClick={handleGenerateKey} disabled={sshGenerating}>
-                  {sshGenerating ? 'Generating...' : <><Key size={14} /> Generate SSH Key</>}
-                </button>
-              </div>
-            ) : (
-              <div className="ssh-key-info">
-                <div className="ssh-status-row">
-                  <span className="ssh-status-ok"><CheckCircle size={14} /> SSH key configured</span>
-                </div>
-                <div className="form-group" style={{ marginTop: 'var(--space-sm)' }}>
-                  <label>Public Key <small>(add this to remote hosts' <code>~/.ssh/authorized_keys</code>)</small></label>
-                  <div className="ssh-pubkey-row">
-                    <code className="ssh-pubkey">{ssh.publicKey}</code>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={copyPublicKey} title="Copy to clipboard">
-                      {sshCopied ? <CheckCircle size={14} /> : <Copy size={14} />}
-                    </button>
-                  </div>
-                </div>
-                <div className="ssh-actions">
-                  <div className="ssh-test-row">
-                    <input
-                      placeholder="Host to test (e.g. localhost)"
-                      value={sshTestHost}
-                      onChange={e => setSshTestHost(e.target.value)}
-                      style={{ maxWidth: '200px' }}
-                    />
-                    <input
-                      placeholder="User"
-                      value={sshTestUser}
-                      onChange={e => setSshTestUser(e.target.value)}
-                      style={{ maxWidth: '120px' }}
-                    />
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={handleSshTest} disabled={!sshTestHost}>
-                      <Terminal size={14} /> Test SSH
-                    </button>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={handleAuthorizeLocalhost} title="Add key to local authorized_keys for testing">
-                      <Shield size={14} /> Authorize Localhost
-                    </button>
-                  </div>
-                  {sshTestResult && (
-                    <div className={`test-result ${sshTestResult.ok ? 'success' : 'failure'}`} style={{ marginTop: 'var(--space-xs)' }}>
-                      {sshTestResult.ok
-                        ? <><CheckCircle size={14} /> {sshTestResult.message || 'SSH connection successful!'}</>
-                        : <><XCircle size={14} /> {sshTestResult.error}</>}
-                    </div>
+          {/* Network Discovery */}
+          <div className="card">
+            <div className="card-header"><h3><Radar size={16} /> Network Discovery</h3></div>
+
+            {/* Auto-detected subnets */}
+            <div className="form-group">
+              <label>Detected LAN</label>
+              {subnetInfo ? (
+                <div className="subnet-detected">
+                  {subnetInfo.auto?.length > 0 ? (
+                    <span className="subnet-badge subnet-ok">
+                      <Wifi size={14} /> {subnetInfo.auto.join(', ')}
+                      <span className="subnet-source">via {subnetInfo.source}</span>
+                    </span>
+                  ) : (
+                    <span className="subnet-badge subnet-none">
+                      <WifiOff size={14} /> Not detected — add subnets manually below
+                    </span>
                   )}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={handleRedetectSubnets} disabled={detectingSubnets} title="Re-detect">
+                    <RefreshCw size={14} className={detectingSubnets ? 'spin' : ''} />
+                  </button>
                 </div>
-              </div>
-            )}
+              ) : (
+                <span className="form-hint">Detecting...</span>
+              )}
+            </div>
+
+            {/* Manual subnets (optional, for VPN etc.) */}
+            <div className="form-group">
+              <label>Additional Subnets <small>(optional)</small><InfoTip text="Extra network ranges to scan for RedMan peers. Useful for VPN or multi-site setups. Your LAN is detected automatically." /></label>
+              <input value={settings.discovery_subnets || ''} onChange={e => update('discovery_subnets', e.target.value)} placeholder="e.g. 10.0.0.0/24 for VPN" />
+            </div>
+          </div>
+
+          {/* Peer API */}
+          <div className="card">
+            <div className="card-header"><h3><Link size={16} /> Peer API (Hyper Backup)</h3></div>
+            <div className="form-group">
+              <label>Peer API Port<InfoTip text="The port used for peer-to-peer communication between RedMan instances (Hyper Backup). Change requires a container restart." /></label>
+              <input type="number" value={settings.peer_api_port || '8091'} onChange={e => update('peer_api_port', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Peer API URL <small>(optional)</small><InfoTip text="The URL other instances use to reach this RedMan's peer API. Required for multi-site or VPN setups where auto-detection picks the wrong address. Example: http://192.168.1.50:8091" /></label>
+              <input value={settings.peer_api_url || ''} onChange={e => update('peer_api_url', e.target.value)} placeholder="Auto-detected (leave blank for LAN)" />
+            </div>
           </div>
 
           {/* Docker */}
           <div className="card">
             <div className="card-header"><h3><Container size={16} /> Docker</h3></div>
             <div className="form-group">
-              <label>Docker Socket Path</label>
+              <label>Docker Socket Path<InfoTip text="Path to the Docker socket for container monitoring and metrics collection." /></label>
               <input value={settings.docker_socket || ''} onChange={e => update('docker_socket', e.target.value)} placeholder="/var/run/docker.sock" />
             </div>
             <div className="form-group">
-              <label>Metrics Poll Interval (seconds)</label>
+              <label>Metrics Poll Interval (seconds)<InfoTip text="How often to collect CPU, memory, and network stats from running containers. Lower values = more detail but more disk usage." /></label>
               <input type="number" value={settings.metrics_poll_interval || '30'} onChange={e => update('metrics_poll_interval', e.target.value)} min="10" max="300" />
             </div>
             <div className="form-group">
-              <label>Metrics Retention (hours)</label>
+              <label>Metrics Retention (hours)<InfoTip text="How long to keep container metric history. Older data is automatically purged." /></label>
               <input type="number" value={settings.metrics_retention_hours || '24'} onChange={e => update('metrics_retention_hours', e.target.value)} min="1" max="168" />
             </div>
           </div>
         </div>
       )}
+
+      {/* Hidden Drive Picker Modal */}
+      {showHiddenDriveModal && (() => {
+        const isRemote = hiddenDriveScope === 'remote';
+        const currentList = isRemote ? hiddenRemoteDrives : hiddenDrives;
+        const addFn = isRemote ? addHiddenRemoteDrive : addHiddenDrive;
+        const settingsKey = isRemote ? 'hidden_remote_drives' : 'hidden_drives';
+        const unhidden = availableDrives.filter(d => !currentList.includes(d.path));
+        const roots = unhidden.filter(d => d.type === 'root');
+        const shares = unhidden.filter(d => d.type === 'share');
+        return (
+        <div className="modal-overlay" onClick={() => setShowHiddenDriveModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3><EyeOff size={16} /> Hide a {isRemote ? 'Remote' : 'Local'} Drive</h3></div>
+            <div className="modal-body">
+              {!isRemote && roots.length > 0 && (
+                <>
+                  <span className="event-group-label" style={{ marginBottom: 'var(--space-xs)', display: 'block' }}>Mount Points</span>
+                  <div className="drive-picker-grid">
+                    {roots.map(d => (
+                      <button key={d.path} type="button" className="drive-picker-item" onClick={() => {
+                        update(settingsKey, JSON.stringify([...currentList, d.path]));
+                        setShowHiddenDriveModal(false);
+                      }}>
+                        <HardDrive size={14} />
+                        <span className="drive-picker-name">{d.name}</span>
+                        <code className="drive-picker-path">{d.path}</code>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {!isRemote && shares.length > 0 && (
+                <>
+                  <span className="event-group-label" style={{ marginTop: roots.length > 0 ? 'var(--space-md)' : 0, marginBottom: 'var(--space-xs)', display: 'block' }}>Unraid Shares</span>
+                  <div className="drive-picker-grid">
+                    {shares.map(d => (
+                      <button key={d.path} type="button" className="drive-picker-item" onClick={() => {
+                        update(settingsKey, JSON.stringify([...currentList, d.path]));
+                        setShowHiddenDriveModal(false);
+                      }}>
+                        <Folder size={14} />
+                        <span className="drive-picker-name">{d.name}</span>
+                        <code className="drive-picker-path">{d.path}</code>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {isRemote && (
+                <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+                  Enter the mount point path as it appears on the remote peer (e.g. <code>/mnt/user/Backups</code>).
+                </p>
+              )}
+              {!isRemote && <span className="event-group-label" style={{ marginTop: 'var(--space-md)', marginBottom: 'var(--space-xs)', display: 'block' }}>Custom Path</span>}
+              <div className="hidden-drive-add">
+                <input
+                  value={hiddenDriveInput}
+                  onChange={e => setHiddenDriveInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { addFn(); setShowHiddenDriveModal(false); } }}
+                  placeholder={isRemote ? '/mnt/user/ShareName' : '/mnt/point'}
+                  autoFocus
+                />
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => { addFn(); setShowHiddenDriveModal(false); }}>Add</button>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setShowHiddenDriveModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Floating unsaved changes bar */}
       <div className="unsaved-bar" style={{ bottom: hasChanges ? 24 : -120 }}>

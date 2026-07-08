@@ -150,6 +150,10 @@ async function runScan(scan) {
       }
 
       if (!entry.isFile()) continue;
+
+      // Skip macOS resource fork files (._filename) and .DS_Store
+      if (entry.name.startsWith('._') || entry.name === '.DS_Store') continue;
+
       fileCount++;
 
       const ext = extname(entry.name).toLowerCase();

@@ -69,6 +69,44 @@ router.get('/summary', (req, res) => {
     summary.versionStats = null;
   }
 
+  // Hyper Backup cumulative stats
+  try {
+    const hyperStats = db.prepare(`
+      SELECT COUNT(*) as totalRuns,
+        SUM(bytes_transferred) as totalBytes,
+        SUM(files_copied) as totalFiles
+      FROM backup_runs WHERE feature = 'hyper-backup' AND status = 'completed'
+    `).get();
+    const hyperJobs = db.prepare(`
+      SELECT name, remote_url, remote_path FROM hyper_backup_jobs WHERE enabled = 1
+    `).all();
+    summary['hyper-backup'].cumulative = {
+      totalRuns: hyperStats.totalRuns || 0,
+      totalBytes: hyperStats.totalBytes || 0,
+      totalFiles: hyperStats.totalFiles || 0,
+      targets: hyperJobs.map(j => ({ name: j.name, host: j.remote_url, path: j.remote_path })),
+    };
+  } catch { /* ignore */ }
+
+  // Rclone cumulative stats
+  try {
+    const rcloneStats = db.prepare(`
+      SELECT COUNT(*) as totalRuns,
+        SUM(bytes_transferred) as totalBytes,
+        SUM(files_copied) as totalFiles
+      FROM backup_runs WHERE feature = 'rclone' AND status = 'completed'
+    `).get();
+    const rcloneJobs = db.prepare(`
+      SELECT name, remote_name, remote_path, sync_direction FROM rclone_jobs WHERE enabled = 1
+    `).all();
+    summary.rclone.cumulative = {
+      totalRuns: rcloneStats.totalRuns || 0,
+      totalBytes: rcloneStats.totalBytes || 0,
+      totalFiles: rcloneStats.totalFiles || 0,
+      remotes: rcloneJobs.map(j => ({ name: j.name, remote: `${j.remote_name}:${j.remote_path}`, direction: j.sync_direction })),
+    };
+  } catch { /* ignore */ }
+
   res.json(summary);
 });
 

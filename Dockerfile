@@ -19,17 +19,31 @@ RUN npm ci --omit=dev || npm install --omit=dev
 # ---- Stage 3: Final runtime image ----
 FROM node:20-alpine
 
-# Install util-linux (lsblk, umount), librsync (rdiff for delta versioning) and download immich-go
-RUN apk add --no-cache util-linux curl librsync && \
+# Pinned immich-go version. Bump + re-verify checksums.txt when upgrading.
+# Upstream publishes a checksums.txt alongside each release; we verify the tarball
+# against it before extraction to mitigate supply-chain tampering.
+ARG IMMICH_GO_VERSION=v0.31.0
+
+# Install util-linux (lsblk, umount), rsync, openssh-client (ssh for rsync transport), librsync (rdiff for delta versioning), rclone (cloud remotes) and download+verify immich-go
+RUN apk add --no-cache util-linux curl rsync openssh-client librsync openssh-keygen rclone tzdata && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
-      x86_64) GOARCH="amd64" ;; \
+      x86_64) GOARCH="x86_64" ;; \
       aarch64) GOARCH="arm64" ;; \
-      *) GOARCH="amd64" ;; \
+      *) GOARCH="x86_64" ;; \
     esac && \
-    IMMICH_GO_VERSION=$(curl -sL "https://api.github.com/repos/simulot/immich-go/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4) && \
-    curl -sL "https://github.com/simulot/immich-go/releases/download/${IMMICH_GO_VERSION}/immich-go_Linux_${GOARCH}.tar.gz" | tar xz -C /usr/local/bin immich-go && \
-    chmod +x /usr/local/bin/immich-go
+    TARBALL="immich-go_Linux_${GOARCH}.tar.gz" && \
+    BASE="https://github.com/simulot/immich-go/releases/download/${IMMICH_GO_VERSION}" && \
+    cd /tmp && \
+    curl -fsSL -o "${TARBALL}" "${BASE}/${TARBALL}" && \
+    curl -fsSL -o checksums.txt "${BASE}/checksums.txt" && \
+    grep " ${TARBALL}\$" checksums.txt | sha256sum -c - && \
+    tar xzf "${TARBALL}" -C /usr/local/bin immich-go && \
+    chmod +x /usr/local/bin/immich-go && \
+    rm -f "${TARBALL}" checksums.txt
+
+# Store rclone config in the persisted data volume
+ENV RCLONE_CONFIG=/app/backend/data/rclone.conf
 
 WORKDIR /app/backend
 

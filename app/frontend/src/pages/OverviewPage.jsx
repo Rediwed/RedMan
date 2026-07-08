@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getOverviewSummary, getDockerContainers, getDockerStatus, dockerAction, getContainerMetrics } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatDateTime } from '../utils/dateFormat.js';
 import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Container, RotateCw, Square, Play, CheckCircle2, XCircle } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import MetricsChart from '../components/MetricsChart.jsx';
 import './OverviewPage.css';
 
 export default function OverviewPage() {
+  const { settings } = useSettings();
   const [summary, setSummary] = useState(null);
   const [containers, setContainers] = useState([]);
   const [dockerAvailable, setDockerAvailable] = useState(false);
@@ -71,7 +74,7 @@ export default function OverviewPage() {
   const features = [
     { key: 'ssd-backup', name: 'SSD Backup', icon: HardDrive, color: 'var(--color-ssd)', link: '/ssd-backup' },
     { key: 'hyper-backup', name: 'Hyper Backup', icon: RefreshCw, color: 'var(--color-hyper)', link: '/hyper-backup' },
-    { key: 'rclone', name: 'Rclone Sync', icon: Cloud, color: 'var(--color-rclone)', link: '/rclone' },
+    { key: 'rclone', name: 'Cloud Backup', icon: Cloud, color: 'var(--color-rclone)', link: '/rclone' },
   ];
 
   return (
@@ -109,7 +112,7 @@ export default function OverviewPage() {
                 <div className="feature-stat">
                   <span className="feature-stat-value feature-stat-small">
                     {data?.lastRun?.started_at
-                      ? new Date(data.lastRun.started_at).toLocaleString()
+                      ? formatDateTime(data.lastRun.started_at, settings)
                       : 'Never'}
                   </span>
                   <span className="feature-stat-label">Last Run Time</span>
@@ -127,6 +130,21 @@ export default function OverviewPage() {
                   <span className="feature-footer-label">
                     Versions: {summary.versionStats.snapshotCount} snapshots · {formatBytes(summary.versionStats.totalDiskSize)}
                     {summary.versionStats.spaceSaved > 0 && ` (saved ${formatBytes(summary.versionStats.spaceSaved)} with deltas)`}
+                  </span>
+                </div>
+              )}
+              {f.key === 'hyper-backup' && data?.cumulative?.totalRuns > 0 && (
+                <div className="feature-card-footer">
+                  <span className="feature-footer-label">
+                    Total: {formatBytes(data.cumulative.totalBytes)} transferred · {data.cumulative.totalFiles} files across {data.cumulative.totalRuns} runs
+                  </span>
+                </div>
+              )}
+              {f.key === 'rclone' && data?.cumulative?.totalRuns > 0 && (
+                <div className="feature-card-footer">
+                  <span className="feature-footer-label">
+                    Total: {formatBytes(data.cumulative.totalBytes)} synced · {data.cumulative.totalFiles} files across {data.cumulative.totalRuns} runs
+                    {data.cumulative.remotes?.length > 0 && ` · ${data.cumulative.remotes.map(r => r.remote).join(', ')}`}
                   </span>
                 </div>
               )}

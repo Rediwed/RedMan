@@ -46,7 +46,7 @@ export default function useJobProgress(fetchRunDetail, onCompleted) {
       for (const runId of ids) {
         try {
           const detail = await fetchRunDetail(parseInt(runId));
-          if (detail.status === 'completed' || detail.status === 'failed') {
+          if (detail.status === 'completed' || detail.status === 'failed' || detail.status === 'cancelled') {
             setActiveRuns(prev => {
               const next = { ...prev };
               delete next[runId];
@@ -76,11 +76,20 @@ export default function useJobProgress(fetchRunDetail, onCompleted) {
     return null;
   }, [activeRuns]);
 
+  // Get the runId for a specific config/job ID (for cancel)
+  const getRunIdForConfig = useCallback((configId) => {
+    for (const [runId, progress] of Object.entries(activeRuns)) {
+      if (String(progress.configId) === String(configId)) return parseInt(runId);
+    }
+    return null;
+  }, [activeRuns]);
+
   return {
     activeRuns,
     trackRun,
     detectRunning,
     getProgressForConfig,
+    getRunIdForConfig,
     hasActive: !!runIdsKey,
   };
 }

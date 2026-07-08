@@ -1,9 +1,24 @@
+import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Camera, Settings } from 'lucide-react';
+import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Camera, Settings, Menu, X } from 'lucide-react';
 import ConnectionStatus from './ConnectionStatus.jsx';
+import { getSettings } from '../api/index.js';
 import './Navbar.css';
 
 export default function Navbar() {
+  const [instanceName, setInstanceName] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    getSettings()
+      .then(s => {
+        const name = s.instance_name || '';
+        setInstanceName(name);
+        document.title = name ? `RedMan — ${name}` : 'RedMan';
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <nav className="navbar">
       <div className="navbar-brand">
@@ -46,26 +61,29 @@ export default function Navbar() {
           <circle cx="320" cy="304" r="3" fill="#60a5fa" opacity="0.7"/>
           <line x1="256" y1="154" x2="256" y2="184" stroke="#fef2f4" strokeWidth="2.5" opacity="0.4" strokeDasharray="4,4"/>
         </svg>
-        <span className="navbar-title">RedMan</span>
+        <span className="navbar-title">RedMan{instanceName ? ` — ${instanceName}` : ''}</span>
         <ConnectionStatus />
       </div>
-      <div className="navbar-links">
-        <NavLink to="/" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} end>
+      <button className="navbar-toggle" onClick={() => setMenuOpen(v => !v)} aria-label="Toggle menu">
+        {menuOpen ? <X size={22} /> : <Menu size={22} />}
+      </button>
+      <div className={`navbar-links${menuOpen ? ' open' : ''}`}>
+        <NavLink to="/" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} end onClick={() => setMenuOpen(false)}>
           <LayoutDashboard size={16} /> Overview
         </NavLink>
-        <NavLink to="/ssd-backup" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+        <NavLink to="/ssd-backup" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
           <HardDrive size={16} /> SSD Backup
         </NavLink>
-        <NavLink to="/hyper-backup" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+        <NavLink to="/hyper-backup" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
           <RefreshCw size={16} /> Hyper Backup
         </NavLink>
-        <NavLink to="/rclone" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
-          <Cloud size={16} /> Rclone
+        <NavLink to="/rclone" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
+          <Cloud size={16} /> Cloud Backup
         </NavLink>
-        <NavLink to="/media-import" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+        <NavLink to="/media-import" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
           <Camera size={16} /> Media Import
         </NavLink>
-        <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+        <NavLink to="/settings" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
           <Settings size={16} /> Settings
         </NavLink>
       </div>

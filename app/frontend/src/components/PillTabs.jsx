@@ -5,6 +5,7 @@ export default function PillTabs({ tabs, active, onChange }) {
     <div className="pill-tabs">
       {tabs.map((tab) => (
         <button
+          type="button"
           key={tab.value}
           className={`pill-tab ${active === tab.value ? 'active' : ''}`}
           onClick={() => onChange(tab.value)}

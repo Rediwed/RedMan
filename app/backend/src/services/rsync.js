@@ -6,7 +6,7 @@ import { mkdir, access, constants } from 'fs/promises';
 import { join } from 'path';
 import os from 'os';
 import db from '../db.js';
-import { notifyBackupResult } from './notify.js';
+import { notifyBackupResult, shouldNotify } from './notify.js';
 import { pruneVersions } from './versionBrowser.js';
 import { withConfigLock, rebaseDeltasWithTimestamp, deltaifySnapshot, computeVersionStats } from './deltaVersion.js';
 import { backupDatabase } from './dbBackup.js';
@@ -14,8 +14,8 @@ import { backupDatabase } from './dbBackup.js';
 // Active runs tracked for progress reporting
 const activeRuns = new Map();
 
-// Active child processes tracked for graceful shutdown
-const activeProcesses = new Set();
+// Active child processes tracked for graceful shutdown and cancellation
+const activeProcesses = new Map(); // runId -> ChildProcess
 
 const IS_MAC = os.platform() === 'darwin';
 
@@ -40,6 +40,15 @@ function cleanLine(line) {
 
 export function getActiveRun(runId) {
   return activeRuns.get(runId);
+}
+
+export function cancelSsdRun(runId) {
+  const proc = activeProcesses.get(runId);
+  if (proc) {
+    proc.kill('SIGTERM');
+    return true;
+  }
+  return false;
 }
 
 export async function executeSsdBackup(configId, existingRunId = null) {
@@ -87,10 +96,12 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       const availableKB = parseInt(parts[3]);
       if (!isNaN(availableKB)) {
         const availableGB = availableKB / (1024 * 1024);
-        if (availableGB < 1) {
+        if (availableKB === 0) {
+          // Unraid's shfs reports 0 available inside containers — skip the check
+          console.warn(`[ssd-backup] df reports 0 available for "${config.dest_path}" (likely Unraid shfs) — skipping space check`);
+        } else if (availableGB < 1) {
           throw new Error(`Destination has less than 1 GB free (${availableGB.toFixed(2)} GB). Aborting to prevent disk full.`);
-        }
-        if (availableGB < 10) {
+        } else if (availableGB < 10) {
           console.warn(`[ssd-backup] Warning: destination "${config.dest_path}" has only ${availableGB.toFixed(1)} GB free`);
         }
       }
@@ -102,7 +113,13 @@ export async function executeSsdBackup(configId, existingRunId = null) {
     // Build rsync command arguments
     const args = [
       '-av',
-      '--delete',
+      '--no-owner',
+      '--no-group',
+      '--omit-dir-times',
+      '--delete-after',
+      '--exclude=.versions',
+      '--exclude=.rsync-partial',
+      '--exclude=.redman-db-backup',
       '--itemize-changes',
       '--stats',
       '--human-readable',
@@ -132,6 +149,17 @@ export async function executeSsdBackup(configId, existingRunId = null) {
 
     const result = await runRsync(args, runId, progress);
 
+    // Determine status: exit code 23 = partial transfer (some attrs failed but data ok)
+    // If any files failed we downgrade a clean exit to 'partial' so the UI reflects reality.
+    let status;
+    if (result.exitCode === 0) {
+      status = progress.filesFailed > 0 ? 'partial' : 'completed';
+    } else if (result.exitCode === 23 && progress.filesCopied > 0) {
+      status = 'partial';
+    } else {
+      status = 'failed';
+    }
+
     // Update run record
     const duration = (Date.now() - startTime) / 1000;
     db.prepare(`
@@ -141,19 +169,19 @@ export async function executeSsdBackup(configId, existingRunId = null) {
         bytes_transferred = ?, duration_seconds = ?, error_message = ?
       WHERE id = ?
     `).run(
-      result.exitCode === 0 ? 'completed' : 'failed',
+      status,
       progress.filesTotal, progress.filesCopied, progress.filesFailed,
       progress.bytesTransferred, duration, result.errorOutput || null,
       runId,
     );
 
     // Send notification
-    if (config.notify_on_success && result.exitCode === 0) {
-      await notifyBackupResult('SSD Backup', config.name, 'completed', {
+    if ((status === 'completed' || status === 'partial') && shouldNotify(config, 'success')) {
+      await notifyBackupResult('SSD Backup', config.name, status, {
         filesCopied: progress.filesCopied, filesFailed: progress.filesFailed,
         bytesTransferred: progress.bytesTransferred, duration,
       });
-    } else if (config.notify_on_failure && result.exitCode !== 0) {
+    } else if (status === 'failed' && shouldNotify(config, 'failure')) {
       await notifyBackupResult('SSD Backup', config.name, 'failed', {
         filesCopied: progress.filesCopied, filesFailed: progress.filesFailed,
         bytesTransferred: progress.bytesTransferred, duration,
@@ -161,7 +189,7 @@ export async function executeSsdBackup(configId, existingRunId = null) {
     }
 
     // Prune old version snapshots after successful backup
-    if (result.exitCode === 0 && config.versioning_enabled) {
+    if ((status === 'completed' || status === 'partial') && config.versioning_enabled) {
       // Delta versioning: rebase existing deltas then deltaify the new snapshot
       if (config.delta_versioning && versionTimestamp) {
         try {
@@ -197,7 +225,7 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       }
     }
 
-    return { runId, status: result.exitCode === 0 ? 'completed' : 'failed' };
+    return { runId, status };
   } catch (err) {
     db.prepare(`
       UPDATE backup_runs SET status = 'failed', completed_at = datetime('now'),
@@ -205,7 +233,7 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       WHERE id = ?
     `).run(err.message, (Date.now() - startTime) / 1000, runId);
 
-    if (config.notify_on_failure) {
+    if (shouldNotify(config, 'failure')) {
       await notifyBackupResult('SSD Backup', config.name, 'failed', {});
     }
     throw err;
@@ -221,7 +249,7 @@ const FILE_INSERT_BATCH_SIZE = 1000;
 function runRsync(args, runId, progress) {
   return new Promise((resolve, reject) => {
     const proc = spawnRsync(args);
-    activeProcesses.add(proc);
+    activeProcesses.set(runId, proc);
 
     const insertFile = db.prepare(`
       INSERT INTO backup_run_files (run_id, file_path, action, size) VALUES (?, ?, ?, ?)
@@ -239,7 +267,7 @@ function runRsync(args, runId, progress) {
       for (const line of lines) {
         // Parse --out-format=%i %l %n: itemize-changes flag, size, filename
         // {7,9} handles both macOS openrsync (9 char flags) and GNU rsync 3.x (11 char flags)
-        const match = line.match(/^([<>.ch*][fdLDS][cstpoguax.+?]{7,9})\s+(\d+)\s+(.+)$/);
+        const match = line.match(/^([<>.ch*][fdLDS][cstpoguax.+? ]{7,9})\s+(\d+)\s+(.+)$/);
         if (match) {
           const [, flags, sizeStr, filename] = match;
           const size = parseInt(sizeStr) || 0;
@@ -267,11 +295,12 @@ function runRsync(args, runId, progress) {
           parseProgressLine(line, progress);
         }
 
-        // Handle *deleting lines (no size field): "*deleting   filename"
-        const delMatch = line.match(/^\*deleting\s+(.+)$/);
+        // Handle *deleting lines: with --out-format=%i %l %n, format is "*deleting   0 filename"
+        const delMatch = line.match(/^\*deleting\s+(?:(\d+)\s+)?(.+)$/);
         if (delMatch) {
+          const size = delMatch[1] ? parseInt(delMatch[1]) : 0;
           progress.filesTotal++;
-          fileBatch.push({ runId, path: delMatch[1], action: 'deleted', size: 0 });
+          fileBatch.push({ runId, path: delMatch[2], action: 'deleted', size });
           if (fileBatch.length >= FILE_INSERT_BATCH_SIZE) {
             flushBatch(fileBatch);
             fileBatch = [];
@@ -292,24 +321,25 @@ function runRsync(args, runId, progress) {
       const text = data.toString();
       errorOutput += text;
 
-      // Count rsync errors (lines starting with "rsync:" or "rsync error:")
-      const errorLines = text.split('\n').filter(l => l.startsWith('rsync:') || l.startsWith('rsync error:'));
+      // Count per-file rsync errors ("rsync:" lines), but not summary lines ("rsync error:")
+      const errorLines = text.split('\n').filter(l => l.startsWith('rsync:') && !l.startsWith('rsync error:'));
       progress.filesFailed += errorLines.length;
     });
 
     proc.on('close', (exitCode) => {
-      activeProcesses.delete(proc);
-      // Flush remaining buffered file inserts
+      activeProcesses.delete(runId);
+      // Flush remaining buffered file inserts — swallow errors so the promise always resolves
       if (fileBatch.length > 0) {
-        flushBatch(fileBatch);
+        try { flushBatch(fileBatch); } catch (err) {
+          errorOutput += `\nFailed to persist file batch: ${err.message}`;
+        }
         fileBatch = [];
       }
       resolve({ exitCode, errorOutput: errorOutput.trim() || null });
     });
 
     proc.on('error', (err) => {
-      activeProcesses.delete(proc);
-      // Flush any buffered inserts before rejecting
+      activeProcesses.delete(runId);
       if (fileBatch.length > 0) {
         try { flushBatch(fileBatch); } catch {}
         fileBatch = [];
@@ -390,7 +420,7 @@ function parseProgress2Line(line, progress) {
   }
 
   // Also extract xfr#/to-chk if present
-  const xfr = line.match(/\(xfr#(\d+),\s*(?:to-chk|ir-chk)=(\d+)\/(\d+)\)/);
+  const xfr = line.match(/\(xfr#(\d+),\s*(?:to-chk|ir-chk)=(\d+)\/(\d+)\)\s*$/);
   if (xfr) {
     progress.filesCopied = parseInt(xfr[1]);
     const remaining = parseInt(xfr[2]);
@@ -402,10 +432,10 @@ function parseProgress2Line(line, progress) {
   return true;
 }
 // The local rsync binary may be openrsync (macOS) — use spawnRsync for line buffering.
-export function runRsyncWithSsh(args, onProgress = null) {
+export function runRsyncWithSsh(args, onProgress = null, runId = null) {
   return new Promise((resolve, reject) => {
     const proc = spawnRsync(args);
-    activeProcesses.add(proc);
+    if (runId) activeProcesses.set(runId, proc);
 
     let stdout = '';
     let stderr = '';
@@ -455,12 +485,12 @@ export function runRsyncWithSsh(args, onProgress = null) {
     });
 
     proc.on('close', (exitCode) => {
-      activeProcesses.delete(proc);
+      if (runId) activeProcesses.delete(runId);
       resolve({ exitCode, stdout, stderr, progress });
     });
 
     proc.on('error', (err) => {
-      activeProcesses.delete(proc);
+      if (runId) activeProcesses.delete(runId);
       reject(new Error(`Failed to start rsync: ${err.message}`));
     });
   });
@@ -468,7 +498,7 @@ export function runRsyncWithSsh(args, onProgress = null) {
 
 // Kill all active rsync child processes (for graceful shutdown)
 export function killActiveRsyncProcesses() {
-  for (const proc of activeProcesses) {
+  for (const proc of activeProcesses.values()) {
     try { proc.kill('SIGTERM'); } catch {}
   }
   activeProcesses.clear();
