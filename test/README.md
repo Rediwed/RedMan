@@ -404,6 +404,25 @@ node test/test_backward_compat.mjs --api-url http://localhost:8090 --peer-url ht
 8. **Live API endpoints** — Sample GET endpoints return expected status codes
 9. **Live Peer API** — Peer health endpoint returns expected fields
 
+### Handshake Crypto
+
+Standalone test for the Noise XX-style pairing handshake. Validates crypto primitives without needing a running server:
+
+```bash
+node test/test_handshake.mjs
+```
+
+**19 tests covering:**
+1. Full handshake flow — both sides derive the same API key independently
+2. Signature verification — ephemeral keys signed by static Ed25519 identity
+3. Tamper detection — modified ephemeral keys or wrong identities rejected
+4. Secretbox encryption — payload encrypts/decrypts, wrong keys fail
+5. Replay prevention — different tokens produce different derived keys
+6. Forward secrecy — new ephemeral keys produce different API keys
+7. Fingerprint format — `XXXX:XXXX:XXXX:XXXX` hex format validation
+8. Old-style detection — missing/outdated version field caught for 426 rejection
+9. Deterministic HKDF — fixed inputs always produce the same output (test vector)
+
 **Contract file:** `app/backend/src/contracts/v1.json` — the source of truth for all backward compatibility checks.
 
 ### Pre-Push Validation

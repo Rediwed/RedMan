@@ -127,21 +127,28 @@ async function writeManifest(versionDir, manifest) {
   await writeFile(join(versionDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
 }
 
-// ── Walk files recursively in a version dir ──
+// ── Walk files in a version dir ──
+// Iterative (explicit stack) to avoid call-stack exhaustion on deeply nested
+// trees, and to avoid `push(...bigArray)` which blows V8's argument limit
+// (~65k) when a subtree returns a very large file list.
 
 async function walkFiles(dir, base = '') {
   const results = [];
-  let entries;
-  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return results; }
-  for (const entry of entries) {
-    if (entry.name === MANIFEST_NAME) continue;
-    const relPath = base ? `${base}/${entry.name}` : entry.name;
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...await walkFiles(fullPath, relPath));
-    } else {
-      const info = await stat(fullPath);
-      results.push({ relPath, fullPath, size: info.size });
+  const stack = [{ dir, base }];
+  while (stack.length > 0) {
+    const { dir: cur, base: curBase } = stack.pop();
+    let entries;
+    try { entries = await readdir(cur, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (entry.name === MANIFEST_NAME) continue;
+      const relPath = curBase ? `${curBase}/${entry.name}` : entry.name;
+      const fullPath = join(cur, entry.name);
+      if (entry.isDirectory()) {
+        stack.push({ dir: fullPath, base: relPath });
+      } else {
+        const info = await stat(fullPath);
+        results.push({ relPath, fullPath, size: info.size });
+      }
     }
   }
   return results;

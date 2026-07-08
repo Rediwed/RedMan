@@ -45,12 +45,19 @@ export const createSsdConfig = (data) => postJSON('/ssd-backup/configs', data);
 export const updateSsdConfig = (id, data) => putJSON(`/ssd-backup/configs/${id}`, data);
 export const deleteSsdConfig = (id) => deleteJSON(`/ssd-backup/configs/${id}`);
 export const triggerSsdBackup = (id) => postJSON(`/ssd-backup/configs/${id}/run`, {});
+export const cancelSsdBackup = (runId) => postJSON(`/ssd-backup/runs/${runId}/cancel`, {});
 export const getSsdRuns = (page = 1, configId) => {
   let url = `/ssd-backup/runs?page=${page}`;
   if (configId) url += `&config_id=${configId}`;
   return fetchJSON(url);
 };
-export const getSsdRunDetail = (id) => fetchJSON(`/ssd-backup/runs/${id}`);
+export const getSsdRunDetail = (id, { action, filePage, fileLimit } = {}) => {
+  let url = `/ssd-backup/runs/${id}?`;
+  if (action) url += `&action=${encodeURIComponent(action)}`;
+  if (filePage) url += `&filePage=${filePage}`;
+  if (fileLimit) url += `&fileLimit=${fileLimit}`;
+  return fetchJSON(url);
+};
 
 // ===== SSD Backup Version Browser =====
 export const getSsdSnapshots = (configId) => fetchJSON(`/ssd-backup/configs/${configId}/snapshots`);
@@ -75,6 +82,7 @@ export const createHyperJob = (data) => postJSON('/hyper-backup/jobs', data);
 export const updateHyperJob = (id, data) => putJSON(`/hyper-backup/jobs/${id}`, data);
 export const deleteHyperJob = (id) => deleteJSON(`/hyper-backup/jobs/${id}`);
 export const triggerHyperBackup = (id) => postJSON(`/hyper-backup/jobs/${id}/run`, {});
+export const cancelHyperBackup = (runId) => postJSON(`/hyper-backup/runs/${runId}/cancel`, {});
 export const testHyperConnection = (data) => postJSON('/hyper-backup/test-connection', data);
 export const getHyperRuns = (page = 1, jobId) => {
   let url = `/hyper-backup/runs?page=${page}`;
@@ -82,6 +90,15 @@ export const getHyperRuns = (page = 1, jobId) => {
   return fetchJSON(url);
 };
 export const getHyperRunDetail = (id) => fetchJSON(`/hyper-backup/runs/${id}`);
+export const browseRemotePeer = (remoteUrl, dir) => {
+  let url = `/hyper-backup/remote-browse?remote_url=${encodeURIComponent(remoteUrl)}`;
+  if (dir) url += `&dir=${encodeURIComponent(dir)}`;
+  return fetchJSON(url);
+};
+export const getRemotePeerRoots = (remoteUrl) =>
+  fetchJSON(`/hyper-backup/remote-roots?remote_url=${encodeURIComponent(remoteUrl)}`);
+export const getRemotePeerShares = (remoteUrl) =>
+  fetchJSON(`/hyper-backup/remote-shares?remote_url=${encodeURIComponent(remoteUrl)}`);
 
 // ===== SSH =====
 export const getSshStatus = () => fetchJSON('/settings/ssh/status');
@@ -91,6 +108,7 @@ export const testSshConnection = (data) => postJSON('/settings/ssh/test', data);
 
 // ===== Authorized Peers =====
 export const getPeers = () => fetchJSON('/peers');
+export const getPeerConnectivity = () => fetchJSON('/peers/connectivity');
 export const getPeer = (id) => fetchJSON(`/peers/${id}`);
 export const createPeer = (data) => postJSON('/peers', data);
 export const updatePeer = (id, data) => putJSON(`/peers/${id}`, data);
@@ -98,6 +116,16 @@ export const deletePeer = (id) => deleteJSON(`/peers/${id}`);
 export const regeneratePeerKey = (id) => postJSON(`/peers/${id}/regenerate-key`, {});
 export const getPeerAuditLog = (id, page = 1) => fetchJSON(`/peers/${id}/audit-log?page=${page}`);
 export const getAllPeerAuditLog = (page = 1) => fetchJSON(`/peers/audit-log/all?page=${page}`);
+
+// ===== Pairing =====
+export const initiatePairing = (remoteUrl) => postJSON('/peers/pair', { remote_url: remoteUrl });
+export const getPairingIncoming = () => fetchJSON('/peers/pair/incoming');
+export const getPairingStatus = (id) => fetchJSON(`/peers/pair/status/${id}`);
+export const getPairingHistory = () => fetchJSON('/peers/pair/history');
+export const acceptPairing = (id) => postJSON(`/peers/pair/${id}/accept`, {});
+export const declinePairing = (id) => postJSON(`/peers/pair/${id}/decline`, {});
+export const deletePairing = (id) => deleteJSON(`/peers/pair/${id}`);
+export const syncPairings = () => postJSON('/peers/pair/sync', {});
 
 // ===== Rclone =====
 export const getRcloneRemotes = () => fetchJSON('/rclone/remotes');
@@ -114,6 +142,7 @@ export const createRcloneJob = (data) => postJSON('/rclone/jobs', data);
 export const updateRcloneJob = (id, data) => putJSON(`/rclone/jobs/${id}`, data);
 export const deleteRcloneJob = (id) => deleteJSON(`/rclone/jobs/${id}`);
 export const triggerRcloneSync = (id) => postJSON(`/rclone/jobs/${id}/run`, {});
+export const cancelRcloneSync = (runId) => postJSON(`/rclone/runs/${runId}/cancel`, {});
 export const getRcloneRuns = (page = 1, jobId) => {
   let url = `/rclone/runs?page=${page}`;
   if (jobId) url += `&job_id=${jobId}`;
@@ -136,6 +165,7 @@ export const updateMediaDrive = (id, data) => putJSON(`/media-import/drives/${id
 export const scanDrive = (id) => postJSON(`/media-import/drives/${id}/scan`, {});
 export const getScanProgress = (id) => fetchJSON(`/media-import/drives/${id}/scan`);
 export const startDriveImport = (id) => postJSON(`/media-import/drives/${id}/import`, {});
+export const cancelDriveImport = (runId) => postJSON(`/media-import/runs/${runId}/cancel`, {});
 export const getImportProgress = (runId) => fetchJSON(`/media-import/runs/${runId}/progress`);
 export const ejectDrive = (id) => postJSON(`/media-import/drives/${id}/eject`, {});
 export const getMediaImportRuns = (page = 1, driveId) => {
@@ -144,16 +174,28 @@ export const getMediaImportRuns = (page = 1, driveId) => {
   return fetchJSON(url);
 };
 export const getMediaImportRunDetail = (id) => fetchJSON(`/media-import/runs/${id}`);
+export const getMediaImportRunFiles = (id, action) => {
+  let url = `/media-import/runs/${id}/files`;
+  if (action) url += `?action=${action}`;
+  return fetchJSON(url);
+};
 export const testImmichConnection = () => postJSON('/media-import/test-immich', {});
 export const getMediaImportStatus = () => fetchJSON('/media-import/status');
 
 // ===== Filesystem =====
 export const browseDirectory = (dir) => fetchJSON(`/filesystem/browse?dir=${encodeURIComponent(dir || '')}`);
 export const getFilesystemRoots = () => fetchJSON('/filesystem/roots');
+export const getAllFilesystemRoots = () => fetchJSON('/filesystem/roots?include_hidden=true');
 
 // ===== Notifications =====
 export const testNtfy = () => postJSON('/settings/ntfy-test', {});
 export const testBrowserNotify = () => postJSON('/settings/browser-notify-test', {});
+
+// ===== Discovery =====
+export const discoverPeers = (refresh = false) => fetchJSON(`/discovery/peers${refresh ? '?refresh=true' : ''}`);
+export const discoverImmich = (refresh = false) => fetchJSON(`/discovery/immich${refresh ? '?refresh=true' : ''}`);
+export const getDiscoverySubnets = (refresh = false) => fetchJSON(`/discovery/subnets${refresh ? '?refresh=true' : ''}`);
+export const clearDiscoveryCache = () => postJSON('/discovery/clear-cache', {});
 
 // ===== Database Backup & Recovery =====
 export const backupDbTo = (destPath) => postJSON('/settings/db/backup', { dest_path: destPath });

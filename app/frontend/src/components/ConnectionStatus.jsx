@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import { dispatchReconnect } from '../hooks/useReconnect.js';
 import './ConnectionStatus.css';
 
@@ -8,6 +9,7 @@ const POLL_DISCONNECTED = 2000;
 export default function ConnectionStatus() {
   const [status, setStatus] = useState('connecting');
   const [info, setInfo] = useState(null);
+  const [peers, setPeers] = useState([]);
   const [showPopover, setShowPopover] = useState(false);
   const intervalRef = useRef(null);
   const hideTimer = useRef(null);
@@ -27,11 +29,19 @@ export default function ConnectionStatus() {
 
       setStatus('connected');
       setInfo({ ...data, latency });
+
+      // Fetch peer connectivity in parallel (non-blocking)
+      fetch('/api/peers/connectivity')
+        .then(r => r.ok ? r.json() : [])
+        .then(setPeers)
+        .catch(() => setPeers([]));
+
       return true;
     } catch {
       wasDisconnected.current = true;
       setStatus('disconnected');
       setInfo(null);
+      setPeers([]);
       return false;
     }
   }
@@ -62,6 +72,8 @@ export default function ConnectionStatus() {
     hideTimer.current = setTimeout(() => setShowPopover(false), 200);
   };
 
+  const onlineCount = peers.filter(p => p.status === 'online').length;
+
   return (
     <div
       className="connection-wrapper"
@@ -76,6 +88,13 @@ export default function ConnectionStatus() {
         <span className="connection-label">
           {status === 'connected' ? 'Connected' : status === 'connecting' ? '...' : 'Offline'}
         </span>
+        {status === 'connected' && peers.length > 0 && (
+          <span className="peer-dots" title={`${onlineCount}/${peers.length} peers online`}>
+            {peers.map(p => (
+              <span key={p.id} className={`peer-dot peer-${p.status}`} />
+            ))}
+          </span>
+        )}
       </button>
 
       {showPopover && (
@@ -100,6 +119,32 @@ export default function ConnectionStatus() {
             </div>
           ) : (
             <p className="popover-offline">Backend is unreachable. Check if the RedMan server is running.</p>
+          )}
+
+          {peers.length > 0 && (
+            <div className="popover-peers">
+              <div className="popover-peers-header">
+                Peers
+                <span className="popover-peers-count">{onlineCount}/{peers.length} online</span>
+              </div>
+              {peers.map(p => (
+                <div key={p.id} className="popover-peer-card">
+                  <div className="popover-peer-row">
+                    <span className={`peer-dot peer-${p.status}`} />
+                    <span className="popover-peer-name">{p.name || p.instance || `Peer ${p.id}`}</span>
+                    {p.handshake_version >= 2
+                      ? <span className="peer-shield-secure" title={p.fingerprint ? `Secure — ${p.fingerprint}` : 'Secure'}><ShieldCheck size={12} /></span>
+                      : <span className="peer-shield-legacy" title="Legacy — re-pair to upgrade"><ShieldAlert size={12} /></span>}
+                    <span className={`popover-peer-status peer-status-${p.status}`}>{p.status}</span>
+                  </div>
+                  <div className="popover-peer-details">
+                    {p.hostname && <span>{p.hostname}</span>}
+                    {p.version && <span>v{p.version}</span>}
+                    {p.last_seen_at && <span>Seen {formatRelativeTime(p.last_seen_at)}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
 
           <div className="popover-footer">Click badge to refresh</div>
@@ -134,4 +179,15 @@ function formatBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return null;
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 0) return 'just now';
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  const d = Math.floor(diff / 86400);
+  return `${d}d ago`;
 }

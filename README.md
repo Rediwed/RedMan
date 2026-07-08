@@ -9,9 +9,17 @@ Built with Express + SQLite on the backend and React + Vite on the frontend. Run
 ### Hyper Backup — Cross-Site Replication
 Push or pull data between two RedMan instances over rsync/SSH. Designed for multi-TB datasets between remote NAS units.
 
+- **Auto-discovery** — scans LAN subnets (detected from Docker networks, zero config) for other RedMan instances
+- **Bluetooth-style pairing** — click Connect on a discovered peer, accept on the other side; SSH keys + API keys exchanged automatically
+- **Pairing toast notifications** — incoming connection requests pop up on every page
+- **Peer selector** — new backup jobs select from paired destinations via dropdown (no manual URL/key input)
 - **Rsync over SSH** with `--partial` for resumable transfers
 - **SSH keepalive** (`ServerAliveInterval=60`) prevents silent drops on long transfers
 - **Per-peer authentication** with 256-bit API keys, audit logging, and path restrictions
+- **Noise XX handshake** for pairing — ephemeral X25519 ECDH + Ed25519 signatures, API keys derived via HKDF (never transmitted)
+- **Forward secrecy** — new ephemeral keypair per pairing attempt; compromising old keys doesn't help
+- **Encrypted callback** — pairing payload encrypted with NaCl secretbox (XSalsa20-Poly1305)
+- **Old-style rejection** — legacy (v1) plaintext pairing requests get `426 Upgrade Required`
 - **Key regeneration confirmation** — rotating a peer key requires explicit confirmation since it permanently invalidates the old key
 - **Storage quotas** — the receiving peer controls how much storage is available
 - **Peer shutdown notifications** — graceful handoff when either side goes offline
@@ -19,6 +27,7 @@ Push or pull data between two RedMan instances over rsync/SSH. Designed for mult
 - **Actionable error messages** — failed runs show specific diagnostics (auth rejected, connection refused, SSH failed, timeout, path not found) instead of generic errors
 - **Real-time progress** via `--info=progress2` (Linux) or `--progress` (macOS)
 - **Connection testing** — test peer connectivity before creating a job
+- **Remote path browsing** — browse directories and shares on the remote peer directly from the job form, scoped to the peer's allowed path prefix
 
 ### SSD Backup — Local Redundancy
 Back up SSDs to the array with point-in-time versioning.
@@ -91,6 +100,7 @@ Auto-detect USB/SD card drives and import to Immich.
 - Optional delete-after-import and eject-after-import
 - **Drive management** — rename, configure, and eject drives from the UI
 - **Scan & import progress** — real-time tracking of photo/video scanning and Immich uploads
+- **Immich auto-discovery** — scans LAN for Immich instances, auto-fills server URL in settings
 - **Immich connection testing** — verify API key and server connectivity before importing
 
 ### Notifications
@@ -101,12 +111,14 @@ Two notification channels with granular event control:
 - **Granular events** — independently toggle notifications for job start/complete/fail/progress, drive attach/detach/scan, and import events
 - **Test endpoints** — verify both channels before relying on them
 
-### SSH Key Management
-Built-in SSH key lifecycle for rsync transfers:
+### SSH & Identity Key Management
+Built-in key lifecycle for rsync transfers and peer authentication:
 
 - **Ed25519 keypair generation** — stored in the container's data directory
+- **Static identity keys** — Ed25519 keypair (`data/identity.json`) for Noise XX pairing signatures
 - **Localhost authorization** — one-click setup for local rsync/Immich connections
 - **Connection testing** — verify SSH access to remote hosts with friendly error messages
+- **Secure connection indicator** — shield icon in the global connection badge and peer cards shows handshake version
 
 ## Architecture
 
@@ -173,6 +185,19 @@ docker compose up -d
 
 Install via Community Applications or manually import `unraid/redman.xml` as a template. The template pre-configures all required paths and ports.
 
+#### Multi-target deploy script
+
+```bash
+bash deploy.sh                 # Deploy to both citadelle + kasbah (parallel)
+bash deploy.sh --citadelle     # Deploy to citadelle only
+bash deploy.sh --kasbah        # Deploy to kasbah only
+bash deploy.sh --check         # Only check for active jobs, don't deploy
+bash deploy.sh --force         # Gracefully stop active jobs, then deploy
+bash deploy.sh --seed           # Reseed database after deploy (destructive)
+```
+
+The deploy script runs syntax + backward compatibility checks before deploying. Multi-target deploys run in parallel.
+
 ### Development
 
 ```bash
@@ -222,7 +247,9 @@ RedMan includes several features for reliable operation with multi-TB datasets:
 ### Frontend Resilience
 - **Auto-reconnect** — when the backend restarts (deploys, crashes, `node --watch`), the UI detects the disconnection and automatically refetches all page data once the backend comes back
 - **Adaptive health polling** — checks every 5s normally, every 2s when disconnected, for fast recovery
-- **Connection badge** — header shows live connected/offline status with latency, uptime, memory, and version info
+- **Connection badge** — header shows live connected/offline status with latency, uptime, memory, version info, and per-peer secure/legacy handshake indicators
+- **Instance name in title** — navbar and browser tab show "RedMan — InstanceName" when an instance name is configured in Settings, making it easy to distinguish between multiple deployments
+- **User Name** — personalize your deployment with a user name in Settings
 
 ### Scheduling
 - **Skip-if-running** — prevents overlapping executions of the same job
@@ -233,14 +260,31 @@ RedMan includes several features for reliable operation with multi-TB datasets:
 
 To set up cross-site backup between two NAS units:
 
-### On the receiving NAS (your dad's):
+### Auto-Discovery Pairing (Recommended)
+
+1. Go to **Hyper Backup** and click **Discover Peers** — RedMan scans the local network
+2. Click **Connect** on the discovered peer
+3. The remote peer's UI shows a pairing request with the sender's identity fingerprint
+4. Click **Accept** — both sides perform a Noise XX handshake:
+   - Ephemeral X25519 keypairs generated on both sides
+   - Each signs their ephemeral key with their static Ed25519 identity
+   - ECDH shared secret computed → API key derived via HKDF (never sent over the wire)
+   - Callback payload encrypted with NaCl secretbox
+5. Both peers now have matching derived API keys and authorized SSH keys
+6. Create a Hyper Backup job using the paired destination
+
+The connection badge (top-left) shows a green shield (🛡️) for secure v2-paired peers or an amber shield for legacy pairings.
+
+### Manual Setup (Legacy)
+
+On the receiving NAS (your dad's):
 
 1. Go to **Settings → Peers** and create a new authorized peer
 2. Set the **allowed path prefix** (e.g., `/mnt/user/backups/your-name`)
 3. Set a **storage limit** (e.g., 4 TB) — 0 for unlimited
 4. Copy the generated API key (shown only once)
 
-### On the sending NAS (yours):
+On the sending NAS (yours):
 
 1. Go to **Hyper Backup → New Job**
 2. Enter the remote peer URL (`http://<remote-ip>:8091`)

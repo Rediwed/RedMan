@@ -8,8 +8,8 @@ import { resolve, normalize, posix } from 'path';
  */
 export function normalizePath(p) {
   if (!p || typeof p !== 'string') return null;
-  // Reject shell metacharacters that could be used for command injection
-  if (/[$`"\\|;&(){}]/.test(p)) return null;
+  // Reject shell metacharacters + newlines that could be used for command injection
+  if (/[$`"\\|;&(){}\n\r]/.test(p)) return null;
   const normalized = posix.normalize(p);
   if (!normalized.startsWith('/')) return null;
   // Strip trailing slash (except for root '/')
@@ -40,6 +40,27 @@ export function isWithinPrefix(path, prefix) {
 export function validateSshPort(port) {
   const p = parseInt(port);
   return Number.isInteger(p) && p >= 1 && p <= 65535;
+}
+
+/**
+ * Validate SSH host: DNS name or IP, no shell metachars, no leading '-'
+ * (prevents argv option-injection into ssh/rsync).
+ */
+export function validateSshHost(h) {
+  if (!h || typeof h !== 'string') return false;
+  if (h.length > 253) return false;
+  if (h.startsWith('-')) return false;
+  return /^[a-zA-Z0-9._-]+$/.test(h);
+}
+
+/**
+ * Validate SSH username: alphanumeric + ._- , no leading '-'.
+ */
+export function validateSshUser(u) {
+  if (!u || typeof u !== 'string') return false;
+  if (u.length > 64) return false;
+  if (u.startsWith('-')) return false;
+  return /^[a-zA-Z0-9._-]+$/.test(u);
 }
 
 /**

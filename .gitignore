@@ -6,3 +6,13 @@ dist/
 .env
 .DS_Store
 test/data/
+
+# Runtime data (SSH keys, rclone.conf, SQLite, logs)
+app/backend/data/
+
+# Editor/OS junk
+**/.DS_Store
+*.log
+*.bak
+*.swp
+*.tmp

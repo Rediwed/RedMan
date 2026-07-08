@@ -51,6 +51,12 @@ router.put('/', (req, res) => {
   });
 
   updateAll();
+
+  // Update process timezone if changed
+  if (updates.timezone && updates.timezone !== 'system') {
+    process.env.TZ = updates.timezone;
+  }
+
   res.json({ success: true });
 });
 

@@ -15,8 +15,9 @@ import settingsRoutes from './routes/settings.js';
 import peersRoutes from './routes/peers.js';
 import mediaImportRoutes from './routes/mediaImport.js';
 import filesystemRoutes from './routes/filesystem.js';
+import discoveryRoutes from './routes/discovery.js';
 import { createPeerApi } from './peerApi.js';
-import { startScheduler, registerExecutor, getActiveJobCount, stopAllJobs } from './services/scheduler.js';
+import { startScheduler, registerExecutor, getActiveJobCount, getRunningJobCount, stopAllJobs } from './services/scheduler.js';
 import { executeSsdBackup, killActiveRsyncProcesses } from './services/rsync.js';
 import { executeHyperBackup, notifyPeersOfShutdown } from './services/hyperBackup.js';
 import { executeRcloneJob } from './services/rclone.js';
@@ -27,6 +28,12 @@ import { startTempCleanup } from './services/deltaVersion.js';
 import db from './db.js';
 
 import os from 'os';
+
+// Apply timezone from settings at startup
+try {
+  const tzRow = db.prepare("SELECT value FROM settings WHERE key = 'timezone'").get();
+  if (tzRow?.value && tzRow.value !== 'system') process.env.TZ = tzRow.value;
+} catch { /* settings table may not exist yet */ }
 
 // ── Global error handlers — prevent silent crashes ──────────────
 process.on('uncaughtException', (err) => {
@@ -49,7 +56,20 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '8090');
 const PEER_PORT = parseInt(process.env.PEER_API_PORT || '8091');
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      'upgrade-insecure-requests': null,
+    },
+  },
+  // Explicitly set HSTS + nosniff so they're enforced even when not behind Traefik.
+  // Helmet 8 enables these by default; restated here so a future helmet config
+  // change doesn't silently drop them.
+  strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true, preload: false },
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
     ? [process.env.CORS_ORIGIN || 'http://localhost:8090']
@@ -63,6 +83,9 @@ app.use(express.json());
 const startedAt = Date.now();
 app.get('/api/health', (req, res) => {
   const mem = process.memoryUsage();
+  // Check both scheduler (cron-triggered) and DB (manual-triggered) for running jobs
+  const schedulerRunning = getRunningJobCount();
+  const dbRunning = db.prepare("SELECT COUNT(*) as count FROM backup_runs WHERE status = 'running'").get().count;
   res.json({
     status: 'ok',
     version: '1.0.0',
@@ -72,6 +95,7 @@ app.get('/api/health', (req, res) => {
     platform: `${os.type()} ${os.release()}`,
     nodeVersion: process.version,
     activeJobs: getActiveJobCount(),
+    runningJobs: Math.max(schedulerRunning, dbRunning),
     memory: {
       rss: mem.rss,
       heapUsed: mem.heapUsed,
@@ -94,15 +118,24 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/peers', peersRoutes);
 app.use('/api/media-import', mediaImportRoutes);
 app.use('/api/filesystem', filesystemRoutes);
+app.use('/api/discovery', discoveryRoutes);
 
 // In production, serve the built frontend
-const publicDir = join(__dirname, 'public');
+const publicDir = join(__dirname, '..', 'public');
 if (existsSync(publicDir)) {
   app.use(express.static(publicDir));
   app.get('*', (req, res) => {
     res.sendFile(join(publicDir, 'index.html'));
   });
 }
+
+// Global JSON error handler — must be after all routes, before scheduled jobs
+// Catches any unhandled sync throws (e.g. from SQLite or crypto) so we return JSON not HTML
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[app] Unhandled error:', err);
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+});
 
 // Register scheduled job executors
 registerExecutor('ssd-backup', executeSsdBackup);

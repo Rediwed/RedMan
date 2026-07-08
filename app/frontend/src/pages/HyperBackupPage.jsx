@@ -1,37 +1,44 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getHyperJobs, createHyperJob, updateHyperJob, deleteHyperJob,
-  triggerHyperBackup, testHyperConnection, getHyperRuns, getHyperRunDetail,
-  getSshStatus, generateSshKey, authorizeLocalSsh, testSshConnection,
+  triggerHyperBackup, cancelHyperBackup, getHyperRuns, getHyperRunDetail,
+  getSshStatus, generateSshKey,
+  discoverPeers, initiatePairing, getPairingStatus, getPeers,
 } from '../api/index.js';
-import { RefreshCw, Play, Pencil, Trash2, ClipboardList, Plug, Search, CheckCircle2, XCircle, Key, Settings, Copy, Check, Terminal, Shield, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Play, Pencil, Trash2, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Radar, Loader, ShieldCheck, ShieldAlert, X } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
+import RemotePathPicker from '../components/RemotePathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
 import SchedulePicker, { describeCron } from '../components/SchedulePicker.jsx';
 import useJobProgress from '../hooks/useJobProgress.js';
 import useReconnect from '../hooks/useReconnect.js';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatDateTime } from '../utils/dateFormat.js';
 import './HyperBackupPage.css';
 
 export default function HyperBackupPage() {
+  const { settings } = useSettings();
   const [jobs, setJobs] = useState([]);
   const [runs, setRuns] = useState({ runs: [], page: 1, totalPages: 0 });
   const [selectedRun, setSelectedRun] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(defaultForm());
-  const [testResult, setTestResult] = useState(null);
-  const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [destinations, setDestinations] = useState([]);
   const [ssh, setSsh] = useState({ keyExists: false, publicKey: null });
-  const [showSshModal, setShowSshModal] = useState(false);
-  const [sshGenerating, setSshGenerating] = useState(false);
-  const [sshCopied, setSshCopied] = useState(false);
-  const [sshAuthorizing, setSshAuthorizing] = useState(false);
-  const [sshAuthorized, setSshAuthorized] = useState(false);
-  const [sshTestResult, setSshTestResult] = useState(null);
+  const [showPeerPicker, setShowPeerPicker] = useState(false);
+  const [discoveredPeers, setDiscoveredPeers] = useState([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState(null);
+  const [discoveryDismissed, setDiscoveryDismissed] = useState(false);
+  const [pairing, setPairing] = useState(null);
+  const [pairingPeer, setPairingPeer] = useState(null);
+  const pairingCancelled = useRef(false);
 
-  const { trackRun, detectRunning, getProgressForConfig } = useJobProgress(getHyperRunDetail, () => loadAll());
+  const { trackRun, detectRunning, getProgressForConfig, getRunIdForConfig } = useJobProgress(getHyperRunDetail, () => loadAll());
 
   function defaultForm() {
     return {
@@ -40,25 +47,26 @@ export default function HyperBackupPage() {
       local_path: '', remote_path: '',
       ssh_user: 'root', ssh_host: '', ssh_port: 22,
       cron_expression: '0 2 * * *',
-      enabled: true, notify_on_success: true, notify_on_failure: true,
+      enabled: true, notify_mode: 'global', notify_on_start: true, notify_on_success: true, notify_on_failure: true,
     };
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); scanForPeers(); }, []);
   useReconnect(useCallback(() => loadAll(), []));
 
-  async function loadAll() {
-    setLoading(true);
+  async function loadAll(silent = false) {
+    if (!silent) setLoading(true);
     try {
-      const [j, r, s] = await Promise.all([getHyperJobs(), getHyperRuns(1), getSshStatus()]);
+      const [j, r, s, p] = await Promise.all([getHyperJobs(), getHyperRuns(1), getSshStatus(), getPeers()]);
       setJobs(j);
       setRuns(r);
       setSsh(s);
+      setDestinations(p.outgoing || []);
       detectRunning(r.runs);
     } catch (err) {
       console.error(err);
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 
   async function loadRuns(page = 1) {
@@ -71,6 +79,8 @@ export default function HyperBackupPage() {
     const data = {
       ...form,
       enabled: form.enabled ? 1 : 0,
+      notify_mode: form.notify_mode,
+      notify_on_start: form.notify_on_start ? 1 : 0,
       notify_on_success: form.notify_on_success ? 1 : 0,
       notify_on_failure: form.notify_on_failure ? 1 : 0,
     };
@@ -83,7 +93,6 @@ export default function HyperBackupPage() {
     setShowForm(false);
     setEditId(null);
     setForm(defaultForm());
-    setTestResult(null);
     loadAll();
   }
 
@@ -92,15 +101,18 @@ export default function HyperBackupPage() {
       name: job.name, direction: job.direction,
       remote_url: job.remote_url, remote_api_key: '',
       local_path: job.local_path, remote_path: job.remote_path,
+      remote_path_manual: true,
       ssh_user: job.ssh_user || 'root', ssh_host: job.ssh_host || '',
       ssh_port: job.ssh_port || 22, cron_expression: job.cron_expression,
       enabled: !!job.enabled,
+      notify_mode: job.notify_mode || 'global',
+      notify_on_start: job.notify_on_start !== undefined ? !!job.notify_on_start : true,
       notify_on_success: !!job.notify_on_success,
       notify_on_failure: !!job.notify_on_failure,
     });
     setEditId(job.id);
     setShowForm(true);
-    setTestResult(null);
+    setNameManual(true);
   }
 
   async function handleDelete(id) {
@@ -114,33 +126,148 @@ export default function HyperBackupPage() {
     if (result.runId) trackRun(result.runId, id);
   }
 
-  async function handleTestConnection() {
-    if (!form.remote_url || !form.remote_api_key) {
-      setTestResult({ reachable: false, error: 'Remote URL and API key required' });
-      return;
-    }
-    setTesting(true);
+  // Filter out already-paired peers from discovered list
+  function filterPaired(peers) {
+    const pairedUrls = new Set(destinations.map(d => d.remote_url));
+    return peers.filter(p => !pairedUrls.has(p.url));
+  }
+
+  // Background scan — runs on page load, populates the discovery banner
+  async function scanForPeers() {
     try {
-      const result = await testHyperConnection({ remote_url: form.remote_url, remote_api_key: form.remote_api_key });
-      setTestResult(result);
+      const result = await discoverPeers(false);
+      if (!result.error && result.length > 0) {
+        setDiscoveredPeers(result);
+      }
+    } catch { /* silent */ }
+  }
+
+  // Manual scan — triggered by Discover button (in form or banner)
+  async function handleDiscoverPeers() {
+    setDiscovering(true);
+    setDiscoveryError(null);
+    setDiscoveredPeers([]);
+    try {
+      const result = await discoverPeers(true);
+      if (result.error) {
+        setDiscoveryError(result.message);
+      } else {
+        setDiscoveredPeers(result);
+        if (filterPaired(result).length === 0 && result.length > 0) {
+          setDiscoveryError('All discovered instances are already paired.');
+        } else if (result.length === 0) {
+          setDiscoveryError('No other RedMan instances found on your network.');
+        }
+      }
     } catch (err) {
-      setTestResult({ reachable: false, error: err.message });
+      setDiscoveryError(err.message);
     }
-    setTesting(false);
+    setDiscovering(false);
+  }
+
+  function selectDiscoveredPeer(peer) {
+    setShowPeerPicker(false);
+    setDiscoveryDismissed(true);
+    setPairingPeer(peer);
+    startPairing(peer);
+  }
+
+  async function startPairing(peer) {
+    setPairing({ status: 'sending' });
+    pairingCancelled.current = false;
+    try {
+      const result = await initiatePairing(peer.url);
+      if (result.status === 'failed') {
+        setPairing({ status: 'failed', error: result.error });
+        return;
+      }
+      setPairing({ id: result.id, status: 'pending', remote_instance: result.remote_instance || peer.instance });
+      // Start polling for acceptance
+      pollPairingStatus(result.id, peer);
+    } catch (err) {
+      setPairing({ status: 'failed', error: err.message });
+    }
+  }
+
+  async function pollPairingStatus(id, peer) {
+    for (let i = 0; i < 120; i++) {
+      if (pairingCancelled.current) return;
+      await new Promise(r => setTimeout(r, 3000));
+      if (pairingCancelled.current) return;
+      try {
+        const status = await getPairingStatus(id);
+        if (status.status === 'accepted') {
+          pairingCancelled.current = true;
+          setPairing({ status: 'accepted', remote_instance: peer.instance });
+          setShowPeerPicker(false);
+          loadAll(true).catch(() => {});
+          return;
+        }
+        if (['failed', 'expired', 'declined'].includes(status.status)) {
+          setPairing({ ...status });
+          return;
+        }
+      } catch { /* keep polling */ }
+    }
+    setPairing({ status: 'expired', error: 'Timed out waiting for acceptance' });
+  }
+
+  function cancelPairing() {
+    pairingCancelled.current = true;
+    setPairing(null);
+    setPairingPeer(null);
+  }
+
+  // Auto-generate SSH key silently if missing (rsync needs it)
+  const [nameManual, setNameManual] = useState(false);
+  const [suggestedSuffix, setSuggestedSuffix] = useState('');
+
+  function suggestName(localPath, remoteUrl) {
+    const seg = p => p?.replace(/\/+$/, '').split('/').pop() || '';
+    const local = seg(localPath);
+    const dest = destinations.find(d => d.remote_url === remoteUrl);
+    const remote = dest?.name || '';
+    return local && remote ? `${local} → ${remote}` : local || '';
+  }
+
+  async function ensureSshKey() {
+    if (ssh.keyExists) return;
+    try {
+      const result = await generateSshKey();
+      if (result.success) setSsh({ keyExists: true, publicKey: result.publicKey });
+    } catch { /* will show inline warning in job form */ }
+  }
+
+  function handleNewJob() {
+    // If we have unpaired discovered peers, show the peer picker
+    const unpaired = filterPaired(discoveredPeers);
+    if (unpaired.length > 0) {
+      setShowPeerPicker(true);
+    } else {
+      // No peers found — go straight to form
+      ensureSshKey();
+      setEditId(null);
+      setForm(defaultForm());
+      setNameManual(false);
+      setSuggestedSuffix('');
+      setShowForm(true);
+    }
+  }
+
+  function handleNewJobManual() {
+    setShowPeerPicker(false);
+    ensureSshKey();
+    setEditId(null);
+    setForm(defaultForm());
+    setShowAdvanced(true);
+    setNameManual(false);
+    setSuggestedSuffix('');
+    setShowForm(true);
   }
 
   async function viewRun(id) {
     const detail = await getHyperRunDetail(id);
     setSelectedRun(detail);
-  }
-
-  // Intercept actions that require SSH
-  function requireSsh(action) {
-    if (!ssh.keyExists) {
-      setShowSshModal(true);
-      return;
-    }
-    action();
   }
 
   if (loading) return <div className="empty-state"><p>Loading...</p></div>;
@@ -149,132 +276,140 @@ export default function HyperBackupPage() {
     <div className="hyper-page">
       <div className="page-header">
         <h1><RefreshCw size={24} /> Hyper Backup</h1>
-        <button className="btn btn-primary" onClick={() => requireSsh(() => { setShowForm(true); setEditId(null); setForm(defaultForm()); setTestResult(null); })}>
+        <button className="btn btn-primary" onClick={handleNewJob}>
           + New Job
         </button>
       </div>
 
-      {/* SSH Setup Wizard — first-time setup, subsequent changes in Settings */}
-      {showSshModal && (
-        <div className="modal-overlay" onClick={() => setShowSshModal(false)}>
-          <div className="modal" style={{ maxWidth: '560px' }} onClick={e => e.stopPropagation()}>
+      {/* Discovery banner — shows unpaired RedMan instances found on the network */}
+      {filterPaired(discoveredPeers).length > 0 && !discoveryDismissed && !showForm && (
+        <div className="discovery-banner card">
+          <div className="discovery-banner-header">
+            <Radar size={16} />
+            <span>Found {filterPaired(discoveredPeers).length} new RedMan instance{filterPaired(discoveredPeers).length > 1 ? 's' : ''} on your network</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDiscoveryDismissed(true)} title="Dismiss">✕</button>
+          </div>
+          <div className="discovery-banner-items">
+            {filterPaired(discoveredPeers).map(p => (
+              <button key={p.ip} className="discovery-banner-item" onClick={() => selectDiscoveredPeer(p)}>
+                <div className="discovery-banner-name">{p.instance}</div>
+                <div className="discovery-banner-detail">{p.ip} · v{p.version}</div>
+                <span className="btn btn-primary btn-sm">Connect →</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pairing status modal — shown while waiting for remote to accept */}
+      {pairing && !showForm && (
+        <div className="modal-overlay" onClick={pairing.status !== 'pending' && pairing.status !== 'sending' ? cancelPairing : undefined}>
+          <div className="modal" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2><Key size={18} /> SSH Setup</h2>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowSshModal(false)}>✕</button>
+              <h2><Radar size={18} /> {pairing.status === 'accepted' ? 'Paired!' : 'Pairing'}</h2>
+              {pairing.status !== 'pending' && pairing.status !== 'sending' && (
+                <button className="btn btn-ghost btn-sm" onClick={cancelPairing}>✕</button>
+              )}
             </div>
-            <div className="modal-body">
-              <p style={{ marginBottom: 'var(--space-md)' }}>
-                Hyper Backup uses rsync over SSH. {ssh.keyExists ? 'Your SSH key is ready.' : 'Generate an SSH key to get started.'}
-              </p>
-
-              {/* Step 1: Generate key */}
-              {!ssh.keyExists ? (
-                <div className="ssh-wizard-step">
-                  <h3><span className="step-num">1</span> Generate SSH Key</h3>
-                  <button
-                    className="btn btn-primary"
-                    disabled={sshGenerating}
-                    onClick={async () => {
-                      setSshGenerating(true);
-                      try {
-                        const result = await generateSshKey();
-                        setSsh({ keyExists: true, publicKey: result.publicKey });
-                      } catch (err) { alert(err.message); }
-                      setSshGenerating(false);
-                    }}
-                  >
-                    <Key size={14} /> {sshGenerating ? 'Generating...' : 'Generate Key'}
-                  </button>
-                </div>
-              ) : (
+            <div className="modal-body" style={{ textAlign: 'center', padding: 'var(--space-xl) var(--space-lg)' }}>
+              {(pairing.status === 'sending' || pairing.status === 'pending') && (
                 <>
-                  {/* Key generated — show public key */}
-                  <div className="ssh-wizard-step">
-                    <h3><CheckCircle2 size={16} className="text-success" /> SSH Key Ready</h3>
-                    {ssh.publicKey && (
-                      <div className="ssh-pubkey-box">
-                        <code>{ssh.publicKey}</code>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => {
-                            navigator.clipboard.writeText(ssh.publicKey);
-                            setSshCopied(true);
-                            setTimeout(() => setSshCopied(false), 2000);
-                          }}
-                        >
-                          {sshCopied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}
-                        </button>
-                      </div>
-                    )}
-                    <span className="form-hint">Add this public key to <code>~/.ssh/authorized_keys</code> on your remote hosts.</span>
-                  </div>
-
-                  {/* Step 2: Authorize localhost (optional) */}
-                  <div className="ssh-wizard-step">
-                    <h3><Shield size={16} /> Authorize Localhost</h3>
-                    <span className="form-hint" style={{ marginBottom: 'var(--space-sm)', display: 'block' }}>
-                      For peer-to-peer backups on the same machine, authorize SSH to localhost.
-                    </span>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      disabled={sshAuthorizing || sshAuthorized}
-                      onClick={async () => {
-                        setSshAuthorizing(true);
-                        try {
-                          await authorizeLocalSsh();
-                          setSshAuthorized(true);
-                        } catch (err) { alert(err.message); }
-                        setSshAuthorizing(false);
-                      }}
-                    >
-                      <Terminal size={14} /> {sshAuthorized ? 'Authorized ✓' : sshAuthorizing ? 'Authorizing...' : 'Authorize Localhost'}
-                    </button>
-                  </div>
-
-                  {/* Step 3: Test (optional) */}
-                  <div className="ssh-wizard-step">
-                    <h3><Plug size={16} /> Test Connection</h3>
-                    <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={async () => {
-                          setSshTestResult(null);
-                          try {
-                            const r = await testSshConnection({ host: 'localhost', user: 'root' });
-                            setSshTestResult(r);
-                          } catch (err) { setSshTestResult({ ok: false, error: err.message }); }
-                        }}
-                      >
-                        <Search size={14} /> Test localhost
-                      </button>
-                      {sshTestResult && (
-                        <span className={sshTestResult.ok ? 'text-success' : 'text-danger'}>
-                          {sshTestResult.ok ? <><CheckCircle2 size={14} /> Connected</> : <><XCircle size={14} /> {sshTestResult.error}</>}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  <Loader size={40} className="spin" style={{ color: 'var(--color-primary)', marginBottom: 'var(--space-md)' }} />
+                  <p style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 'var(--space-xs)' }}>
+                    Waiting for {pairingPeer?.instance || 'remote'} to accept...
+                  </p>
+                  <p className="form-hint">
+                    Open RedMan on <strong>{pairingPeer?.instance}</strong> and accept the connection request.
+                  </p>
                 </>
               )}
-
-              <div className="alert-info" style={{ marginTop: 'var(--space-md)' }}>
-                <Settings size={14} />
-                <span>After initial setup, manage SSH keys in <strong>Settings → Infrastructure</strong>.</span>
-              </div>
+              {pairing.status === 'accepted' && (
+                <>
+                  <CheckCircle2 size={40} style={{ color: 'var(--color-success)', marginBottom: 'var(--space-md)' }} />
+                  <p style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+                    Connected to {pairing.remote_instance || pairingPeer?.instance || 'remote'}!
+                  </p>
+                  <p className="form-hint">You can now create backup jobs to this peer.</p>
+                </>
+              )}
+              {(pairing.status === 'failed' || pairing.status === 'expired' || pairing.status === 'declined') && (
+                <>
+                  <XCircle size={40} style={{ color: 'var(--color-danger)', marginBottom: 'var(--space-md)' }} />
+                  <p style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+                    {pairing.status === 'declined' ? 'Request declined' : pairing.status === 'expired' ? 'Request expired' : 'Pairing failed'}
+                  </p>
+                  {pairing.error && (
+                    <p className="form-hint" style={{
+                      marginTop: 'var(--space-sm)',
+                      fontFamily: 'monospace',
+                      fontSize: '0.8rem',
+                      color: 'var(--color-text-muted)',
+                      userSelect: 'text',
+                      wordBreak: 'break-word',
+                    }}>{pairing.error}</p>
+                  )}
+                </>
+              )}
             </div>
             <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => setShowSshModal(false)}>
-                {ssh.keyExists ? 'Done' : 'Cancel'}
-              </button>
-              {ssh.keyExists && (
-                <button className="btn btn-primary" onClick={() => {
-                  setShowSshModal(false);
-                  setShowForm(true);
-                  setEditId(null);
-                  setForm(defaultForm());
-                  setTestResult(null);
-                }}>
-                  Continue to New Job →
+              {(pairing.status === 'failed' || pairing.status === 'expired' || pairing.status === 'declined') && (
+                <>
+                  <button className="btn btn-ghost" onClick={cancelPairing}>Close</button>
+                  {pairingPeer && (
+                    <button className="btn btn-primary" onClick={() => startPairing(pairingPeer)}>Try Again</button>
+                  )}
+                </>
+              )}
+              {(pairing.status === 'sending' || pairing.status === 'pending') && (
+                <button className="btn btn-ghost" onClick={cancelPairing}>Cancel</button>
+              )}
+              {pairing.status === 'accepted' && (
+                <button className="btn btn-primary" onClick={cancelPairing}>Done</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Peer picker modal — shown when clicking "+ New Job" */}
+      {showPeerPicker && (
+        <div className="modal-overlay" onClick={() => setShowPeerPicker(false)}>
+          <div className="modal" style={{ maxWidth: '500px' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2><Radar size={18} /> Select a Peer</h2>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowPeerPicker(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {filterPaired(discoveredPeers).length > 0 ? (
+                <>
+                  <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>
+                    These RedMan instances were found on your network. Select one to set up a backup job.
+                  </p>
+                  <div className="discovery-banner-items">
+                    {filterPaired(discoveredPeers).map(p => (
+                      <button key={p.ip} className="discovery-banner-item" onClick={() => selectDiscoveredPeer(p)}>
+                        <div className="discovery-banner-name">{p.instance}</div>
+                        <div className="discovery-banner-detail">{p.ip} · v{p.version}</div>
+                        <span className="btn btn-primary btn-sm">Connect →</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state" style={{ padding: 'var(--space-lg)' }}>
+                  <Radar size={32} style={{ opacity: 0.3 }} />
+                  <p>No other RedMan instances found on your network.</p>
+                  <button className="btn btn-secondary btn-sm" onClick={handleDiscoverPeers} disabled={discovering} style={{ marginTop: 'var(--space-sm)' }}>
+                    {discovering ? <><Radar size={14} className="spin" /> Scanning...</> : <><Radar size={14} /> Scan Again</>}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={handleNewJobManual}>Enter URL manually</button>
+              {discoveredPeers.length > 0 && (
+                <button className="btn btn-secondary btn-sm" onClick={handleDiscoverPeers} disabled={discovering}>
+                  {discovering ? 'Scanning...' : 'Rescan'}
                 </button>
               )}
             </div>
@@ -290,11 +425,10 @@ export default function HyperBackupPage() {
               <div className="config-card-header">
                 <div>
                   <span className="config-name">{j.name}</span>
-                  <StatusBadge status={j.direction} />
-                  <StatusBadge status={j.enabled ? 'running' : 'exited'} label={j.enabled ? 'Active' : 'Disabled'} />
+                  <StatusBadge status={getProgressForConfig(j.id) ? 'active' : j.enabled ? 'enabled' : 'disabled'} />
                 </div>
                 <div className="config-actions">
-                  <button className="btn btn-primary btn-sm" onClick={() => requireSsh(() => handleTrigger(j.id))} disabled={!!getProgressForConfig(j.id)}><Play size={14} /> Run</button>
+                  <button className="btn btn-primary btn-sm" onClick={() => { ensureSshKey(); handleTrigger(j.id); }} disabled={!!getProgressForConfig(j.id)}><Play size={14} /> Run</button>
                   <button className="btn btn-secondary btn-sm" onClick={() => startEdit(j)}><Pencil size={14} /> Edit</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(j.id)}><Trash2 size={14} /></button>
                 </div>
@@ -302,10 +436,17 @@ export default function HyperBackupPage() {
               <div className="config-details">
                 <div className="config-detail"><span className="detail-label">Local Path</span><code>{j.local_path}</code></div>
                 <div className="config-detail"><span className="detail-label">Remote Path</span><code>{j.remote_path}</code></div>
-                <div className="config-detail"><span className="detail-label">Remote URL</span><code>{j.remote_url}</code></div>
+                <div className="config-detail"><span className="detail-label">Remote Instance</span>
+                  <code>{destinations.find(d => d.remote_url === j.remote_url)?.name || j.remote_url}
+                    {' '}{(() => { const d = destinations.find(d => d.remote_url === j.remote_url); return d?.handshake_version >= 2
+                      ? <ShieldCheck size={12} style={{ color: 'var(--color-success)', verticalAlign: 'middle' }} title="Secure — Noise XX handshake" />
+                      : <ShieldAlert size={12} style={{ color: 'var(--color-warning)', verticalAlign: 'middle' }} title="Legacy pairing — re-pair to upgrade" />;
+                    })()}
+                  </code>
+                </div>
                 <div className="config-detail"><span className="detail-label">Schedule</span><span>{describeCron(j.cron_expression)}</span></div>
               </div>
-              <JobProgress progress={getProgressForConfig(j.id)} feature="hyper-backup" />
+              <JobProgress progress={getProgressForConfig(j.id)} feature="hyper-backup" onCancel={() => { const rid = getRunIdForConfig(j.id); if (rid) cancelHyperBackup(rid).then(() => loadAll()); }} />
               {j.consecutive_skips > 0 && (
                 <div className="skip-warning">
                   <AlertTriangle size={14} />
@@ -328,72 +469,76 @@ export default function HyperBackupPage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editId ? 'Edit Job' : 'New Hyper Backup Job'}</h2>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>✕</button>
+              <button type="button" className="btn btn-ghost btn-sm btn-icon" aria-label="Close" onClick={() => setShowForm(false)}><X size={16} /></button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
+                {/* Peer selection — prominent at top */}
                 <div className="form-group">
-                  <label>Job Name</label>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="e.g. Documents → Dad's NAS" />
-                </div>
-
-                <div className="form-group">
-                  <label>Direction</label>
-                  <div className="direction-toggle">
-                    <button type="button" className={`dir-btn ${form.direction === 'push' ? 'active' : ''}`} onClick={() => setForm({ ...form, direction: 'push' })}>
-                      ↑ Push (Send to remote)
-                    </button>
-                    <button type="button" className={`dir-btn ${form.direction === 'pull' ? 'active' : ''}`} onClick={() => setForm({ ...form, direction: 'pull' })}>
-                      ↓ Pull (Receive from remote)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label>Remote RedMan URL</label>
-                  <input value={form.remote_url} onChange={e => setForm({ ...form, remote_url: e.target.value })} required placeholder="http://100.90.128.2:8091" />
-                  <span className="form-hint">The peer API URL of the remote RedMan instance</span>
-                </div>
-
-                <div className="form-group">
-                  <label>Remote API Key</label>
-                  <input type="password" value={form.remote_api_key} onChange={e => setForm({ ...form, remote_api_key: e.target.value })} placeholder={editId ? 'Leave empty to keep existing' : 'Peer API key'} required={!editId} />
-                  <span className="form-hint">Generated on the remote instance's Settings → Authorized Peers tab</span>
-                </div>
-
-                <div className="form-group">
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={handleTestConnection} disabled={testing}>
-                    {testing ? <><Search size={14} /> Testing...</> : <><Plug size={14} /> Test Connection</>}
-                  </button>
-                  {testResult && (
-                    <div className={`test-result ${testResult.reachable ? 'success' : 'failure'}`}>
-                      {testResult.reachable
-                        ? <><CheckCircle2 size={14} /> Connected to {testResult.instance || 'remote'} ({testResult.version || '?'})</>
-                        : <><XCircle size={14} /> {testResult.error || 'Connection failed'}</>}
+                  <label>Destination</label>
+                  {destinations.length > 0 ? (
+                    <select
+                      value={form.remote_url}
+                      onChange={e => {
+                        const dest = destinations.find(d => d.remote_url === e.target.value);
+                        setForm(f => {
+                          const update = {
+                            ...f,
+                            remote_url: e.target.value,
+                          };
+                          if (!editId && !nameManual) update.name = suggestName(f.local_path, e.target.value);
+                          return update;
+                        });
+                      }}
+                      required
+                    >
+                      <option value="">Select a paired peer...</option>
+                      {destinations.map(d => (
+                        <option key={d.id} value={d.remote_url}>{d.name} ({d.remote_url})</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="form-hint" style={{ padding: 'var(--space-sm) 0' }}>
+                      No paired peers yet. Go to <strong>Hyper Backup</strong> and pair with a peer first.
                     </div>
                   )}
                 </div>
 
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>SSH User</label>
-                    <input value={form.ssh_user} onChange={e => setForm({ ...form, ssh_user: e.target.value })} placeholder="root" />
-                  </div>
-                  <div className="form-group">
-                    <label>SSH Host (override)</label>
-                    <input value={form.ssh_host} onChange={e => setForm({ ...form, ssh_host: e.target.value })} placeholder="Auto-detected from remote URL" />
-                  </div>
+                <div className="form-group">
+                  <label>Job Name</label>
+                  <input value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); setNameManual(true); }} required placeholder="e.g. Documents → Dad's NAS" />
                 </div>
 
                 <div className="form-group">
-                  <label>Local Path</label>
-                  <PathPicker value={form.local_path} onChange={v => setForm({ ...form, local_path: v })} placeholder="/mnt/user/Documents" />
+                  <label>Local Path {settings.instance_name && <span className="label-instance">({settings.instance_name})</span>}</label>
+                  <PathPicker value={form.local_path} onChange={v => {
+                    const update = { ...form, local_path: v };
+                    // Auto-suggest remote path: append source folder name to current remote path
+                    if (v && !form.remote_path_manual) {
+                      const folderName = v.replace(/\/+$/, '').split('/').pop();
+                      const base = (form.remote_path || '/mnt/user/cross-site').replace(/\/+$/, '');
+                      if (folderName) {
+                        const suffix = '/' + folderName;
+                        update.remote_path = base + suffix;
+                        setSuggestedSuffix(suffix);
+                      }
+                    }
+                    if (!editId && !nameManual) update.name = suggestName(v, form.remote_url);
+                    setForm(update);
+                  }} placeholder="/mnt/user/Documents" />
                 </div>
 
                 <div className="form-group">
-                  <label>Remote Path</label>
-                  <input value={form.remote_path} onChange={e => setForm({ ...form, remote_path: e.target.value })} required placeholder="/mnt/user/Backups/Documents" />
-                  <span className="form-hint">Path on the remote system</span>
+                  <label>Remote Path {(() => { const d = destinations.find(d => d.remote_url === form.remote_url); return d?.name ? <span className="label-instance">({d.name})</span> : null; })()}</label>
+                  <RemotePathPicker
+                    value={form.remote_path}
+                    onChange={v => { setForm({ ...form, remote_path: v, remote_path_manual: true }); setSuggestedSuffix(''); }}
+                    onBrowse={v => { setForm({ ...form, remote_path: v }); setSuggestedSuffix(''); }}
+                    placeholder="/mnt/user/Backups/Documents"
+                    remoteUrl={form.remote_url}
+                    suggestedSuffix={suggestedSuffix}
+                  />
+                  <span className="form-hint">Path on the remote system — you can type a path that doesn't exist yet</span>
                 </div>
 
                 <div className="form-group">
@@ -401,24 +546,46 @@ export default function HyperBackupPage() {
                   <SchedulePicker value={form.cron_expression} onChange={v => setForm({ ...form, cron_expression: v })} />
                 </div>
 
-                <div className="form-row">
-                  <div className="form-group">
-                    <div className="toggle-group">
-                      <div className={`toggle ${form.enabled ? 'active' : ''}`} onClick={() => setForm({ ...form, enabled: !form.enabled })} />
-                      <span>Enabled</span>
-                    </div>
+                <div className="form-group">
+                  <label>Notifications</label>
+                  <div className="segmented" role="tablist" aria-label="Notification mode">
+                    {['global', 'custom', 'silent'].map(mode => (
+                      <button key={mode} type="button" role="tab" aria-selected={form.notify_mode === mode}
+                        className={`segmented-option ${form.notify_mode === mode ? 'active' : ''}`}
+                        onClick={() => setForm({ ...form, notify_mode: mode })}>
+                        {mode === 'global' ? 'Use global' : mode === 'custom' ? 'Custom' : 'Silent'}
+                      </button>
+                    ))}
                   </div>
-                  <div className="form-group">
-                    <div className="toggle-group">
-                      <div className={`toggle ${form.notify_on_success ? 'active' : ''}`} onClick={() => setForm({ ...form, notify_on_success: !form.notify_on_success })} />
-                      <span>Notify on success</span>
+                  {form.notify_mode === 'global' && <span className="form-hint">Follows notification settings from Settings → Notifications</span>}
+                  {form.notify_mode === 'silent' && <span className="form-hint">No notifications for this job</span>}
+                  {form.notify_mode === 'custom' && (
+                    <div className="custom-notify-row">
+                      {['notify_on_start', 'notify_on_success', 'notify_on_failure'].map(key => (
+                        <div key={key} className="toggle-group">
+                          <div className={`toggle ${form[key] ? 'active' : ''}`} onClick={() => setForm({ ...form, [key]: !form[key] })} />
+                          <span>{key === 'notify_on_start' ? 'On start' : key === 'notify_on_success' ? 'On success' : 'On failure'}</span>
+                        </div>
+                      ))}
                     </div>
+                  )}
+                </div>
+
+                <div className="form-group form-row-toggle">
+                  <div>
+                    <label style={{ marginBottom: 2 }}>Enabled</label>
+                    <span className="form-hint">Job will run on schedule. Disable to pause without deleting.</span>
+                  </div>
+                  <div className="toggle-group" onClick={() => setForm({ ...form, enabled: !form.enabled })}>
+                    <div className={`toggle ${form.enabled ? 'active' : ''}`} />
                   </div>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">{editId ? 'Save Changes' : 'Create Job'}</button>
+                <div className="modal-footer-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary">{editId ? 'Save Changes' : 'Create Job'}</button>
+                </div>
               </div>
             </form>
           </div>
@@ -452,7 +619,7 @@ export default function HyperBackupPage() {
                     <tr key={r.id}>
                       <td><StatusBadge status={r.status} /></td>
                       <td>{jobs.find(j => j.id === r.config_id)?.name || `#${r.config_id}`}</td>
-                      <td className="mono-cell">{r.started_at ? new Date(r.started_at).toLocaleString() : '—'}</td>
+                      <td className="mono-cell">{r.started_at ? formatDateTime(r.started_at, settings) : '—'}</td>
                       <td>{r.duration_seconds ? `${Math.round(r.duration_seconds)}s` : '—'}</td>
                       <td>{r.files_copied || 0}</td>
                       <td>{formatBytes(r.bytes_transferred || 0)}</td>

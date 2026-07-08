@@ -9,7 +9,6 @@ import './SchedulePicker.css';
  */
 export default function SchedulePicker({ value, onChange }) {
   const parsed = useMemo(() => parseCron(value), [value]);
-  const [showCron, setShowCron] = useState(false);
   const [customCron, setCustomCron] = useState(value);
 
   // Sync custom input when value changes externally
@@ -59,8 +58,6 @@ export default function SchedulePicker({ value, onChange }) {
   const handleCustomApply = () => {
     onChange(customCron);
   };
-
-  const description = describeCron(value);
 
   return (
     <div className="schedule-picker">
@@ -173,22 +170,7 @@ export default function SchedulePicker({ value, onChange }) {
         </div>
       )}
 
-      {/* Human-readable description */}
-      <div className="schedule-description">{description}</div>
 
-      {/* Toggle raw cron display */}
-      {parsed.frequency !== 'custom' && (
-        <button
-          type="button"
-          className="schedule-toggle-cron"
-          onClick={() => setShowCron(!showCron)}
-        >
-          {showCron ? '▾ Hide cron' : '▸ Show cron'}
-        </button>
-      )}
-      {showCron && parsed.frequency !== 'custom' && (
-        <code className="schedule-cron-display">{value}</code>
-      )}
     </div>
   );
 }

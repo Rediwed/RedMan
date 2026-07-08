@@ -77,7 +77,7 @@ async function sendNtfy(settings, message, { title, priority = '3', tags } = {})
   }
 }
 
-function sendBrowser(type, title, body) {
+export function sendBrowser(type, title, body) {
   const event = JSON.stringify({ type, title, body });
   for (const [, cb] of browserSubscribers) {
     try { cb(event); } catch { /* subscriber gone */ }
@@ -94,6 +94,32 @@ function sendQuiet(settings, eventKey, type, title, body, { priority, tags } = {
 }
 
 // ── Public notification methods ───────────────────────────────────
+
+/**
+ * Determine whether a notification should be sent for a job event.
+ * @param {object} job - Job/config row from DB (has notify_mode, notify_on_start, notify_on_success, notify_on_failure)
+ * @param {'start'|'success'|'failure'} event - The event type
+ * @returns {boolean}
+ */
+export function shouldNotify(job, event) {
+  const mode = job.notify_mode || 'global';
+
+  if (mode === 'silent') return false;
+
+  if (mode === 'custom') {
+    if (event === 'start') return !!job.notify_on_start;
+    if (event === 'success') return !!job.notify_on_success;
+    if (event === 'failure') return !!job.notify_on_failure;
+    return false;
+  }
+
+  // mode === 'global' — defer to global settings
+  const settings = getAllSettings();
+  if (event === 'start') return anyEnabled(settings, 'ntfy_on_job_start');
+  if (event === 'success') return anyEnabled(settings, 'ntfy_on_job_complete');
+  if (event === 'failure') return anyEnabled(settings, 'ntfy_on_job_error');
+  return false;
+}
 
 export async function sendNotification(message, { title, priority = '3', tags } = {}) {
   const settings = getAllSettings();

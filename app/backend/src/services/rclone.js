@@ -2,17 +2,23 @@
 // Spawns rclone as a child process for sync/bisync, parses JSON logs
 
 import { spawn } from 'child_process';
-import { readFile, unlink } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { randomBytes } from 'crypto';
 import db from '../db.js';
-import { notifyBackupResult } from './notify.js';
+import { notifyBackupResult, shouldNotify } from './notify.js';
 
 const activeRuns = new Map();
+const activeProcesses = new Map(); // runId -> ChildProcess
 
 export function getActiveRcloneRun(runId) {
   return activeRuns.get(runId);
+}
+
+export function cancelRcloneRun(runId) {
+  const proc = activeProcesses.get(runId);
+  if (proc) {
+    proc.kill('SIGTERM');
+    return true;
+  }
+  return false;
 }
 
 // List configured rclone remotes
@@ -26,6 +32,19 @@ export async function listRemotes() {
 
 // Browse a remote path
 export async function browseRemote(remoteName, remotePath = '') {
+  // Validate remote name + path before invoking rclone. Args are passed as an
+  // array so shell injection isn't possible, but rclone itself can interpret
+  // metacharacters/newlines unexpectedly and unknown remotes leak as errors.
+  if (!remoteName || !/^[a-zA-Z0-9_-]+$/.test(remoteName)) {
+    throw new Error('Invalid remote name');
+  }
+  const remotes = await listRemotes();
+  if (!remotes.includes(remoteName)) {
+    throw new Error(`Remote "${remoteName}" not found`);
+  }
+  if (typeof remotePath !== 'string' || /[\n\r\0]/.test(remotePath) || remotePath.includes('..')) {
+    throw new Error('Invalid remote path');
+  }
   const target = remotePath ? `${remoteName}:${remotePath}` : `${remoteName}:`;
   const result = await runRclone(['lsjson', target, '--dirs-only']);
   if (result.exitCode !== 0) throw new Error(`rclone lsjson failed: ${result.stderr}`);
@@ -52,7 +71,6 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
   }
 
   const startTime = Date.now();
-  const logFile = join(tmpdir(), `redman-rclone-${randomBytes(4).toString('hex')}.json`);
   activeRuns.set(runId, { status: 'running', progress: null, startedAt: startTime });
 
   try {
@@ -60,24 +78,26 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
     let args;
 
     if (job.sync_direction === 'bisync') {
-      args = ['bisync', job.local_path, remote, '--verbose', '--log-file', logFile, '--log-level', 'INFO'];
+      args = ['bisync', job.local_path, remote, '-v'];
 
       // First run or after reset needs --resync
       if (job.bisync_resync_needed) {
         args.push('--resync');
       }
     } else if (job.sync_direction === 'upload') {
-      args = ['sync', job.local_path, remote, '--verbose', '--log-file', logFile, '--log-level', 'INFO'];
+      args = ['sync', job.local_path, remote, '-v'];
     } else {
       // download
-      args = ['sync', remote, job.local_path, '--verbose', '--log-file', logFile, '--log-level', 'INFO'];
+      args = ['sync', remote, job.local_path, '-v'];
     }
 
-    args.push('--stats-one-line', '--stats', '2s');
+    args.push('--stats-one-line', '--stats', '2s', '--transfers', '16', '--checkers', '16', '--fast-list', '--retries', '1',
+      '--drive-pacer-min-sleep', '10ms', '--drive-pacer-burst', '200');
 
-    const result = await runRclone(args, (line) => {
+    const result = await runRclone(args, runId, (line) => {
       // Parse rclone --stats-one-line output for live progress
-      const bytesMatch = line.match(/Transferred:\s+([\d.]+\s*\w+)\s*\/\s*([\d.]+\s*\w+),\s*(\d+)%/);
+      // Format varies: "Transferred: 1.2 MiB / 5 MiB, 24%" or just "1.2 MiB / 5 MiB, 24%"
+      const bytesMatch = line.match(/([\d.]+\s*\w+)\s*\/\s*([\d.]+\s*\w+),\s*(\d+)%/);
       if (bytesMatch) {
         const current = activeRuns.get(runId) || {};
         const update = {
@@ -88,19 +108,19 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
         };
         const speedMatch = line.match(/([\d.]+\s*\w+\/s)/);
         if (speedMatch) update.speed = speedMatch[1];
-        const etaMatch = line.match(/ETA\s+([\dhms ]+\S*)/);
+        const etaMatch = line.match(/ETA\s+([\dhms ]+?)(?:\s*\(|$)/);
         if (etaMatch) update.eta = etaMatch[1].trim();
+        const xfrMatch = line.match(/\(xfr#(\d+)\/(\d+)\)/);
+        if (xfrMatch) {
+          update.filesCopied = parseInt(xfrMatch[1]);
+          update.filesTotal = parseInt(xfrMatch[2]);
+        }
         activeRuns.set(runId, update);
       }
     });
 
-    // Parse log file for stats
-    let logContent = '';
-    try {
-      logContent = await readFile(logFile, 'utf-8');
-    } catch {}
-
-    const stats = parseRcloneLog(logContent);
+    // Parse stderr for stats (rclone outputs everything to stderr)
+    const stats = parseRcloneLog(result.stderr);
 
     // If bisync with --resync succeeded, clear the flag
     if (job.sync_direction === 'bisync' && job.bisync_resync_needed && result.exitCode === 0) {
@@ -121,7 +141,11 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
     if (fileEntries.length > 0) insertAllFiles(fileEntries);
 
     const duration = (Date.now() - startTime) / 1000;
-    const status = result.exitCode === 0 ? 'completed' : 'failed';
+    const wasCancelled = result.exitCode === null || result.exitCode === 143 || result.exitCode === -15;
+    const status = wasCancelled ? 'cancelled'
+      : result.exitCode === 0
+        ? (stats.filesFailed > 0 ? 'partial' : 'completed')
+        : stats.filesCopied > 0 ? 'partial' : 'failed';
 
     db.prepare(`
       UPDATE backup_runs SET
@@ -134,24 +158,21 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       status,
       stats.filesTotal, stats.filesCopied, stats.filesFailed,
       stats.bytesTransferred, duration,
-      result.exitCode !== 0 ? (result.stderr || `rclone exited with code ${result.exitCode}`) : null,
+      stats.filesFailed > 0 ? `${stats.filesFailed} file(s) failed` : null,
       runId,
     );
 
     // Notification
-    if (job.notify_on_success && status === 'completed') {
+    if (status === 'completed' && shouldNotify(job, 'success')) {
       await notifyBackupResult('Rclone Sync', job.name, 'completed', {
         filesCopied: stats.filesCopied, filesFailed: stats.filesFailed,
         bytesTransferred: stats.bytesTransferred, duration,
       });
-    } else if (job.notify_on_failure && status === 'failed') {
+    } else if (status === 'failed' && shouldNotify(job, 'failure')) {
       await notifyBackupResult('Rclone Sync', job.name, 'failed', {
         filesCopied: stats.filesCopied, bytesTransferred: stats.bytesTransferred, duration,
       });
     }
-
-    // Cleanup log file
-    try { await unlink(logFile); } catch {}
 
     return { runId, status };
   } catch (err) {
@@ -162,27 +183,27 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       WHERE id = ?
     `).run(err.message, duration, runId);
 
-    if (job.notify_on_failure) {
+    if (shouldNotify(job, 'failure')) {
       await notifyBackupResult('Rclone Sync', job.name, 'failed', { duration });
     }
-    try { await unlink(logFile); } catch {}
     throw err;
   } finally {
     activeRuns.delete(runId);
   }
 }
 
-function runRclone(args, onStderrLine = null) {
+function runRclone(args, runId = null, onStderrLine = null) {
   return new Promise((resolve, reject) => {
     let proc;
     try {
       proc = spawn('rclone', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, RCLONE_NON_INTERACTIVE: 'true' },
+        env: { ...process.env, RCLONE_NON_INTERACTIVE: 'true', RCLONE_CONFIG: process.env.RCLONE_CONFIG || '/app/backend/data/rclone.conf' },
       });
     } catch (err) {
       return reject(new Error(`rclone is not installed or not accessible: ${err.message}`));
     }
+    if (runId) activeProcesses.set(runId, proc);
     let stdout = '';
     let stderr = '';
 
@@ -196,6 +217,7 @@ function runRclone(args, onStderrLine = null) {
     });
 
     proc.on('close', (exitCode) => {
+      if (runId) activeProcesses.delete(runId);
       resolve({ exitCode, stdout, stderr });
     });
 
@@ -228,24 +250,33 @@ function parseRcloneLog(logContent) {
       continue;
     }
 
-    // Parse errors
+    // Parse errors (skip aggregate/retry lines that aren't file-level errors)
     const errorMatch = line.match(/ERROR\s*:\s*(.+?):\s*(.+)/);
     if (errorMatch) {
+      const errPath = errorMatch[1].trim();
+      // Skip rclone aggregate messages (retries, "not deleting" warnings, etc.)
+      if (/^Attempt \d+\/\d+ failed/.test(errPath) ||
+          /^Google drive root/.test(errPath) ||
+          /^Failed to sync/.test(errPath)) {
+        continue;
+      }
       filesFailed++;
-      files.push({ path: errorMatch[1], action: 'error', size: 0, error: errorMatch[2] });
+      // Strip redundant file paths from error message (already shown in the file column)
+      const errMsg = errorMatch[2].replace(/\/mnt\/\S+:\s*/g, '').replace(/:\s*$/, '');
+      files.push({ path: errPath, action: 'error', size: 0, error: errMsg });
       continue;
     }
 
-    // Parse aggregate stats
-    const bytesLine = line.match(/Transferred:\s*([\d.]+\s*\w+)\s*\/\s*([\d.]+\s*\w+)/);
+    // Parse aggregate stats — format on stderr: "9.215 MiB / 9.215 MiB, 100%, ..."
+    const bytesLine = line.match(/([\d.]+\s*\w+)\s*\/\s*([\d.]+\s*\w+),\s*\d+%/);
     if (bytesLine) {
       bytesTransferred = parseRcloneSize(bytesLine[1]);
     }
 
-    const totalLine = line.match(/Transferred:\s*(\d+)\s*\/\s*(\d+)/);
-    if (totalLine) {
-      filesCopied = parseInt(totalLine[1]);
-      filesTotal = parseInt(totalLine[2]);
+    const xfrMatch = line.match(/\(xfr#(\d+)\/(\d+)\)/);
+    if (xfrMatch) {
+      filesCopied = parseInt(xfrMatch[1]);
+      filesTotal = parseInt(xfrMatch[2]);
     }
   }
 
@@ -267,6 +298,42 @@ const ALLOWED_TYPES = new Set([
   'drive', 'onedrive', 'protondrive', 's3', 'b2', 'dropbox', 'sftp',
   'webdav', 'box', 'mega', 'pcloud', 'ftp', 'local',
 ]);
+
+// Whitelist of rclone config parameter keys we accept from API callers.
+// Anything else is silently dropped to prevent injection of unrelated rclone
+// flags or accidental leak of env-overriding params via the config file.
+// Keys are matched case-insensitively against the lowercased input.
+const ALLOWED_PARAM_KEYS = new Set([
+  // common
+  'type', 'token', 'client_id', 'client_secret', 'scope', 'root_folder_id',
+  'team_drive', 'service_account_file', 'service_account_credentials',
+  // s3 / b2
+  'provider', 'access_key_id', 'secret_access_key', 'region', 'endpoint',
+  'account', 'key', 'hard_delete',
+  // sftp / ftp / webdav
+  'host', 'user', 'pass', 'port', 'key_file', 'key_pem', 'url', 'vendor',
+  // dropbox / onedrive / box / pcloud / mega
+  'app_key', 'app_secret', 'drive_type', 'tenant', 'username', 'password',
+  // proton
+  '2fa', 'mailbox_password',
+  // local / generic
+  'nounc', 'encoding', 'description',
+]);
+
+function filterParams(params) {
+  const out = {};
+  const dropped = [];
+  for (const [rawKey, value] of Object.entries(params || {})) {
+    const key = String(rawKey).toLowerCase();
+    if (!/^[a-z0-9_]+$/.test(key)) { dropped.push(rawKey); continue; }
+    if (!ALLOWED_PARAM_KEYS.has(key)) { dropped.push(rawKey); continue; }
+    // Reject newlines/control chars in values (would break rclone config file)
+    if (typeof value === 'string' && /[\n\r\0]/.test(value)) { dropped.push(rawKey); continue; }
+    out[key] = value;
+  }
+  if (dropped.length) console.warn(`[rclone] dropped unsupported config keys: ${dropped.join(', ')}`);
+  return out;
+}
 
 // List available provider types
 export function getProviderTypes() {
@@ -298,8 +365,9 @@ export async function createRemote(name, type, params = {}) {
     throw new Error(`Remote "${name}" already exists`);
   }
 
+  const safeParams = filterParams(params);
   const args = ['config', 'create', name, type];
-  for (const [key, value] of Object.entries(params)) {
+  for (const [key, value] of Object.entries(safeParams)) {
     if (value !== undefined && value !== null && value !== '') {
       args.push(`${key}=${value}`);
     }
@@ -307,7 +375,7 @@ export async function createRemote(name, type, params = {}) {
 
   const result = await runRclone(args);
   if (result.exitCode !== 0) throw new Error(`Failed to create remote: ${result.stderr}`);
-  return { name, type, params: redactSensitive(params) };
+  return { name, type, params: redactSensitive(safeParams) };
 }
 
 // Update an existing remote's parameters
@@ -317,8 +385,9 @@ export async function updateRemote(name, params = {}) {
     throw new Error(`Remote "${name}" not found`);
   }
 
+  const safeParams = filterParams(params);
   const args = ['config', 'update', name];
-  for (const [key, value] of Object.entries(params)) {
+  for (const [key, value] of Object.entries(safeParams)) {
     if (value !== undefined && value !== null && value !== '') {
       args.push(`${key}=${value}`);
     }

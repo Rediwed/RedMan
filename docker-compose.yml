@@ -8,6 +8,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_READ_SEARCH
     ports:
       - "8090:8090"
       - "8091:8091"
@@ -15,7 +17,7 @@ services:
       - db-data:/app/backend/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /boot/config/shares:/boot/config/shares:ro
-      - /mnt/user:/mnt/user:ro
+      - /mnt/user:/mnt/user
       - /mnt/cache:/mnt/cache:ro
       - type: bind
         source: /mnt/disks
@@ -26,6 +28,8 @@ services:
       - NODE_ENV=production
       - PORT=8090
       - PEER_PORT=8091
+      - TZ=Europe/Amsterdam
+      - RCLONE_CONFIG=/app/backend/data/rclone.conf
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8090/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s

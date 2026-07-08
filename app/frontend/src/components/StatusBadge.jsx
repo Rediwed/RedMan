@@ -1,9 +1,14 @@
-import { CheckCircle2, Loader2, Clock, XCircle, Power, Pause, Box, RotateCw, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { CheckCircle2, Loader2, Clock, XCircle, Power, Pause, Box, RotateCw, ArrowUp, ArrowDown, ArrowUpDown, AlertTriangle, Ban } from 'lucide-react';
 import './StatusBadge.css';
 
 const statusConfig = {
   completed: { label: 'Completed', className: 'badge-success', icon: CheckCircle2 },
+  partial: { label: 'Partial', className: 'badge-warning', icon: AlertTriangle },
+  cancelled: { label: 'Cancelled', className: 'badge-warning', icon: Ban },
   running: { label: 'Running', className: 'badge-success', icon: Loader2 },
+  active: { label: 'Active', className: 'badge-success', icon: Loader2 },
+  enabled: { label: 'Enabled', className: 'badge-info', icon: Clock },
+  disabled: { label: 'Disabled', className: 'badge-default', icon: Power },
   queued: { label: 'Queued', className: 'badge-info', icon: Clock },
   failed: { label: 'Failed', className: 'badge-danger', icon: XCircle },
   // Container states

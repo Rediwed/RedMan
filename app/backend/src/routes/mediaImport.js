@@ -5,7 +5,7 @@ import db from '../db.js';
 import { detectDrives, isDriveMounted, getConnectedDrives } from '../services/driveMonitor.js';
 import { startScan, getScanProgress, clearScan } from '../services/driveScanner.js';
 import {
-  startImport, getActiveImport, testImmichConnection, isImmichGoAvailable, ejectDrive,
+  startImport, getActiveImport, cancelImport, testImmichConnection, isImmichGoAvailable, ejectDrive,
 } from '../services/immichImport.js';
 import { notifyDriveScanStarted, notifyDriveScanCompleted } from '../services/notify.js';
 
@@ -17,7 +17,17 @@ const router = Router();
 router.get('/drives', (req, res) => {
   try {
     const connected = getConnectedDrives();
-    const drives = connected.map(drive => {
+
+    // Get hidden drives list
+    let hidden = [];
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'hidden_drives'").get();
+      hidden = JSON.parse(row?.value || '[]');
+    } catch { /* ignore */ }
+
+    const drives = connected
+      .filter(drive => !hidden.some(h => drive.mountPath === h || drive.mountPath?.startsWith(h + '/')))
+      .map(drive => {
       const dbRow = findDriveInDb(drive);
       return {
         ...drive,
@@ -156,6 +166,21 @@ router.get('/runs/:id/progress', (req, res) => {
   res.json(progress);
 });
 
+// Cancel a running import
+router.post('/runs/:id/cancel', (req, res) => {
+  const runId = parseInt(req.params.id);
+  const run = db.prepare('SELECT * FROM backup_runs WHERE id = ?').get(runId);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  if (run.status !== 'running') return res.status(400).json({ error: 'Run is not active' });
+  const killed = cancelImport(runId);
+  if (killed) {
+    db.prepare("UPDATE backup_runs SET status = 'cancelled', completed_at = datetime('now'), error_message = 'Cancelled by user' WHERE id = ?").run(runId);
+    res.json({ status: 'cancelled' });
+  } else {
+    res.status(400).json({ error: 'Could not cancel — process not found' });
+  }
+});
+
 // ── Import History ────────────────────────────────────────────────
 
 router.get('/runs', (req, res) => {
@@ -164,18 +189,19 @@ router.get('/runs', (req, res) => {
   const offset = (page - 1) * limit;
   const driveId = req.query.drive_id;
 
-  let query = `SELECT r.*, d.name as drive_name, d.label as drive_label
-    FROM backup_runs r
-    LEFT JOIN media_drives d ON r.config_id = d.id
-    WHERE r.feature = 'media-import'`;
+  let where = `WHERE r.feature = 'media-import'`;
   const params = [];
 
   if (driveId) {
-    query += ' AND r.config_id = ?';
+    where += ' AND r.config_id = ?';
     params.push(driveId);
   }
 
-  const total = db.prepare(query.replace(/SELECT r\.\*.*FROM/, 'SELECT COUNT(*) as count FROM')).get(...params);
+  const total = db.prepare(`SELECT COUNT(*) as count FROM backup_runs r ${where}`).get(...params);
+  let query = `SELECT r.*, d.name as drive_name, d.label as drive_label
+    FROM backup_runs r
+    LEFT JOIN media_drives d ON r.config_id = d.id
+    ${where}`;
   query += ' ORDER BY r.started_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
@@ -197,6 +223,38 @@ router.get('/runs/:id', (req, res) => {
   if (progress) run.progress = progress;
 
   res.json(run);
+});
+
+// Get per-file details for a run
+router.get('/runs/:id/files', (req, res) => {
+  const runId = req.params.id;
+  const run = db.prepare('SELECT id FROM backup_runs WHERE id = ? AND feature = ?').get(runId, 'media-import');
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+
+  const action = req.query.action; // filter by action: uploaded, error, duplicate
+  let query = 'SELECT * FROM backup_run_files WHERE run_id = ?';
+  const params = [runId];
+
+  if (action) {
+    query += ' AND action = ?';
+    params.push(action);
+  }
+
+  query += ' ORDER BY id';
+  const files = db.prepare(query).all(...params);
+
+  // Summary counts
+  const summary = db.prepare(`
+    SELECT action, COUNT(*) as count FROM backup_run_files WHERE run_id = ? GROUP BY action
+  `).all(runId);
+
+  // Date range of imported photos (where Immich places them in timeline)
+  const dateRange = db.prepare(`
+    SELECT MIN(file_date) as earliest, MAX(file_date) as latest
+    FROM backup_run_files WHERE run_id = ? AND file_date IS NOT NULL
+  `).get(runId);
+
+  res.json({ files, summary, dateRange: dateRange || null });
 });
 
 // ── Eject ─────────────────────────────────────────────────────────
