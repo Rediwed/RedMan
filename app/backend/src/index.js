@@ -66,7 +66,7 @@ const startedAt = Date.now();
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.0.0',
+    version: '1.1.0',
     timestamp: new Date().toISOString(),
     uptime: null,
     hostname: null,
