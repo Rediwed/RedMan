@@ -165,3 +165,9 @@ export const getDbRecoveryScan = (paths = []) => {
 };
 export const getDbRecoveryInfo = (destPath) => fetchJSON(`/settings/db/recovery-info?dest_path=${encodeURIComponent(destPath)}`);
 export const restoreDb = (backupPath) => postJSON('/settings/db/restore', { backup_path: backupPath });
+
+// ===== Hardened Upgrade Readiness =====
+export const getUpgradeReadiness = () => fetchJSON('/upgrade-readiness');
+export const createUpgradeReadinessBackup = () => postJSON('/upgrade-readiness/backup', {});
+export const createUpgradeHostPlan = (data) => postJSON('/upgrade-readiness/host-plan', data);
+export const createUpgradeFinalConfig = (data) => postJSON('/upgrade-readiness/final-config', data);

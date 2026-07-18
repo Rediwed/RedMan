@@ -33,7 +33,9 @@ if (!tableExists('authorized_peers')) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_authorized_peers_api_key ON authorized_peers(api_key)`);
 
   // Migrate existing global peer_api_key setting to an authorized_peers row
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'peer_api_key'").get();
+  const row = tableExists('settings')
+    ? db.prepare("SELECT value FROM settings WHERE key = 'peer_api_key'").get()
+    : null;
   if (row?.value && row.value.length > 0) {
     db.prepare(`INSERT INTO authorized_peers (name, api_key, allowed_path_prefix) VALUES (?, ?, '/')`)
       .run('Migrated peer', row.value);

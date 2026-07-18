@@ -10,7 +10,6 @@
 #   ./pre-push.sh --quick         # Compat only + small integration test
 #   ./pre-push.sh --compat-only   # Backward compatibility checks only (no integration)
 #   ./pre-push.sh --skip-build    # Skip Docker build verification
-#   ./pre-push.sh --deploy        # Run tests, build, and deploy to Unraid
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -21,7 +20,6 @@ cd "$SCRIPT_DIR"
 SCALE="medium"
 RUN_INTEGRATION=true
 RUN_BUILD=true
-RUN_DEPLOY=false
 KEEP_DATA=false
 
 # ── Parse args ──
@@ -30,15 +28,13 @@ for arg in "$@"; do
     --quick)        SCALE="small" ;;
     --compat-only)  RUN_INTEGRATION=false ;;
     --skip-build)   RUN_BUILD=false ;;
-    --deploy)       RUN_DEPLOY=true ;;
     --keep-data)    KEEP_DATA=true ;;
     --help|-h)
-      echo "Usage: ./pre-push.sh [--quick|--compat-only|--skip-build|--deploy|--keep-data]"
+      echo "Usage: ./pre-push.sh [--quick|--compat-only|--skip-build|--keep-data]"
       echo ""
       echo "  --quick         Use small scale instead of medium for faster runs"
       echo "  --compat-only   Only run backward compatibility checks (no integration)"
       echo "  --skip-build    Skip frontend build verification"
-      echo "  --deploy        After all tests pass, deploy to Unraid via deploy.sh"
       echo "  --keep-data     Don't clean up test data after integration tests"
       exit 0
       ;;
@@ -230,20 +226,11 @@ done
 echo ""
 
 if [ $FAIL -gt 0 ]; then
-  echo -e "${RED}${BOLD}🚫 PUSH BLOCKED — fix failures above before deploying${NC}"
+  echo -e "${RED}${BOLD}🚫 PUSH BLOCKED — fix failures above${NC}"
   echo ""
   exit 1
 fi
 
 echo -e "${GREEN}${BOLD}✅ All checks passed${NC}"
-
-# ──────────────────────────────────────────────────
-# Step 8: Deploy (if requested)
-# ──────────────────────────────────────────────────
-if $RUN_DEPLOY; then
-  echo ""
-  echo -e "${YELLOW}▶ Deploying to Unraid...${NC}"
-  ./deploy.sh
-fi
 
 echo ""

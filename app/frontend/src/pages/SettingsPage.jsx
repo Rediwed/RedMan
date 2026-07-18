@@ -7,6 +7,7 @@ import {
   Users, Plus, Trash2, RefreshCw, Clock, FolderLock, Activity,
 } from 'lucide-react';
 import PillTabs from '../components/PillTabs.jsx';
+import UpgradeReadinessWizard from '../components/UpgradeReadinessWizard.jsx';
 import './SettingsPage.css';
 
 const SETTINGS_TABS = [
@@ -15,6 +16,7 @@ const SETTINGS_TABS = [
   { label: 'Authorized Peers', value: 'peers' },
   { label: 'Integrations', value: 'integrations' },
   { label: 'Infrastructure', value: 'infrastructure' },
+  { label: 'Upgrade', value: 'upgrade' },
 ];
 
 // Progress interval ticks (seconds): 1m–10m (1min steps), 15m–57m (3min steps), 1h–3h (15min steps)
@@ -775,6 +777,8 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {activeTab === 'upgrade' && <UpgradeReadinessWizard />}
 
       {/* Floating unsaved changes bar */}
       <div className="unsaved-bar" style={{ bottom: hasChanges ? 24 : -120 }}>

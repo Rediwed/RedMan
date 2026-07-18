@@ -1,0 +1,15 @@
+.version-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 10px;
+  z-index: 80;
+  padding: 3px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: rgba(17, 20, 29, 0.9);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.67rem;
+  line-height: 1.2;
+  pointer-events: none;
+}

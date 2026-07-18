@@ -4,7 +4,7 @@
 
   "api": {
     "health": {
-      "GET /api/health": { "auth": false, "returns": ["status", "version", "timestamp", "uptime", "hostname", "platform", "nodeVersion", "activeJobs", "memory", "pid"] }
+      "GET /api/health": { "auth": false, "returns": ["status", "version", "timestamp", "uptime", "hostname", "platform", "nodeVersion", "activeJobs", "memory", "pid", "upgradeBridge"] }
     },
     "ssd-backup": {
       "GET /api/ssd-backup/shares": { "auth": true },
@@ -108,6 +108,12 @@
     "filesystem": {
       "GET /api/filesystem/browse": { "auth": true, "query": ["dir"] },
       "GET /api/filesystem/roots": { "auth": true }
+    },
+    "upgrade-readiness": {
+      "GET /api/upgrade-readiness": { "auth": true },
+      "POST /api/upgrade-readiness/backup": { "auth": true },
+      "POST /api/upgrade-readiness/host-plan": { "auth": true },
+      "POST /api/upgrade-readiness/final-config": { "auth": true }
     }
   },
 
@@ -291,7 +297,8 @@
     "deltaVersion": ["withConfigLock", "registerTempFile", "cleanupTempFile", "startTempCleanup", "readManifest", "deltaifySnapshot", "rebaseDeltas", "rebaseDeltasWithTimestamp", "reconstructFile", "getChainLength", "verifyDeltaChain", "promoteDeltaToFull", "computeVersionStats", "getCachedVersionStats", "getAllCachedVersionStats"],
     "notify": ["sendNotification", "notifyJobStarted", "notifyJobCompleted", "notifyJobError", "notifyJobCancelled", "notifyJobSkipped", "notifyJobProgress", "notifyDriveAttached", "notifyDriveEjected", "notifyDriveLost", "notifyDriveScanStarted", "notifyDriveScanCompleted", "notifyImportStarted", "notifyImportCompleted", "notifyImportError", "notifyBackupResult", "sendTestNtfy", "sendTestBrowser", "addBrowserSubscriber", "removeBrowserSubscriber"],
     "sshManager": ["hasKey", "getPublicKey", "generateKey", "authorizeLocalhost", "testSshConnection", "getSshStatus"],
-    "unraid": ["getShares", "browsePath"]
+    "unraid": ["getShares", "browsePath"],
+    "upgradeReadiness": ["assessUpgradeReadiness", "createUpgradeBackup", "createHostPreparationPlan", "createFinalConfiguration", "UPGRADE_BRIDGE_VERSION"]
   },
 
   "frontendApi": {
@@ -308,7 +315,8 @@
       "getMediaDrives", "getKnownDrives", "getMediaDrive", "updateMediaDrive", "scanDrive", "getScanProgress", "startDriveImport", "getImportProgress", "ejectDrive", "getMediaImportRuns", "getMediaImportRunDetail", "testImmichConnection", "getMediaImportStatus",
       "browseDirectory", "getFilesystemRoots",
       "testNtfy", "testBrowserNotify",
-      "backupDbTo", "backupDbToAll", "getDbBackups", "getDbRecoveryScan", "getDbRecoveryInfo", "restoreDb"
+      "backupDbTo", "backupDbToAll", "getDbBackups", "getDbRecoveryScan", "getDbRecoveryInfo", "restoreDb",
+      "getUpgradeReadiness", "createUpgradeReadinessBackup", "createUpgradeHostPlan", "createUpgradeFinalConfig"
     ]
   }
 }

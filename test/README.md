@@ -1,5 +1,21 @@
 # RedMan — Test Environment
 
+## Upgrade Readiness Bridge
+
+Run the complete non-mutating release gate:
+
+```bash
+./scripts/release.sh check
+```
+
+Bridge-specific checks include:
+
+- `test_upgrade_readiness.mjs` — legacy assessment, WAL-safe backup, checksum/corruption handling, signed host command, injection rejection, and final configuration validation;
+- `test_upgrade_bridge_runtime.mjs` — exact trusted-proxy authentication, administrator-only preparation, maintenance blocking, redacted public health, and paused peer API;
+- `test_prepare_upgrade_host.sh` — deterministic image build plus real container stop/restart, receipt-bound backup, rollback manifest, restricted account, Unraid persistence, and corrupted rollback rejection.
+
+The host acceptance test uses disposable containers and removes them on exit. It does not touch a real NAS.
+
 Local test environment for validating **SSD Backup** (with versioning and delta compression), **Hyper Backup** (cross-site replication), and **Media Import** features.
 
 ## Prerequisites
@@ -408,7 +424,7 @@ node test/test_backward_compat.mjs --api-url http://localhost:8090 --peer-url ht
 
 ### Pre-Push Validation
 
-Run the full test gate before deploying:
+Run the full test gate before publishing:
 
 ```bash
 # Full suite: compat + medium integration test + frontend build
@@ -419,9 +435,6 @@ Run the full test gate before deploying:
 
 # Compat checks only (fastest)
 ./pre-push.sh --compat-only
-
-# Full suite + deploy to Unraid
-./pre-push.sh --deploy
 
 # Keep test data after run
 ./pre-push.sh --keep-data
@@ -435,7 +448,8 @@ Run the full test gate before deploying:
 5. Backward compatibility — live API validation
 6. Comprehensive integration test (medium scale by default)
 7. Stop test instances
-8. Deploy to Unraid (only with `--deploy`)
+
+Publication and installation remain separate. The bridge release script never deploys to a private target.
 
 ## Cleanup
 

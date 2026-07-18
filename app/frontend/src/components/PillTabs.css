@@ -29,3 +29,17 @@
   background: var(--color-primary);
   color: #fff;
 }
+
+@media (max-width: 700px) {
+  .pill-tabs {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+  }
+
+  .pill-tab {
+    flex: 0 0 auto;
+  }
+}

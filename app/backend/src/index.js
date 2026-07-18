@@ -15,8 +15,9 @@ import settingsRoutes from './routes/settings.js';
 import peersRoutes from './routes/peers.js';
 import mediaImportRoutes from './routes/mediaImport.js';
 import filesystemRoutes from './routes/filesystem.js';
+import upgradeReadinessRoutes from './routes/upgradeReadiness.js';
 import { createPeerApi } from './peerApi.js';
-import { startScheduler, registerExecutor, getActiveJobCount, stopAllJobs } from './services/scheduler.js';
+import { startScheduler, registerExecutor, stopAllJobs } from './services/scheduler.js';
 import { executeSsdBackup, killActiveRsyncProcesses } from './services/rsync.js';
 import { executeHyperBackup, notifyPeersOfShutdown } from './services/hyperBackup.js';
 import { executeRcloneJob } from './services/rclone.js';
@@ -25,8 +26,6 @@ import { startDriveMonitor } from './services/driveMonitor.js';
 import { startImport } from './services/immichImport.js';
 import { startTempCleanup } from './services/deltaVersion.js';
 import db from './db.js';
-
-import os from 'os';
 
 // ── Global error handlers — prevent silent crashes ──────────────
 process.on('uncaughtException', (err) => {
@@ -48,6 +47,9 @@ if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
 const app = express();
 const PORT = parseInt(process.env.PORT || '8090');
 const PEER_PORT = parseInt(process.env.PEER_API_PORT || '8091');
+const UPGRADE_BRIDGE_MODE = process.env.NODE_ENV === 'production'
+  ? process.env.REDMAN_UPGRADE_BRIDGE !== 'false'
+  : process.env.REDMAN_UPGRADE_BRIDGE === 'true';
 
 app.use(helmet());
 app.use(cors({
@@ -62,27 +64,29 @@ app.use(express.json());
 // Health check — before auth so it's always accessible
 const startedAt = Date.now();
 app.get('/api/health', (req, res) => {
-  const mem = process.memoryUsage();
   res.json({
     status: 'ok',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
-    uptime: Math.round((Date.now() - startedAt) / 1000),
-    hostname: os.hostname(),
-    platform: `${os.type()} ${os.release()}`,
-    nodeVersion: process.version,
-    activeJobs: getActiveJobCount(),
-    memory: {
-      rss: mem.rss,
-      heapUsed: mem.heapUsed,
-      heapTotal: mem.heapTotal,
-    },
-    pid: process.pid,
+    uptime: null,
+    hostname: null,
+    platform: null,
+    nodeVersion: null,
+    activeJobs: null,
+    memory: null,
+    pid: null,
+    upgradeBridge: UPGRADE_BRIDGE_MODE,
   });
 });
 
 // Authelia forward auth for all API routes
 app.use('/api', autheliaAuth);
+
+app.use('/api', (req, res, next) => {
+  if (!UPGRADE_BRIDGE_MODE || ['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+      || req.path.startsWith('/upgrade-readiness')) return next();
+  return res.status(503).json({ error: 'RedMan is in upgrade-bridge maintenance mode; backup and configuration mutations are paused' });
+});
 
 // Mount API routes
 app.use('/api/ssd-backup', ssdBackupRoutes);
@@ -94,6 +98,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/peers', peersRoutes);
 app.use('/api/media-import', mediaImportRoutes);
 app.use('/api/filesystem', filesystemRoutes);
+app.use('/api/upgrade-readiness', upgradeReadinessRoutes);
 
 // In production, serve the built frontend
 const publicDir = join(__dirname, 'public');
@@ -124,6 +129,11 @@ app.listen(PORT, () => {
   }
 
   // Start background services
+  if (UPGRADE_BRIDGE_MODE) {
+    console.log('[upgrade-bridge] Maintenance mode active: schedules, metrics, temp cleanup, and drive monitoring are paused');
+    return;
+  }
+
   startScheduler();
   startMetricsPoller();
   startTempCleanup();
@@ -140,10 +150,14 @@ app.listen(PORT, () => {
 });
 
 // Start peer API on separate port
-const peerApp = createPeerApi();
-peerApp.listen(PEER_PORT, () => {
-  console.log(`🔗 Peer API running on http://localhost:${PEER_PORT}`);
-});
+if (UPGRADE_BRIDGE_MODE) {
+  console.log('[upgrade-bridge] Peer API paused during host preparation');
+} else {
+  const peerApp = createPeerApi();
+  peerApp.listen(PEER_PORT, () => {
+    console.log(`🔗 Peer API running on http://localhost:${PEER_PORT}`);
+  });
+}
 
 // Graceful shutdown — ignore SIGHUP (prevents kill on shell exit),
 // handle SIGTERM/SIGINT for clean Docker stop

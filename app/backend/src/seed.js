@@ -17,6 +17,7 @@ db.exec(`DROP TABLE IF EXISTS hyper_backup_jobs`);
 db.exec(`DROP TABLE IF EXISTS rclone_jobs`);
 db.exec(`DROP TABLE IF EXISTS container_metrics`);
 db.exec(`DROP TABLE IF EXISTS media_drives`);
+db.exec(`DROP TABLE IF EXISTS cache`);
 db.exec(`DROP TABLE IF EXISTS settings`);
 
 // Settings (key-value store)

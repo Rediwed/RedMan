@@ -61,3 +61,29 @@
   background: var(--color-primary);
   color: #fff;
 }
+
+@media (max-width: 800px) {
+  .navbar {
+    height: auto;
+    min-width: 0;
+    padding: var(--space-sm) var(--space-md);
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .navbar-brand {
+    justify-content: space-between;
+  }
+
+  .navbar-links {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .nav-link {
+    flex: 0 0 auto;
+  }
+}

@@ -216,7 +216,7 @@ function getDiskUsage(dirPath) {
 }
 
 function getLocalIp() {
-  // In production, this would be the WireGuard tunnel IP (100.90.128.x)
+  // In production, advertise the numeric private/VPN address reachable by peers.
   // Fallback to hostname for dev
   return process.env.PEER_HOST || '0.0.0.0';
 }

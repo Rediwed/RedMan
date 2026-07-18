@@ -1,7 +1,34 @@
 // Authelia forward auth header extraction (main API)
 // and Bearer token validation (peer API)
 
+import { isIP } from 'node:net';
+
 const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
+const ADMIN_GROUP = process.env.REDMAN_ADMIN_GROUP || 'admins';
+const ADMIN_ROLE = process.env.REDMAN_ADMIN_ROLE?.trim() || null;
+
+function normalizeIp(value) {
+  return String(value || '').trim().replace(/^::ffff:/i, '').replace(/^\[|\]$/g, '');
+}
+
+function trustedProxyHosts() {
+  const entries = String(process.env.TRUSTED_PROXIES || '')
+    .split(',').map(entry => entry.trim()).filter(Boolean);
+  if (process.env.NODE_ENV === 'production' && entries.length === 0) {
+    throw new Error('TRUSTED_PROXIES must list the exact reverse-proxy source host in production');
+  }
+  return entries.map(entry => {
+    const [address, prefix] = entry.split('/');
+    const normalized = normalizeIp(address);
+    const version = isIP(normalized);
+    if (!version || (prefix && prefix !== (version === 4 ? '32' : '128'))) {
+      throw new Error(`TRUSTED_PROXIES must contain only exact /32 or /128 hosts: ${entry}`);
+    }
+    return normalized;
+  });
+}
+
+const TRUSTED_PROXY_HOSTS = trustedProxyHosts();
 
 if (AUTH_DISABLED && process.env.NODE_ENV === 'production') {
   console.warn('[SECURITY] AUTH_DISABLED is set in production — ignoring, auth will be enforced.');
@@ -10,14 +37,20 @@ if (AUTH_DISABLED && process.env.NODE_ENV === 'production') {
 // Main API: extract Authelia headers injected by Traefik forward auth
 export function autheliaAuth(req, res, next) {
   if (AUTH_DISABLED && process.env.NODE_ENV !== 'production') {
-    req.user = { name: 'dev', email: 'dev@localhost', groups: [] };
+    req.user = { name: 'dev', email: 'dev@localhost', groups: [ADMIN_GROUP] };
     return next();
+  }
+
+  const sourceIp = normalizeIp(req.socket?.remoteAddress);
+  if (!TRUSTED_PROXY_HOSTS.includes(sourceIp)) {
+    return res.status(401).json({ error: 'Unauthorized — request did not originate from a trusted proxy' });
   }
 
   const remoteUser = req.headers['remote-user'];
   const remoteName = req.headers['remote-name'];
   const remoteEmail = req.headers['remote-email'];
   const remoteGroups = req.headers['remote-groups'];
+  const remoteRole = req.headers['remote-role'];
 
   if (!remoteUser) {
     return res.status(401).json({ error: 'Unauthorized — Authelia headers missing' });
@@ -27,7 +60,18 @@ export function autheliaAuth(req, res, next) {
     name: remoteName || remoteUser,
     email: remoteEmail || '',
     groups: remoteGroups ? remoteGroups.split(',') : [],
+    role: remoteRole || null,
   };
+  next();
+}
+
+export function requireBridgeAdmin(req, res, next) {
+  const hasAdminGroup = req.user?.groups?.map(group => group.trim()).includes(ADMIN_GROUP);
+  const hasAdminRole = ADMIN_ROLE && req.user?.role === ADMIN_ROLE;
+  if (!hasAdminGroup && !hasAdminRole) {
+    const requirement = ADMIN_ROLE ? `${ADMIN_GROUP} or role ${ADMIN_ROLE}` : ADMIN_GROUP;
+    return res.status(403).json({ error: `Upgrade preparation requires membership in ${requirement}` });
+  }
   next();
 }
 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-RedMan is a homelab backup and management tool for Unraid. Express + SQLite backend, React + Vite frontend, single Docker container. Two API servers: main API (:8090, Authelia-protected) and peer API (:8091, Bearer key auth). Five features: SSD Backup, Hyper Backup, Rclone Sync, Docker Monitoring, Media Import.
+RedMan is a homelab backup and management tool for Unraid. This branch is the v1.1.0 upgrade-readiness bridge: production pauses schedules, non-wizard mutations, monitoring, and the peer API while the operator prepares for the hardened release.
 
 ## Architecture
 
@@ -69,6 +69,9 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 **`/api/settings`** (settings.js):
 `GET|PUT /` · `POST /ntfy-test` · `POST /browser-notify-test` · `GET /ssh/status` · `POST /ssh/generate` · `POST /ssh/authorize-localhost` · `POST /ssh/test` · `POST /db/backup` · `POST /db/backup-all` · `GET /db/backups?dest_path` · `GET /db/recovery-scan?paths` · `GET /db/recovery-info?dest_path` · `POST /db/restore` · `GET /notifications/stream` (SSE)
 
+**`/api/upgrade-readiness`** (upgradeReadiness.js):
+`GET /` · `POST /backup` · `POST /host-plan` · `POST /final-config`
+
 **`/api/peers`** (peers.js):
 `GET|POST /` · `GET|PUT|DELETE /:id` · `POST /:id/regenerate-key` · `GET /:id/audit-log?page&limit` · `GET /audit-log/all?page&limit`
 
@@ -96,7 +99,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 | `/hyper-backup` | `HyperBackupPage` | Hyper Backup |
 | `/rclone` | `RclonePage` | Rclone Sync |
 | `/media-import` | `MediaImportPage` | Media Import |
-| `/settings` | `SettingsPage` | Settings (tabbed: General, Notifications, Peers, Integrations, Infrastructure) |
+| `/settings` | `SettingsPage` | Settings (tabbed: General, Notifications, Peers, Integrations, Infrastructure, Upgrade) |
 
 ### Frontend Patterns
 
@@ -121,7 +124,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 
 ## Security
 
-- Main API protected by Authelia forward auth headers (`remote-user`, `remote-name`, etc.) — see `middleware/auth.js`
+- Main API accepts forward-auth headers only from exact production `TRUSTED_PROXIES`; upgrade mutations additionally require exact `REDMAN_ADMIN_GROUP` or `REDMAN_ADMIN_ROLE` membership
 - Peer API uses per-peer Bearer API keys validated against `authorized_peers` table; logs all access to `peer_audit_log`
 - Path traversal prevention via `middleware/validation.js` (`normalizePath`, `isWithinPrefix`)
 - `AUTH_DISABLED=true` for development only — never in production (sets mock user `dev@localhost`)
@@ -132,8 +135,9 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 - Dev: `cd app && npm install && npm run dev` (runs backend on :8090 + frontend on :5175 via concurrently)
 - Seed DB: `cd app && npm run seed`
 - Build frontend: `cd app && npm run build` (Vite outputs to `frontend/dist/`)
-- Docker: `docker compose up -d` (3-stage build: frontend → backend deps → alpine runtime with rsync/rdiff/immich-go)
-- Deploy to Unraid: `./deploy.sh [--seed]`
+- Release check: `./scripts/release.sh check` (tests, build, audit, changelog, and version consistency without mutation)
+- Docker: configure the existing app-data bind, exact proxy source, and admin group and/or role, then run `docker compose up -d`
+- The bridge has no automatic deploy helper. Publication tags and pushes source; installation remains an explicit operator action.
 - Pre-push validation: `./pre-push.sh` (compat + medium integration + build) or `./pre-push.sh --quick` (small scale)
 - Test environment: `./test/setup_local_test.sh` — two instances (A: 8090/8091/5175, B: 8094/8095)
 
@@ -148,5 +152,15 @@ After any code change, update the relevant project documentation in the same cha
 - `README.md` — features, architecture, API endpoints, environment variables, deployment
 - `test/README.md` — test environment, workflows, test data, pre-configured jobs
 - `contracts/v1.json` — when adding new endpoints, DB columns, service exports, or frontend API functions (additive only)
+- `UPGRADING.md` — bridge preparation, hardened cutover, and rollback contract
+- `CHANGELOG.md` — every meaningful change needs a public `- [x]` bullet under `## [Unreleased]`
 
 When adding or modifying features, routes, services, environment variables, database tables/columns, API endpoints, or CLI flags, ensure the corresponding docs stay in sync.
+
+## Release Workflow
+
+- Meaningful work belongs on `feat/`, `fix/`, `chore/`, `docs/`, or `perf/` branches, never directly on `main`.
+- Do not edit package versions or `app/frontend/src/version.js` by hand; `scripts/release.sh` updates every version source.
+- Keep `CHANGELOG.md` current in the same change. Use `- [x]` for public notes and `- [ ]` for internal notes.
+- Run `./scripts/release.sh check` before handoff. Do not run a version bump or push without explicit operator approval.
+- RedMan releases tag and push public source only. They never invoke a private deployment target implicitly.

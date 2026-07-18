@@ -4,6 +4,8 @@ Homelab backup and management tool built for Unraid. Handles cross-site replicat
 
 Built with Express + SQLite on the backend and React + Vite on the frontend. Runs as a single Docker container.
 
+> **Existing installation?** Install the intermediate readiness bridge before the hardened release, then complete **Settings > Upgrade**. The wizard creates a verified backup, prepares a host command, verifies its receipt, and generates the future container configuration. See [UPGRADING.md](UPGRADING.md).
+
 ## Features
 
 ### Hyper Backup — Cross-Site Replication
@@ -127,6 +129,18 @@ Built-in SSH key lifecycle for rsync transfers:
 
 ## Deployment
 
+### Upgrade Readiness Bridge
+
+The bridge release prepares an existing host without replacing its container image or applying the hardened schema. Production bridge mode pauses schedules, job mutations, drive monitoring, Docker monitoring, and the peer API until hardened cutover. Its five-step wizard:
+
+1. assesses database health and legacy jobs, peers, media, and Docker settings;
+2. creates an integrity-checked SQLite online backup;
+3. generates an explicit host command for restricted Linux/Unraid SSH setup;
+4. verifies the root-run helper's non-secret receipt and produces final environment configuration;
+5. confirms the backup, host, configuration, and idle-job gates before cutover.
+
+The host helper is downloaded from the official `v1.1.0` tag and verified against embedded SHA-256 values before root execution. It briefly stops and restarts the same bridge container while capturing rollback metadata. The browser never receives host-root access, and the bridge never performs the final container replacement automatically.
+
 ### Docker (recommended)
 
 ```yaml
@@ -135,24 +149,21 @@ services:
   redman:
     build: .
     container_name: redman
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
-      - "8090:8090"   # Web UI + API
-      - "8091:8091"   # Peer API
+      - "127.0.0.1:8090:8090" # adjust only when your reverse proxy requires it
     volumes:
-      - db-data:/app/backend/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /boot/config/shares:/boot/config/shares:ro  # Unraid share detection
-      - /mnt/user:/mnt/user:ro
-      - /mnt/cache:/mnt/cache:ro
-      - type: bind
-        source: /mnt/disks
-        target: /mnt/disks
-        bind:
-          propagation: rslave
+      - ${REDMAN_DATA_PATH}:/app/backend/data
     environment:
       - NODE_ENV=production
+      - REDMAN_UPGRADE_BRIDGE=true
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES}
+      - REDMAN_ADMIN_GROUP=${REDMAN_ADMIN_GROUP:-admins}
+      - REDMAN_ADMIN_ROLE=${REDMAN_ADMIN_ROLE:-}
       - PORT=8090
-      - PEER_PORT=8091
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8090/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -161,8 +172,6 @@ services:
       retries: 3
     restart: unless-stopped
 
-volumes:
-  db-data:
 ```
 
 ```bash
@@ -171,7 +180,7 @@ docker compose up -d
 
 ### Unraid
 
-Install via Community Applications or manually import `unraid/redman.xml` as a template. The template pre-configures all required paths and ports.
+The bridge is source-only until an immutable image is published. Check out the exact `v1.1.0` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes.
 
 ### Development
 
@@ -180,7 +189,13 @@ cd app && npm install
 ./start-dev.sh
 # Opens frontend at http://localhost:5175
 # Backend at http://localhost:8090
-# Peer API at http://localhost:8091
+# Peer API at http://localhost:8091 outside production bridge mode
+```
+
+Run bridge release checks with:
+
+```bash
+./scripts/release.sh check
 ```
 
 ## Environment Variables
@@ -191,6 +206,10 @@ cd app && npm install
 | `PEER_API_PORT` | `8091` | Peer-to-peer API port |
 | `DB_PATH` | `data/redman.db` | SQLite database path |
 | `AUTH_DISABLED` | `false` | Disable Authelia auth (dev only) |
+| `REDMAN_UPGRADE_BRIDGE` | `true` in production | Pauses non-wizard mutations, schedulers, monitoring, and peer API for the maintenance bridge |
+| `TRUSTED_PROXIES` | required in production | Exact reverse-proxy source hosts only (`/32` or `/128`) |
+| `REDMAN_ADMIN_GROUP` | `admins` | Forward-auth group permitted to create backups and preparation/configuration plans |
+| `REDMAN_ADMIN_ROLE` | unset | Optional exact forward-auth role permitted to create backups and plans; Pangolin Badger sends this as `Remote-Role` |
 | `PEER_HOST` | `0.0.0.0` | IP address advertised to peers |
 | `SSH_USER` | `root` | SSH user for rsync transfers |
 | `SSH_PORT` | `22` | SSH port for rsync transfers |
@@ -200,6 +219,8 @@ cd app && npm install
 ## Production Hardening
 
 RedMan includes several features for reliable operation with multi-TB datasets:
+
+> In the intermediate readiness bridge, transfer, scheduling, media, peer, and Docker operations are intentionally paused. The descriptions below document normal RedMan behavior before and after the bridge.
 
 ### Transfer Resilience
 - **`--partial` + `--partial-dir`** — interrupted transfers resume where they left off instead of restarting
@@ -322,8 +343,8 @@ open http://localhost:5175
 
 - **Backend:** Node.js, Express, better-sqlite3, node-cron
 - **Frontend:** React 18, Vite, react-router-dom, lucide-react
-- **Transfer:** rsync (GNU/openrsync), rclone, rdiff (librsync)
-- **Import:** immich-go (auto-downloaded in Docker build)
-- **System tools:** util-linux (lsblk, umount for drive detection/ejection)
+- **Transfer:** rsync, rclone, and rdiff in normal RedMan releases; deliberately omitted from the readiness bridge image
+- **Import:** immich-go in normal RedMan releases; deliberately omitted from the readiness bridge image
+- **System tools:** storage/media tools return with the hardened release after bridge preparation
 - **Container:** Docker (node:20-alpine), dockerode
 - **Target platform:** Unraid (also works standalone on Linux/macOS)

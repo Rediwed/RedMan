@@ -7,6 +7,7 @@ import HyperBackupPage from './pages/HyperBackupPage.jsx';
 import RclonePage from './pages/RclonePage.jsx';
 import MediaImportPage from './pages/MediaImportPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
+import VersionBadge from './components/VersionBadge.jsx';
 import './App.css';
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>
+        <VersionBadge />
       </div>
     </BrowserRouter>
   );

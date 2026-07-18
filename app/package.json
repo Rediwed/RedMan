@@ -7,9 +7,20 @@
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w frontend",
+    "test": "npm run test:bridge && npm run test:host",
+    "test:bridge": "node ../test/test_upgrade_readiness.mjs && node ../test/test_upgrade_bridge_runtime.mjs && node ../test/test_backward_compat.mjs --skip-live",
+    "test:host": "bash ../test/test_prepare_upgrade_host.sh",
     "seed": "npm run seed -w backend"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "9.2.4"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.4",
+    "@protobufjs/utf8": "1.1.2",
+    "path-to-regexp": "0.1.13",
+    "picomatch": "4.0.5",
+    "protobufjs": "7.6.5",
+    "shell-quote": "1.9.0"
   }
 }

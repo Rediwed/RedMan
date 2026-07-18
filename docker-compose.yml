@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   redman:
     build: .
@@ -9,23 +7,17 @@ services:
     cap_drop:
       - ALL
     ports:
-      - "8090:8090"
-      - "8091:8091"
+      - "${REDMAN_WEB_BIND:-127.0.0.1}:${REDMAN_WEB_PORT:-8090}:8090"
     volumes:
-      - db-data:/app/backend/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /boot/config/shares:/boot/config/shares:ro
-      - /mnt/user:/mnt/user:ro
-      - /mnt/cache:/mnt/cache:ro
-      - type: bind
-        source: /mnt/disks
-        target: /mnt/disks
-        bind:
-          propagation: rslave
+      - ${REDMAN_DATA_PATH:?Set the existing RedMan host app-data path}:/app/backend/data
     environment:
       - NODE_ENV=production
+      - REDMAN_UPGRADE_BRIDGE=true
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:?Set the exact reverse-proxy source IP}
+      - REDMAN_ADMIN_GROUP=${REDMAN_ADMIN_GROUP:-admins}
+      - REDMAN_ADMIN_ROLE=${REDMAN_ADMIN_ROLE:-}
       - PORT=8090
-      - PEER_PORT=8091
+      - PEER_API_PORT=8091
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8090/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -33,6 +25,3 @@ services:
       start_period: 10s
       retries: 3
     restart: unless-stopped
-
-volumes:
-  db-data:

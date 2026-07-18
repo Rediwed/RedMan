@@ -1,0 +1,12 @@
+{
+  "name": "redman-release",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix app run dev",
+    "build": "npm --prefix app run build",
+    "test": "npm --prefix app test",
+    "audit": "npm --prefix app audit --audit-level=low",
+    "release:check": "./scripts/release.sh check"
+  }
+}

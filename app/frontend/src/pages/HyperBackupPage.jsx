@@ -351,7 +351,7 @@ export default function HyperBackupPage() {
 
                 <div className="form-group">
                   <label>Remote RedMan URL</label>
-                  <input value={form.remote_url} onChange={e => setForm({ ...form, remote_url: e.target.value })} required placeholder="http://100.90.128.2:8091" />
+                  <input value={form.remote_url} onChange={e => setForm({ ...form, remote_url: e.target.value })} required placeholder="http://192.168.50.20:8091" />
                   <span className="form-hint">The peer API URL of the remote RedMan instance</span>
                 </div>
 
