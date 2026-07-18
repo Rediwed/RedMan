@@ -102,8 +102,13 @@ git pull --ff-only
 run_checks
 
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
-[[ "$MODE" == "minor" && "$CURRENT_VERSION" == "1.0.0" ]] \
-  || { echo "This readiness bridge must be released exactly once as v1.1.0 using: ./scripts/release.sh minor" >&2; exit 1; }
+case "$CURRENT_VERSION:$MODE" in
+  1.0.0:minor|1.1.0:patch) ;;
+  *)
+    echo "Bridge releases are limited to v1.1.0 (minor from 1.0.0) or v1.1.1 (patch from 1.1.0)." >&2
+    exit 1
+    ;;
+esac
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid semantic version: $CURRENT_VERSION" >&2; exit 1; }
 MAJOR=$((10#$MAJOR))

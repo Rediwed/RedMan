@@ -29,6 +29,23 @@ const commonEnv = {
   PEER_HOST: '127.0.0.1',
 };
 
+const missingAdminAuthority = spawnSync(process.execPath, [
+  '--input-type=module',
+  '-e',
+  `await import(${JSON.stringify(resolve(root, 'app/backend/src/middleware/auth.js'))})`,
+], {
+  env: {
+    ...commonEnv,
+    NODE_ENV: 'production',
+    TRUSTED_PROXIES: '127.0.0.1/32',
+    REDMAN_ADMIN_GROUP: '',
+    REDMAN_ADMIN_ROLE: '',
+  },
+  encoding: 'utf8',
+});
+assert.notEqual(missingAdminAuthority.status, 0);
+assert.match(missingAdminAuthority.stderr, /REDMAN_ADMIN_GROUP and\/or REDMAN_ADMIN_ROLE/);
+
 const seeded = spawnSync(process.execPath, [resolve(root, 'app/backend/src/seed.js')], {
   env: { ...commonEnv, NODE_ENV: 'test' },
   encoding: 'utf8',

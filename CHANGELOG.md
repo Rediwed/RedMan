@@ -9,6 +9,9 @@ Versioning scheme:
 
 ## [Unreleased]
 
+### Security
+- [x] Removed the implicit administrator-group fallback, required an explicit group and/or role in production, and added Pangolin Badger role authorization without trusting its unsanitized `Remote-Groups` header.
+
 ## [1.1.0] - 2026-07-18
 
 ### Added

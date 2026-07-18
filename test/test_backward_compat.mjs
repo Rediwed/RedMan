@@ -33,6 +33,7 @@ if (!existsSync(contractPath)) {
   process.exit(1);
 }
 const contract = JSON.parse(readFileSync(contractPath, 'utf-8'));
+const appVersion = JSON.parse(readFileSync(join(ROOT, 'app/package.json'), 'utf-8')).version;
 
 // ── Test runner ──
 let passed = 0;
@@ -72,9 +73,9 @@ async function fetchSafe(url, opts = {}) {
 function testContractIntegrity() {
   console.log('\n📋 Suite 1: Contract File Integrity\n');
 
-  // Version must match
-  if (contract.version === '1.0.0') pass('Contract version is 1.0.0');
-  else fail('Contract version mismatch', `expected 1.0.0, got ${contract.version}`);
+  // Contract metadata follows the application release while its v1 surface stays stable.
+  if (contract.version === appVersion) pass(`Contract version matches app version ${appVersion}`);
+  else fail('Contract version mismatch', `expected ${appVersion}, got ${contract.version}`);
 
   // Must have all sections
   for (const section of ['api', 'peerApi', 'database', 'services', 'frontendApi']) {

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-RedMan is a homelab backup and management tool for Unraid. This branch is the v1.1.0 upgrade-readiness bridge: production pauses schedules, non-wizard mutations, monitoring, and the peer API while the operator prepares for the hardened release.
+RedMan is a homelab backup and management tool for Unraid. This branch is the v1.1.x upgrade-readiness bridge: production pauses schedules, non-wizard mutations, monitoring, and the peer API while the operator prepares for the hardened release.
 
 ## Architecture
 
@@ -124,7 +124,7 @@ Health check (unauthenticated): `GET /api/health` — version, uptime, memory, a
 
 ## Security
 
-- Main API accepts forward-auth headers only from exact production `TRUSTED_PROXIES`; upgrade mutations additionally require exact `REDMAN_ADMIN_GROUP` or `REDMAN_ADMIN_ROLE` membership
+- Main API accepts forward-auth headers only from exact production `TRUSTED_PROXIES`; production requires an explicit `REDMAN_ADMIN_GROUP` and/or `REDMAN_ADMIN_ROLE`, and upgrade mutations require an exact match
 - Peer API uses per-peer Bearer API keys validated against `authorized_peers` table; logs all access to `peer_audit_log`
 - Path traversal prevention via `middleware/validation.js` (`normalizePath`, `isWithinPrefix`)
 - `AUTH_DISABLED=true` for development only — never in production (sets mock user `dev@localhost`)

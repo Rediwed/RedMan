@@ -161,7 +161,7 @@ services:
       - NODE_ENV=production
       - REDMAN_UPGRADE_BRIDGE=true
       - TRUSTED_PROXIES=${TRUSTED_PROXIES}
-      - REDMAN_ADMIN_GROUP=${REDMAN_ADMIN_GROUP:-admins}
+      - REDMAN_ADMIN_GROUP=${REDMAN_ADMIN_GROUP:-}
       - REDMAN_ADMIN_ROLE=${REDMAN_ADMIN_ROLE:-}
       - PORT=8090
     healthcheck:
@@ -180,7 +180,7 @@ docker compose up -d
 
 ### Unraid
 
-The bridge is source-only until an immutable image is published. Check out the exact `v1.1.0` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes.
+The bridge is source-only until an immutable image is published. Check out the exact `v1.1.1` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. The `v1.1.0` application tag is superseded because its implicit group fallback is incompatible with Pangolin Badger's header-sanitization contract.
 
 ### Development
 
@@ -208,7 +208,7 @@ Run bridge release checks with:
 | `AUTH_DISABLED` | `false` | Disable Authelia auth (dev only) |
 | `REDMAN_UPGRADE_BRIDGE` | `true` in production | Pauses non-wizard mutations, schedulers, monitoring, and peer API for the maintenance bridge |
 | `TRUSTED_PROXIES` | required in production | Exact reverse-proxy source hosts only (`/32` or `/128`) |
-| `REDMAN_ADMIN_GROUP` | `admins` | Forward-auth group permitted to create backups and preparation/configuration plans |
+| `REDMAN_ADMIN_GROUP` | unset | Optional exact forward-auth group permitted to create backups and preparation/configuration plans; set this and/or `REDMAN_ADMIN_ROLE` |
 | `REDMAN_ADMIN_ROLE` | unset | Optional exact forward-auth role permitted to create backups and plans; Pangolin Badger sends this as `Remote-Role` |
 | `PEER_HOST` | `0.0.0.0` | IP address advertised to peers |
 | `SSH_USER` | `root` | SSH user for rsync transfers |

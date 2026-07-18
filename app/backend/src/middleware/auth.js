@@ -4,8 +4,13 @@
 import { isIP } from 'node:net';
 
 const AUTH_DISABLED = process.env.AUTH_DISABLED === 'true';
-const ADMIN_GROUP = process.env.REDMAN_ADMIN_GROUP || 'admins';
+const ADMIN_GROUP = process.env.REDMAN_ADMIN_GROUP?.trim() || null;
 const ADMIN_ROLE = process.env.REDMAN_ADMIN_ROLE?.trim() || null;
+const DEVELOPMENT_AUTH_BYPASS = AUTH_DISABLED && process.env.NODE_ENV !== 'production';
+
+if (process.env.NODE_ENV === 'production' && !ADMIN_GROUP && !ADMIN_ROLE) {
+  throw new Error('Set REDMAN_ADMIN_GROUP and/or REDMAN_ADMIN_ROLE explicitly in production');
+}
 
 function normalizeIp(value) {
   return String(value || '').trim().replace(/^::ffff:/i, '').replace(/^\[|\]$/g, '');
@@ -36,8 +41,14 @@ if (AUTH_DISABLED && process.env.NODE_ENV === 'production') {
 
 // Main API: extract Authelia headers injected by Traefik forward auth
 export function autheliaAuth(req, res, next) {
-  if (AUTH_DISABLED && process.env.NODE_ENV !== 'production') {
-    req.user = { name: 'dev', email: 'dev@localhost', groups: [ADMIN_GROUP] };
+  if (DEVELOPMENT_AUTH_BYPASS) {
+    req.user = {
+      name: 'dev',
+      email: 'dev@localhost',
+      groups: ADMIN_GROUP ? [ADMIN_GROUP] : [],
+      role: ADMIN_ROLE,
+      bridgeAdmin: true,
+    };
     return next();
   }
 
@@ -66,10 +77,12 @@ export function autheliaAuth(req, res, next) {
 }
 
 export function requireBridgeAdmin(req, res, next) {
-  const hasAdminGroup = req.user?.groups?.map(group => group.trim()).includes(ADMIN_GROUP);
-  const hasAdminRole = ADMIN_ROLE && req.user?.role === ADMIN_ROLE;
-  if (!hasAdminGroup && !hasAdminRole) {
-    const requirement = ADMIN_ROLE ? `${ADMIN_GROUP} or role ${ADMIN_ROLE}` : ADMIN_GROUP;
+  const hasAdminGroup = Boolean(ADMIN_GROUP && req.user?.groups?.map(group => group.trim()).includes(ADMIN_GROUP));
+  const hasAdminRole = Boolean(ADMIN_ROLE && req.user?.role === ADMIN_ROLE);
+  const hasDevelopmentAdmin = DEVELOPMENT_AUTH_BYPASS && req.user?.bridgeAdmin === true;
+  if (!hasAdminGroup && !hasAdminRole && !hasDevelopmentAdmin) {
+    const requirement = [ADMIN_GROUP, ADMIN_ROLE && `role ${ADMIN_ROLE}`].filter(Boolean).join(' or ')
+      || 'a configured administrator authority';
     return res.status(403).json({ error: `Upgrade preparation requires membership in ${requirement}` });
   }
   next();
