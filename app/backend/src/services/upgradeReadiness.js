@@ -15,6 +15,7 @@ import { dirname, join, posix, resolve } from 'node:path';
 import { isIP } from 'node:net';
 
 export const UPGRADE_BRIDGE_VERSION = 1;
+export const UPGRADE_BACKUP_PAGES_PER_STEP = 16_384;
 const READINESS_DIR = 'upgrade-readiness';
 const HOST_RECEIPT = 'host-prepared.json';
 const BACKUP_RECEIPT = 'application-backup.json';
@@ -304,7 +305,9 @@ export async function createUpgradeBackup(database, options = {}) {
   const backupRelativePath = join(READINESS_DIR, 'backups', `redman-pre-hardened-${timestamp}.db`);
   const temporaryPath = `${backupPath}.tmp`;
   if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
-  await database.backup(temporaryPath);
+  await database.backup(temporaryPath, {
+    progress: () => UPGRADE_BACKUP_PAGES_PER_STEP,
+  });
   chmodSync(temporaryPath, 0o600);
   validateBackupFile(temporaryPath);
   renameSync(temporaryPath, backupPath);

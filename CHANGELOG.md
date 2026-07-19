@@ -9,6 +9,9 @@ Versioning scheme:
 
 ## [Unreleased]
 
+### Performance
+- [x] Increased SQLite online-backup batches from the library's 100-page default to 16,384 pages so multi-gigabyte readiness backups complete practically on Unraid while retaining integrity and receipt checks.
+
 ## [1.1.1] - 2026-07-18
 
 ### Security

@@ -8,6 +8,7 @@ import {
   createFinalConfiguration,
   createHostPreparationPlan,
   createUpgradeBackup,
+  UPGRADE_BACKUP_PAGES_PER_STEP,
 } from '../app/backend/src/services/upgradeReadiness.js';
 
 const require = createRequire(import.meta.url);
@@ -38,6 +39,8 @@ database.exec(`
 `);
 
 try {
+  assert.equal(UPGRADE_BACKUP_PAGES_PER_STEP, 16_384);
+
   let assessment = assessUpgradeReadiness(database, { dataDir: fixture });
   assert.equal(assessment.summary.blocked, 1);
   assert.equal(assessment.summary.warning, 5);

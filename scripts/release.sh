@@ -103,9 +103,9 @@ run_checks
 
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
 case "$CURRENT_VERSION:$MODE" in
-  1.0.0:minor|1.1.0:patch) ;;
+  1.0.0:minor|1.1.0:patch|1.1.1:patch) ;;
   *)
-    echo "Bridge releases are limited to v1.1.0 (minor from 1.0.0) or v1.1.1 (patch from 1.1.0)." >&2
+    echo "Bridge releases are limited to v1.1.0 (minor), v1.1.1 (security patch), or v1.1.2 (backup performance patch)." >&2
     exit 1
     ;;
 esac
