@@ -1,2 +1,2 @@
 // Managed by scripts/release.sh. Do not edit by hand.
-export const APP_VERSION = '1.1.1';
+export const APP_VERSION = '1.1.2';
