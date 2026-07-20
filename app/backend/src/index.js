@@ -101,7 +101,7 @@ app.use('/api/filesystem', filesystemRoutes);
 app.use('/api/upgrade-readiness', upgradeReadinessRoutes);
 
 // In production, serve the built frontend
-const publicDir = join(__dirname, 'public');
+const publicDir = join(__dirname, '..', 'public');
 if (existsSync(publicDir)) {
   app.use(express.static(publicDir));
   app.get('*', (req, res) => {

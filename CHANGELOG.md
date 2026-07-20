@@ -9,6 +9,9 @@ Versioning scheme:
 
 ## [Unreleased]
 
+### Fixed
+- [x] Fixed the production image's frontend path so `/` and SPA routes serve the built React application instead of returning `Cannot GET /`.
+
 ## [1.1.3] - 2026-07-20
 
 ### Performance

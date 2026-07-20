@@ -48,6 +48,13 @@ docker exec "$CONTAINER" node --input-type=module -e '
 '
 
 docker exec "$CONTAINER" node --input-type=module -e '
+  const response = await fetch("http://127.0.0.1:8090/");
+  const body = await response.text();
+  if (!response.ok || !response.headers.get("content-type")?.includes("text/html")
+      || !body.includes("<div id=\"root\"></div>")) process.exit(1);
+'
+
+docker exec "$CONTAINER" node --input-type=module -e '
   const response = await fetch("http://127.0.0.1:8090/api/upgrade-readiness/backup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

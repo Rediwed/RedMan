@@ -16,10 +16,10 @@ The bridge does not:
 
 ## Installing the Bridge
 
-The corrected bridge is published as source tag `v1.1.3`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack either the corrected Badger authority boundary or the complete large-database-safe workflow.
+The corrected bridge is published as source tag `v1.1.4`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack the corrected Badger boundary, the complete large-database-safe workflow, or the packaged frontend route.
 
 1. Record the current container image ID and export its inspection before changing it.
-2. Check out `v1.1.3` in a clean directory.
+2. Check out `v1.1.4` in a clean directory.
 3. Copy `.env.example` to `.env` and set the existing app-data path, exact reverse-proxy source address, and forward-auth administrator group and/or role. Pangolin Badger provides `Remote-Role`; Authelia commonly provides `Remote-Groups`.
 4. Build the bridge image from the pinned Dockerfile: `docker compose build --pull redman`.
 5. Stop the existing RedMan container during a maintenance window, retain its image, and start the bridge with `docker compose up -d redman`.

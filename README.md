@@ -180,7 +180,7 @@ docker compose up -d
 
 ### Unraid
 
-The bridge is source-only until an immutable image is published. Check out the exact `v1.1.3` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation: `v1.1.0` has an unsafe implicit group fallback, while `v1.1.1` and `v1.1.2` do not provide the complete non-blocking, memory-safe large-database path.
+The bridge is source-only until an immutable image is published. Check out the exact `v1.1.4` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation: `v1.1.0` has an unsafe implicit group fallback, `v1.1.1` and `v1.1.2` lack the complete large-database-safe path, and `v1.1.3` does not serve the packaged frontend.
 
 ### Development
 
