@@ -1,6 +1,6 @@
 {
   "_comment": "RedMan v1.0.0 backward compatibility contract. DO NOT MODIFY — changes here must follow the migration process in migrations.js. This file is the source of truth for the test/test_backward_compat.mjs test suite.",
-  "version": "1.1.8",
+  "version": "1.1.9",
 
   "api": {
     "health": {
