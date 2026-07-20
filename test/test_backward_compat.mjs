@@ -412,6 +412,7 @@ function testRouteFileContracts() {
     'peers': 'peers.js',
     'overview': 'overview.js',
     'filesystem': 'filesystem.js',
+    'upgrade-readiness': 'upgradeReadiness.js',
   };
 
   for (const [group, fileName] of Object.entries(routeMap)) {

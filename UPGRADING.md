@@ -8,18 +8,20 @@ The browser and RedMan container never receive host-root access. The wizard perf
 
 The bridge does not:
 
-- change existing job, peer, media, or authentication data;
+- change existing job, peer, or authentication data;
 - replace the RedMan container image;
 - modify the hardened-release schema;
 - enable Docker monitoring sidecars;
 - restore unrestricted root SSH access.
 
+The only optional in-app data remediation is an explicit administrator action that disables `delete-after-import` on affected media drives. This is a reversible safety reduction that prevents source deletion before the hardened per-file verification path is available.
+
 ## Installing the Bridge
 
-The corrected bridge is published as source tag `v1.1.4`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack the corrected Badger boundary, the complete large-database-safe workflow, or the packaged frontend route.
+The corrected bridge is published as source tag `v1.1.5`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, or actionable-assessment workflow.
 
 1. Record the current container image ID and export its inspection before changing it.
-2. Check out `v1.1.4` in a clean directory.
+2. Check out `v1.1.5` in a clean directory.
 3. Copy `.env.example` to `.env` and set the existing app-data path, exact reverse-proxy source address, and forward-auth administrator group and/or role. Pangolin Badger provides `Remote-Role`; Authelia commonly provides `Remote-Groups`.
 4. Build the bridge image from the pinned Dockerfile: `docker compose build --pull redman`.
 5. Stop the existing RedMan container during a maintenance window, retain its image, and start the bridge with `docker compose up -d redman`.

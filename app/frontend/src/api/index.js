@@ -169,5 +169,6 @@ export const restoreDb = (backupPath) => postJSON('/settings/db/restore', { back
 // ===== Hardened Upgrade Readiness =====
 export const getUpgradeReadiness = () => fetchJSON('/upgrade-readiness');
 export const createUpgradeReadinessBackup = () => postJSON('/upgrade-readiness/backup', {});
+export const remediateUpgradeReadinessIssue = (issueId) => postJSON('/upgrade-readiness/remediate', { issueId });
 export const createUpgradeHostPlan = (data) => postJSON('/upgrade-readiness/host-plan', data);
 export const createUpgradeFinalConfig = (data) => postJSON('/upgrade-readiness/final-config', data);

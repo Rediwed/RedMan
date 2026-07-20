@@ -6,6 +6,13 @@
     "health": {
       "GET /api/health": { "auth": false, "returns": ["status", "version", "timestamp", "uptime", "hostname", "platform", "nodeVersion", "activeJobs", "memory", "pid", "upgradeBridge"] }
     },
+    "upgrade-readiness": {
+      "GET /api/upgrade-readiness": { "auth": true },
+      "POST /api/upgrade-readiness/backup": { "auth": true, "role": "admin" },
+      "POST /api/upgrade-readiness/remediate": { "auth": true, "role": "admin" },
+      "POST /api/upgrade-readiness/host-plan": { "auth": true, "role": "admin" },
+      "POST /api/upgrade-readiness/final-config": { "auth": true, "role": "admin" }
+    },
     "ssd-backup": {
       "GET /api/ssd-backup/shares": { "auth": true },
       "GET /api/ssd-backup/browse": { "auth": true, "query": ["path"] },
@@ -298,7 +305,7 @@
     "notify": ["sendNotification", "notifyJobStarted", "notifyJobCompleted", "notifyJobError", "notifyJobCancelled", "notifyJobSkipped", "notifyJobProgress", "notifyDriveAttached", "notifyDriveEjected", "notifyDriveLost", "notifyDriveScanStarted", "notifyDriveScanCompleted", "notifyImportStarted", "notifyImportCompleted", "notifyImportError", "notifyBackupResult", "sendTestNtfy", "sendTestBrowser", "addBrowserSubscriber", "removeBrowserSubscriber"],
     "sshManager": ["hasKey", "getPublicKey", "generateKey", "authorizeLocalhost", "testSshConnection", "getSshStatus"],
     "unraid": ["getShares", "browsePath"],
-    "upgradeReadiness": ["assessUpgradeReadiness", "createUpgradeBackup", "createHostPreparationPlan", "createFinalConfiguration", "UPGRADE_BRIDGE_VERSION"]
+    "upgradeReadiness": ["assessUpgradeReadiness", "createUpgradeBackup", "remediateUpgradeIssue", "createHostPreparationPlan", "createFinalConfiguration", "UPGRADE_BRIDGE_VERSION"]
   },
 
   "frontendApi": {
@@ -316,7 +323,7 @@
       "browseDirectory", "getFilesystemRoots",
       "testNtfy", "testBrowserNotify",
       "backupDbTo", "backupDbToAll", "getDbBackups", "getDbRecoveryScan", "getDbRecoveryInfo", "restoreDb",
-      "getUpgradeReadiness", "createUpgradeReadinessBackup", "createUpgradeHostPlan", "createUpgradeFinalConfig"
+      "getUpgradeReadiness", "createUpgradeReadinessBackup", "remediateUpgradeReadinessIssue", "createUpgradeHostPlan", "createUpgradeFinalConfig"
     ]
   }
 }

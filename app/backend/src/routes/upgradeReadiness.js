@@ -6,6 +6,7 @@ import {
   createFinalConfiguration,
   createHostPreparationPlan,
   createUpgradeBackup,
+  remediateUpgradeIssue,
 } from '../services/upgradeReadiness.js';
 
 const router = Router();
@@ -22,6 +23,14 @@ router.post('/backup', requireBridgeAdmin, async (req, res) => {
   try {
     const backup = await createUpgradeBackup(db);
     res.json({ success: true, backup });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+router.post('/remediate', requireBridgeAdmin, (req, res) => {
+  try {
+    res.json({ success: true, result: remediateUpgradeIssue(db, req.body?.issueId) });
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
   }

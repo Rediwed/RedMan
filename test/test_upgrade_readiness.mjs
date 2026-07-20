@@ -8,6 +8,7 @@ import {
   createFinalConfiguration,
   createHostPreparationPlan,
   createUpgradeBackup,
+  remediateUpgradeIssue,
   UPGRADE_BACKUP_PAGES_PER_STEP,
 } from '../app/backend/src/services/upgradeReadiness.js';
 
@@ -49,7 +50,18 @@ try {
   assert.equal(assessment.summary.warning, 5);
   assert.equal(assessment.summary.rootJobs, 1);
   assert.equal(assessment.summary.unsafePeers, 1);
+  assert.equal(assessment.checks.find(item => item.id === 'application-backup').resolution.action.step, 1);
+  assert.equal(assessment.checks.find(item => item.id === 'legacy-ssh-jobs').resolution.action.step, 2);
+  assert.equal(assessment.checks.find(item => item.id === 'legacy-peers').resolution.timing, 'after-cutover');
+  assert.equal(assessment.checks.find(item => item.id === 'media-deletion').resolution.action.issueId, 'media-deletion');
   assert.deepEqual(assessment.pathCandidates, ['/srv/backups', '/srv/source']);
+
+  const remediation = remediateUpgradeIssue(database, 'media-deletion');
+  assert.equal(remediation.changed, 1);
+  assert.equal(database.prepare('SELECT delete_after_import FROM media_drives WHERE id = 1').get().delete_after_import, 0);
+  assert.throws(() => remediateUpgradeIssue(database, 'legacy-peers'), /no bridge-owned automatic remediation/);
+  assessment = assessUpgradeReadiness(database, { dataDir: fixture });
+  assert.equal(assessment.summary.destructiveMedia, 0);
 
   const backup = await createUpgradeBackup(database, {
     dataDir: fixture,

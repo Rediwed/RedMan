@@ -19,6 +19,7 @@ import {
   createUpgradeHostPlan,
   createUpgradeReadinessBackup,
   getUpgradeReadiness,
+  remediateUpgradeReadinessIssue,
 } from '../api/index.js';
 import './UpgradeReadinessWizard.css';
 
@@ -185,6 +186,30 @@ export default function UpgradeReadinessWizard() {
     }
   }
 
+  async function resolveIssue(item) {
+    const action = item.resolution?.action;
+    if (!action) return;
+    if (action.type === 'step') {
+      setStep(action.step);
+      return;
+    }
+    if (action.type === 'refresh') {
+      await refresh();
+      return;
+    }
+    if (action.type !== 'remediate') return;
+    setWorking(true);
+    setError('');
+    try {
+      await remediateUpgradeReadinessIssue(action.issueId);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function generateHostPlan() {
     setWorking(true);
     setError('');
@@ -290,7 +315,23 @@ export default function UpgradeReadinessWizard() {
             {checks.map(item => (
               <div key={item.id} className={`upgrade-check ${item.status}`}>
                 <CheckIcon status={item.status} />
-                <div><strong>{item.label}</strong><p>{item.detail}</p></div>
+                <div>
+                  <strong>{item.label}</strong>
+                  <p>{item.detail}</p>
+                  {item.resolution && (
+                    <div className="upgrade-resolution">
+                      <span className={`upgrade-resolution-timing ${item.resolution.timing}`}>{item.resolution.timing.replace('-', ' ')}</span>
+                      <strong>{item.resolution.title}</strong>
+                      <ol>{item.resolution.steps.map(instruction => <li key={instruction}>{instruction}</li>)}</ol>
+                      {item.resolution.action && (
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => resolveIssue(item)} disabled={working || loading}>
+                          {item.resolution.action.type === 'remediate' ? <ShieldCheck size={14} /> : <FileCog size={14} />}
+                          {item.resolution.action.label}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>

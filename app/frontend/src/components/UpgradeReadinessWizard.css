@@ -167,6 +167,50 @@
   line-height: 1.4;
 }
 
+.upgrade-resolution {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.upgrade-resolution > strong {
+  margin-top: 6px;
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+
+.upgrade-resolution ol {
+  margin: 6px 0 var(--space-sm);
+  padding-left: 1.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.upgrade-resolution li + li {
+  margin-top: 3px;
+}
+
+.upgrade-resolution .btn {
+  min-height: 34px;
+}
+
+.upgrade-resolution-timing {
+  display: inline-block;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  color: var(--color-info);
+  background: rgba(56, 189, 248, 0.1);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.upgrade-resolution-timing.after-cutover {
+  color: var(--color-warning);
+  background: rgba(245, 158, 11, 0.1);
+}
+
 .upgrade-actions {
   gap: var(--space-sm);
   flex-wrap: wrap;
@@ -429,5 +473,11 @@ input[aria-invalid="true"] + .upgrade-field-hint {
 
   .upgrade-stage {
     padding: var(--space-md);
+  }
+
+  .upgrade-resolution .btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
   }
 }

@@ -50,9 +50,89 @@ function setting(database, key) {
   return String(database.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || '');
 }
 
-function check(id, label, status, detail) {
-  return { id, label, status, detail };
+function check(id, label, status, detail, resolution = null) {
+  return { id, label, status, detail, resolution: status === 'pass' ? null : resolution };
 }
+
+const RESOLUTIONS = Object.freeze({
+  'database-integrity': {
+    timing: 'now',
+    title: 'Stop and restore a known-good database',
+    steps: [
+      'Do not continue with this upgrade while the SQLite schema is unreadable.',
+      'Stop RedMan and restore the verified pre-bridge rollback database.',
+      'Start the bridge again, then refresh this assessment.',
+    ],
+    action: { type: 'refresh', label: 'Recheck database' },
+  },
+  'active-runs': {
+    timing: 'now',
+    title: 'Wait for active work to stop',
+    steps: [
+      'Let the reported job finish; do not interrupt file transfers from this screen.',
+      'If the marker remains after the process has stopped, restart the bridge so stale running records are closed safely.',
+      'Refresh this assessment before creating the backup.',
+    ],
+    action: { type: 'refresh', label: 'Check again' },
+  },
+  'legacy-ssh-jobs': {
+    timing: 'prepare-host',
+    title: 'Prepare the restricted account, then migrate at cutover',
+    steps: [
+      'Create the verified backup first.',
+      'In Prepare host, install the restricted redman-backup account and approved roots.',
+      'The hardened migration changes these jobs from root to redman-backup; test each job after cutover.',
+    ],
+    action: { type: 'step', step: 2, label: 'Open Prepare host' },
+  },
+  'legacy-peers': {
+    timing: 'after-cutover',
+    title: 'Review and re-pair after the hardened cutover',
+    steps: [
+      'Do not broaden or rewrite peer grants in the bridge; preserving them keeps rollback predictable.',
+      'The hardened migration disables grants with root scope, unlimited quota, or missing stable identity.',
+      'After cutover, re-pair affected peers with a narrow path and finite quota.',
+    ],
+  },
+  'media-deletion': {
+    timing: 'now',
+    title: 'Disable destructive source deletion now',
+    steps: [
+      'Disable delete-after-import on every affected drive before continuing.',
+      'The hardened release can re-enable deletion only after per-file upload verification is available.',
+    ],
+    action: { type: 'remediate', issueId: 'media-deletion', label: 'Disable delete-after-import' },
+  },
+  'docker-access': {
+    timing: 'configure',
+    title: 'Choose the hardened Docker boundary during configuration',
+    steps: [
+      'The bridge already runs without the raw Docker socket, so no host change is needed now.',
+      'In Configure, enable Docker monitoring only if you need it.',
+      'The hardened deployment then uses separate exact-path read and control proxies.',
+    ],
+    action: { type: 'step', step: 3, label: 'Open Configure' },
+  },
+  'application-backup': {
+    timing: 'now',
+    title: 'Create the verified application backup',
+    steps: [
+      'Open Back up and create an online SQLite backup.',
+      'Wait for the full integrity check and SHA-256 receipt to complete.',
+    ],
+    action: { type: 'step', step: 1, label: 'Create backup' },
+  },
+  'host-preparation': {
+    timing: 'prepare-host',
+    title: 'Run the generated command on the NAS host',
+    steps: [
+      'Create the verified application backup first.',
+      'Open Prepare host, select narrow backup roots, and generate the command.',
+      'Run it once in the NAS terminal, then return here and check the receipt.',
+    ],
+    action: { type: 'step', step: 2, label: 'Open Prepare host' },
+  },
+});
 
 function receiptPath(dataDir, filename) {
   return join(dataDir, READINESS_DIR, filename);
@@ -167,6 +247,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     databaseReadable
       ? 'SQLite schema is readable; the backup step performs a full off-process integrity check.'
       : 'SQLite schema could not be read.',
+    RESOLUTIONS['database-integrity'],
   ));
 
   const activeRuns = tableExists(database, 'backup_runs')
@@ -177,6 +258,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     'Active work',
     activeRuns === 0 ? 'pass' : 'blocked',
     activeRuns === 0 ? 'No database-backed jobs are running.' : `${activeRuns} job(s) must finish or be stopped before preparation.`,
+    RESOLUTIONS['active-runs'],
   ));
 
   const hyperColumns = columns(database, 'hyper_backup_jobs');
@@ -188,6 +270,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     'Legacy Hyper Backup SSH users',
     rootJobs === 0 ? 'pass' : 'warning',
     rootJobs === 0 ? 'No root-based Hyper Backup jobs were found.' : `${rootJobs} job(s) will move to the restricted redman-backup account.`,
+    RESOLUTIONS['legacy-ssh-jobs'],
   ));
 
   const peerColumns = columns(database, 'authorized_peers');
@@ -206,6 +289,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     'Legacy peer grants',
     unsafePeers === 0 ? 'pass' : 'warning',
     unsafePeers === 0 ? 'No broad or unverifiable enabled peers were found.' : `${unsafePeers} peer grant(s) require review or re-pairing after the hardened upgrade.`,
+    RESOLUTIONS['legacy-peers'],
   ));
 
   const mediaColumns = columns(database, 'media_drives');
@@ -217,6 +301,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     'Delete-after-import settings',
     destructiveMedia === 0 ? 'pass' : 'warning',
     destructiveMedia === 0 ? 'No delete-after-import setting is enabled.' : `${destructiveMedia} drive setting(s) will be disabled until per-file verification is available.`,
+    RESOLUTIONS['media-deletion'],
   ));
 
   const dockerEndpoint = setting(database, 'docker_socket');
@@ -228,6 +313,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     directDockerSocket
       ? 'Direct socket access will be replaced by optional exact-path proxy sidecars.'
       : (dockerEndpoint ? 'Docker monitoring already uses a network endpoint.' : 'Docker monitoring is not configured.'),
+    RESOLUTIONS['docker-access'],
   ));
 
   const applicationBackup = inspectApplicationBackup(dataDir);
@@ -238,6 +324,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     applicationBackup.status === 'ready'
       ? `Verified backup: ${applicationBackup.receipt.backupPath}`
       : 'Create a verified online database backup before running the host helper.',
+    RESOLUTIONS['application-backup'],
   ));
 
   const hostPreparation = inspectHostReceipt(dataDir);
@@ -248,6 +335,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     hostPreparation.status === 'ready'
       ? `Prepared ${hostPreparation.receipt.platform} host for ${hostPreparation.receipt.backupRoots.length} backup root(s).`
       : (hostPreparation.status === 'invalid' ? 'The host receipt is invalid or incompatible.' : 'Run the generated host command after creating the backup.'),
+    RESOLUTIONS['host-preparation'],
   ));
 
   return {
@@ -268,6 +356,22 @@ export function assessUpgradeReadiness(database, options = {}) {
     applicationBackup,
     hostPreparation,
   };
+}
+
+export function remediateUpgradeIssue(database, issueId) {
+  if (issueId !== 'media-deletion') {
+    const error = new Error('This issue has no bridge-owned automatic remediation');
+    error.status = 400;
+    throw error;
+  }
+  const mediaColumns = columns(database, 'media_drives');
+  if (!tableExists(database, 'media_drives') || !mediaColumns.has('delete_after_import')) {
+    return { issueId, changed: 0 };
+  }
+  const result = database.prepare(mediaColumns.has('updated_at')
+    ? "UPDATE media_drives SET delete_after_import = 0, updated_at = datetime('now') WHERE delete_after_import != 0"
+    : 'UPDATE media_drives SET delete_after_import = 0 WHERE delete_after_import != 0').run();
+  return { issueId, changed: result.changes };
 }
 
 function safeTimestamp(date = new Date()) {

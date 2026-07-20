@@ -98,6 +98,25 @@ try {
 
   const assessment = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness`, { headers: roleHeaders });
   assert.equal(assessment.status, 200);
+  const assessmentBody = await assessment.json();
+  assert.equal(assessmentBody.checks.find(item => item.id === 'application-backup').resolution.action.step, 1);
+
+  const viewerRemediation = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/remediate`, {
+    method: 'POST',
+    headers: { ...roleHeaders, 'Remote-Role': 'Member' },
+    body: JSON.stringify({ issueId: 'media-deletion' }),
+  });
+  assert.equal(viewerRemediation.status, 403);
+
+  const unsupportedRemediation = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/remediate`, {
+    method: 'POST', headers: roleHeaders, body: JSON.stringify({ issueId: 'legacy-peers' }),
+  });
+  assert.equal(unsupportedRemediation.status, 400);
+
+  const adminRemediation = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/remediate`, {
+    method: 'POST', headers: roleHeaders, body: JSON.stringify({ issueId: 'media-deletion' }),
+  });
+  assert.equal(adminRemediation.status, 200, await adminRemediation.text());
 
   const viewerBackup = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/backup`, {
     method: 'POST',
