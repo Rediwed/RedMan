@@ -1,6 +1,6 @@
 {
   "name": "redman",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "private": true,
   "description": "RedMan — Homelab management tool for backups, sync and containers",
   "workspaces": [

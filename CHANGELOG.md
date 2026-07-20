@@ -9,8 +9,10 @@ Versioning scheme:
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-07-20
+
 ### Fixed
-- [x] Made Unraid boot replay invoke persisted RedMan scripts through `bash`, because the FAT boot volume does not preserve executable bits.
+- Made Unraid boot replay invoke persisted RedMan scripts through `bash`, because the FAT boot volume does not preserve executable bits.
 
 ## [1.1.6] - 2026-07-20
 
