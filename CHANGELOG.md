@@ -9,9 +9,11 @@ Versioning scheme:
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-07-20
+
 ### Added
-- [x] Added resolution timing, numbered instructions, and direct wizard navigation to every non-ready assessment item.
-- [x] Added an admin-only in-app action to disable unsafe delete-after-import settings immediately; rollback-sensitive SSH, peer, and Docker migrations remain explicit staged guidance.
+- Added resolution timing, numbered instructions, and direct wizard navigation to every non-ready assessment item.
+- Added an admin-only in-app action to disable unsafe delete-after-import settings immediately; rollback-sensitive SSH, peer, and Docker migrations remain explicit staged guidance.
 
 ## [1.1.4] - 2026-07-20
 
