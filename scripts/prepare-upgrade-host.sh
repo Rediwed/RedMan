@@ -127,7 +127,6 @@ ACTIVE_RUNS="$(docker exec "$CONTAINER" node --input-type=module -e "
 
 # Validate and identify the exact wizard-created online backup from inside the bridge container.
 BACKUP_INFO="$(docker exec "$CONTAINER" node --input-type=module -e "
-  import { createHash } from 'node:crypto';
   import Database from 'better-sqlite3';
   import { existsSync, readFileSync, statSync } from 'node:fs';
   import { resolve } from 'node:path';
@@ -139,12 +138,11 @@ BACKUP_INFO="$(docker exec "$CONTAINER" node --input-type=module -e "
       || relative.startsWith('/') || relative.split('/').includes('..')) throw new Error('application backup receipt is invalid');
   const backupPath = resolve('/app/backend/data', relative);
   if (!existsSync(backupPath) || statSync(backupPath).size !== receipt.sizeBytes) throw new Error('application backup size mismatch');
-  const digest = createHash('sha256').update(readFileSync(backupPath)).digest('hex');
-  if (digest !== receipt.sha256) throw new Error('application backup checksum mismatch');
+  if (!/^[a-f0-9]{64}$/.test(receipt.sha256 || '')) throw new Error('application backup checksum is invalid');
   const backup = new Database(backupPath, { readonly: true, fileMustExist: true });
   if (backup.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('application backup integrity check failed');
   backup.close();
-  process.stdout.write([relative, digest, String(receipt.sizeBytes)].join('\t'));
+  process.stdout.write([relative, receipt.sha256, String(receipt.sizeBytes)].join('\t'));
 " 2>/dev/null)" || fail "create a verified backup in the Upgrade Readiness wizard first"
 IFS=$'\t' read -r BACKUP_RELATIVE BACKUP_SHA256 BACKUP_SIZE <<< "$BACKUP_INFO"
 [[ "$BACKUP_RELATIVE" == upgrade-readiness/backups/* && "$BACKUP_RELATIVE" != *".."* ]] || fail "backup relative path is invalid"

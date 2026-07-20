@@ -40,6 +40,9 @@ database.exec(`
 
 try {
   assert.equal(UPGRADE_BACKUP_PAGES_PER_STEP, 16_384);
+  const hostHelperSource = readFileSync(join(import.meta.dirname, '../scripts/prepare-upgrade-host.sh'), 'utf8');
+  assert.doesNotMatch(hostHelperSource, /update\(readFileSync\(backupPath\)\)/);
+  assert.match(hostHelperSource, /sha256sum -c -/);
 
   let assessment = assessUpgradeReadiness(database, { dataDir: fixture });
   assert.equal(assessment.summary.blocked, 1);
@@ -84,7 +87,7 @@ try {
   });
   assert.match(linuxPlan.command, /sudo bash/);
   assert.match(linuxPlan.command, /--backup-root.*redman-backups/);
-  assert.match(linuxPlan.command, /raw\.githubusercontent\.com\/Rediwed\/RedMan\/v1\.1\.0\/scripts/);
+  assert.match(linuxPlan.command, /raw\.githubusercontent\.com\/Rediwed\/RedMan\/v1\.1\.3\/scripts/);
   assert.match(linuxPlan.command, /sha256sum -c/);
   assert.match(linuxPlan.command, /mktemp -d/);
   assert.doesNotMatch(linuxPlan.command, /docker cp/);

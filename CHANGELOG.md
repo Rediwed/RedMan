@@ -9,6 +9,12 @@ Versioning scheme:
 
 ## [Unreleased]
 
+### Performance
+- [x] Made readiness assessment constant-time and moved full backup integrity validation into a child process so large databases do not block API health.
+
+### Security
+- [x] Streamed backup SHA-256 calculation and stopped loading multi-gigabyte artifacts into Node memory; the host helper still verifies the canonical stopped file with `sha256sum` before accepting it.
+
 ## [1.1.2] - 2026-07-19
 
 ### Performance

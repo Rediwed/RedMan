@@ -1,7 +1,8 @@
-import Database from 'better-sqlite3';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -13,16 +14,20 @@ import {
 } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
 import { isIP } from 'node:net';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 export const UPGRADE_BRIDGE_VERSION = 1;
 export const UPGRADE_BACKUP_PAGES_PER_STEP = 16_384;
 const READINESS_DIR = 'upgrade-readiness';
 const HOST_RECEIPT = 'host-prepared.json';
 const BACKUP_RECEIPT = 'application-backup.json';
-const HELPER_RELEASE = 'v1.1.0';
+const BACKEND_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const execFileAsync = promisify(execFile);
+const HELPER_RELEASE = 'v1.1.3';
 const HELPER_BASE_URL = `https://raw.githubusercontent.com/Rediwed/RedMan/${HELPER_RELEASE}/scripts`;
 const HELPER_FILES = Object.freeze({
-  'prepare-upgrade-host.sh': 'e5f7117768decd043c1575ffeff32d1f6b563b63d4ad2fc81f1c98911e097e3f',
+  'prepare-upgrade-host.sh': 'f35e720dc431b0a1be3bf1e7da4c72d5bddfa98e6c8634e9ca56a60eb06de787',
   'setup-backup-user.sh': 'ee055b8de0d933a54d537f3927bcb23eae423cd1de38f306b2701fb644387bdc',
   'setup-unraid-backup-user.sh': '9af0ccad3a7572f36f0d5c91487892fb82cbbda09f6205e54d25eacb0869c361',
 });
@@ -62,8 +67,10 @@ function readJson(filePath) {
   }
 }
 
-function sha256File(filePath) {
-  return createHash('sha256').update(readFileSync(filePath)).digest('hex');
+async function sha256File(filePath) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
 }
 
 function safeRelativePath(value, requiredPrefix) {
@@ -91,20 +98,16 @@ function inspectHostReceipt(dataDir) {
   if (!existsSync(rollbackPath)) return { status: 'invalid', path: filePath, receipt: null };
   for (const artifact of receipt.artifacts) {
     const relativePath = safeRelativePath(artifact.relativePath, receipt.rollbackRelativePath);
-    if (!relativePath) return { status: 'invalid', path: filePath, receipt: null };
+    if (!relativePath || !/^[a-f0-9]{64}$/.test(artifact.sha256 || '')) {
+      return { status: 'invalid', path: filePath, receipt: null };
+    }
     const artifactPath = resolve(dataDir, relativePath);
-    if (!existsSync(artifactPath) || statSync(artifactPath).size !== artifact.sizeBytes
-        || sha256File(artifactPath) !== artifact.sha256) {
+    if (!existsSync(artifactPath) || statSync(artifactPath).size !== artifact.sizeBytes) {
       return { status: 'invalid', path: filePath, receipt: null };
     }
   }
   const databaseArtifact = receipt.artifacts.find(artifact => artifact.relativePath.endsWith('/redman.db'));
   if (!databaseArtifact) return { status: 'invalid', path: filePath, receipt: null };
-  try {
-    validateBackupFile(resolve(dataDir, databaseArtifact.relativePath));
-  } catch {
-    return { status: 'invalid', path: filePath, receipt: null };
-  }
   return { status: 'ready', path: filePath, receipt };
 }
 
@@ -114,14 +117,14 @@ function inspectApplicationBackup(dataDir) {
   if (!receipt) return { status: 'missing', path: filePath, receipt: null };
   const relativePath = safeRelativePath(receipt.backupRelativePath, `${READINESS_DIR}/backups`);
   if (receipt.invalid || receipt.bridgeVersion !== UPGRADE_BRIDGE_VERSION
-      || !relativePath || !/^[a-f0-9]{64}$/.test(receipt.sha256 || '')) {
+      || receipt.integrity !== 'ok' || !relativePath || !/^[a-f0-9]{64}$/.test(receipt.sha256 || '')) {
     return { status: 'invalid', path: filePath, receipt: null };
   }
   const backupPath = resolve(dataDir, relativePath);
   try {
-    if (!existsSync(backupPath) || statSync(backupPath).size !== receipt.sizeBytes
-        || sha256File(backupPath) !== receipt.sha256) throw new Error('backup receipt mismatch');
-    validateBackupFile(backupPath);
+    if (!existsSync(backupPath) || statSync(backupPath).size !== receipt.sizeBytes) {
+      throw new Error('backup receipt mismatch');
+    }
   } catch {
     return { status: 'invalid', path: filePath, receipt: null };
   }
@@ -151,12 +154,19 @@ function pathCandidates(database) {
 export function assessUpgradeReadiness(database, options = {}) {
   const dataDir = resolve(options.dataDir || dirname(database.name));
   const checks = [];
-  const integrity = database.pragma('quick_check', { simple: true });
+  let databaseReadable = true;
+  try {
+    database.prepare('SELECT name FROM sqlite_master LIMIT 1').get();
+  } catch {
+    databaseReadable = false;
+  }
   checks.push(check(
     'database-integrity',
-    'Database integrity',
-    integrity === 'ok' ? 'pass' : 'blocked',
-    integrity === 'ok' ? 'SQLite quick-check passed.' : `SQLite quick-check returned: ${integrity}`,
+    'Database readability',
+    databaseReadable ? 'pass' : 'blocked',
+    databaseReadable
+      ? 'SQLite schema is readable; the backup step performs a full off-process integrity check.'
+      : 'SQLite schema could not be read.',
   ));
 
   const activeRuns = tableExists(database, 'backup_runs')
@@ -264,13 +274,26 @@ function safeTimestamp(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, '-');
 }
 
-function validateBackupFile(filePath) {
-  const candidate = new Database(filePath, { readonly: true, fileMustExist: true });
+async function validateBackupFile(filePath) {
+  const script = `
+    import Database from 'better-sqlite3';
+    const candidate = new Database(process.env.REDMAN_BACKUP_PATH, { readonly: true, fileMustExist: true });
+    try {
+      const result = candidate.pragma('integrity_check', { simple: true });
+      if (result !== 'ok') throw new Error('Backup integrity check failed');
+    } finally {
+      candidate.close();
+    }
+  `;
   try {
-    const result = candidate.pragma('integrity_check', { simple: true });
-    if (result !== 'ok') throw new Error(`Backup integrity check failed: ${result}`);
-  } finally {
-    candidate.close();
+    await execFileAsync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: BACKEND_DIR,
+      env: { ...process.env, REDMAN_BACKUP_PATH: filePath },
+      maxBuffer: 1024 * 1024,
+      timeout: 30 * 60 * 1000,
+    });
+  } catch {
+    throw new Error('Backup integrity check failed');
   }
 }
 
@@ -291,9 +314,6 @@ export async function createUpgradeBackup(database, options = {}) {
     error.status = 409;
     throw error;
   }
-  const integrity = database.pragma('quick_check', { simple: true });
-  if (integrity !== 'ok') throw new Error(`Database quick-check failed: ${integrity}`);
-
   const readinessDir = join(dataDir, READINESS_DIR);
   const backupDir = join(readinessDir, 'backups');
   mkdirSync(backupDir, { recursive: true, mode: 0o700 });
@@ -305,12 +325,19 @@ export async function createUpgradeBackup(database, options = {}) {
   const backupRelativePath = join(READINESS_DIR, 'backups', `redman-pre-hardened-${timestamp}.db`);
   const temporaryPath = `${backupPath}.tmp`;
   if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
-  await database.backup(temporaryPath, {
-    progress: () => UPGRADE_BACKUP_PAGES_PER_STEP,
-  });
-  chmodSync(temporaryPath, 0o600);
-  validateBackupFile(temporaryPath);
-  renameSync(temporaryPath, backupPath);
+  let digest;
+  try {
+    await database.backup(temporaryPath, {
+      progress: () => UPGRADE_BACKUP_PAGES_PER_STEP,
+    });
+    chmodSync(temporaryPath, 0o600);
+    await validateBackupFile(temporaryPath);
+    digest = await sha256File(temporaryPath);
+    renameSync(temporaryPath, backupPath);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
+  }
 
   const receipt = {
     bridgeVersion: UPGRADE_BRIDGE_VERSION,
@@ -318,7 +345,7 @@ export async function createUpgradeBackup(database, options = {}) {
     backupRelativePath,
     backupPath,
     sizeBytes: statSync(backupPath).size,
-    sha256: sha256File(backupPath),
+    sha256: digest,
     integrity: 'ok',
   };
   writeJsonAtomic(receiptPath(dataDir, BACKUP_RECEIPT), receipt);

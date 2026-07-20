@@ -61,11 +61,11 @@ for (const file of files) {
     process.exit(1);
   }
 }
-if (!source.includes("const HELPER_RELEASE = 'v1.1.0'")) {
-  console.error('Upgrade helper release must remain pinned to v1.1.0 for the bridge publication');
+if (!source.includes("const HELPER_RELEASE = 'v1.1.3'")) {
+  console.error('Upgrade helper release must be pinned to v1.1.3 for the large-database-safe bridge publication');
   process.exit(1);
 }
-console.log('Host helper integrity: 3 embedded checksums match v1.1.0 sources');
+console.log('Host helper integrity: 3 embedded checksums match v1.1.3 sources');
 NODE
 }
 
@@ -103,9 +103,9 @@ run_checks
 
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
 case "$CURRENT_VERSION:$MODE" in
-  1.0.0:minor|1.1.0:patch|1.1.1:patch) ;;
+  1.0.0:minor|1.1.0:patch|1.1.1:patch|1.1.2:patch) ;;
   *)
-    echo "Bridge releases are limited to v1.1.0 (minor), v1.1.1 (security patch), or v1.1.2 (backup performance patch)." >&2
+    echo "Bridge releases are limited to v1.1.0 through v1.1.3; v1.1.3 is the final large-database-safe patch." >&2
     exit 1
     ;;
 esac

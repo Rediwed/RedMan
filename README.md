@@ -139,7 +139,7 @@ The bridge release prepares an existing host without replacing its container ima
 4. verifies the root-run helper's non-secret receipt and produces final environment configuration;
 5. confirms the backup, host, configuration, and idle-job gates before cutover.
 
-The host helper is downloaded from the official `v1.1.0` tag and verified against embedded SHA-256 values before root execution. It briefly stops and restarts the same bridge container while capturing rollback metadata. The browser never receives host-root access, and the bridge never performs the final container replacement automatically.
+The host helper is downloaded from the official `v1.1.3` tag and verified against embedded SHA-256 values before root execution. It briefly stops and restarts the same bridge container while capturing rollback metadata. The browser never receives host-root access, and the bridge never performs the final container replacement automatically.
 
 ### Docker (recommended)
 
@@ -180,7 +180,7 @@ docker compose up -d
 
 ### Unraid
 
-The bridge is source-only until an immutable image is published. Check out the exact `v1.1.2` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. The `v1.1.0` application tag is superseded because its implicit group fallback is incompatible with Pangolin Badger's header-sanitization contract; `v1.1.1` remains secure but uses impractically small backup batches for multi-gigabyte databases.
+The bridge is source-only until an immutable image is published. Check out the exact `v1.1.3` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation: `v1.1.0` has an unsafe implicit group fallback, while `v1.1.1` and `v1.1.2` do not provide the complete non-blocking, memory-safe large-database path.
 
 ### Development
 
