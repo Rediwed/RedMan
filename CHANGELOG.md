@@ -9,8 +9,10 @@ Versioning scheme:
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-07-20
+
 ### Fixed
-- [x] Made the hardened configuration timezone editable, initialized it from the existing installation, and rejected unsupported IANA timezone identifiers before generation.
+- Made the hardened configuration timezone editable, initialized it from the existing installation, and rejected unsupported IANA timezone identifiers before generation.
 
 ## [1.1.7] - 2026-07-20
 
