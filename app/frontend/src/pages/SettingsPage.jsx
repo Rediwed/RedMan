@@ -781,7 +781,7 @@ export default function SettingsPage() {
       {activeTab === 'upgrade' && <UpgradeReadinessWizard />}
 
       {/* Floating unsaved changes bar */}
-      <div className="unsaved-bar" style={{ bottom: hasChanges ? 24 : -120 }}>
+      <div className="unsaved-bar" style={{ bottom: hasChanges && activeTab !== 'upgrade' ? 24 : -120 }}>
         <span className="unsaved-label">You have unsaved changes</span>
         <button className="btn btn-ghost btn-sm" onClick={handleDiscard}><Undo2 size={14} /> Discard</button>
         <button className="btn btn-primary btn-sm" onClick={handleSave}>

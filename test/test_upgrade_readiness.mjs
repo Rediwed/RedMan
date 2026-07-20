@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -9,6 +9,7 @@ import {
   createHostPreparationPlan,
   createUpgradeBackup,
   remediateUpgradeIssue,
+  saveFinalConfiguration,
   UPGRADE_BACKUP_PAGES_PER_STEP,
 } from '../app/backend/src/services/upgradeReadiness.js';
 
@@ -46,16 +47,41 @@ try {
   assert.doesNotMatch(hostHelperSource, /update\(readFileSync\(backupPath\)\)/);
   assert.match(hostHelperSource, /sha256sum -c -/);
 
-  let assessment = assessUpgradeReadiness(database, { dataDir: fixture });
+  let assessment = assessUpgradeReadiness(database, {
+    dataDir: fixture,
+    environment: {
+      AUTH_MODE: 'proxy',
+      CORS_ORIGIN: 'https://redman.example.com',
+      TRUSTED_PROXIES: '172.20.0.5/32',
+      TZ: 'Europe/Amsterdam',
+    },
+  });
   assert.equal(assessment.summary.blocked, 1);
-  assert.equal(assessment.summary.warning, 5);
+  assert.equal(assessment.summary.warning, 6);
   assert.equal(assessment.summary.rootJobs, 1);
   assert.equal(assessment.summary.unsafePeers, 1);
   assert.equal(assessment.suggestedTimezone, 'Europe/Amsterdam');
+  assert.deepEqual(assessment.configurationDefaults, {
+    platform: 'linux',
+    container: 'redman',
+    authMode: 'proxy',
+    publicOrigin: 'https://redman.example.com',
+    trustedProxy: '172.20.0.5/32',
+    peerHost: '',
+    dataPath: fixture,
+    storagePath: '/srv/backups',
+    mediaPath: '/media',
+    timezone: 'Europe/Amsterdam',
+    allowBroadStorage: false,
+    dockerMonitoring: true,
+    backupRoots: [],
+    needsInput: ['peerHost'],
+  });
   assert.equal(assessment.checks.find(item => item.id === 'application-backup').resolution.action.step, 1);
   assert.equal(assessment.checks.find(item => item.id === 'legacy-ssh-jobs').resolution.action.step, 2);
   assert.equal(assessment.checks.find(item => item.id === 'legacy-peers').resolution.timing, 'after-cutover');
   assert.equal(assessment.checks.find(item => item.id === 'media-deletion').resolution.action.issueId, 'media-deletion');
+  assert.equal(assessment.checks.find(item => item.id === 'final-configuration').resolution.action.step, 3);
   assert.deepEqual(assessment.pathCandidates, ['/srv/backups', '/srv/source']);
 
   const remediation = remediateUpgradeIssue(database, 'media-deletion');
@@ -145,6 +171,18 @@ try {
   assert.match(config.env, /DOCKER_CONTROL_HOST=http:\/\/docker-control-proxy:2375/);
   assert.match(config.env, /TZ=Europe\/Amsterdam/);
   assert.equal(config.timezone, 'Europe/Amsterdam');
+  const savedConfig = saveFinalConfiguration(database, {
+    authMode: 'proxy', publicOrigin: 'https://redman.example.com',
+    trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
+    dataPath: '/srv/redman', storagePath: '/srv/redman-backups', mediaPath: '/media',
+    timezone: 'Europe/Amsterdam', dockerMonitoring: true,
+  }, { dataDir: fixture, now: new Date('2026-07-18T09:00:00.000Z') });
+  assert.equal(savedConfig.configuration.peerHost, '192.168.50.20');
+  assert.equal(statSync(savedConfig.receiptPath).mode & 0o777, 0o600);
+  assessment = assessUpgradeReadiness(database, { dataDir: fixture });
+  assert.equal(assessment.finalConfiguration.status, 'ready');
+  assert.equal(assessment.finalConfiguration.receipt.configuration.publicOrigin, 'https://redman.example.com');
+  assert.match(assessment.finalConfiguration.receipt.env, /TZ=Europe\/Amsterdam/);
   const legacyConfig = createFinalConfiguration({
     authMode: 'proxy', publicOrigin: 'https://redman.example.com',
     trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',

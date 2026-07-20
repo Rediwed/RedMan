@@ -103,9 +103,9 @@ run_checks
 
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
 case "$CURRENT_VERSION:$MODE" in
-  1.0.0:minor|1.1.0:patch|1.1.1:patch|1.1.2:patch|1.1.3:patch|1.1.4:patch|1.1.5:patch|1.1.6:patch|1.1.7:patch) ;;
+  1.0.0:minor|1.1.0:patch|1.1.1:patch|1.1.2:patch|1.1.3:patch|1.1.4:patch|1.1.5:patch|1.1.6:patch|1.1.7:patch|1.1.8:patch) ;;
   *)
-    echo "Bridge releases are limited to v1.1.0 through v1.1.8; v1.1.8 adds editable IANA timezone configuration." >&2
+    echo "Bridge releases are limited to v1.1.0 through v1.1.9; v1.1.9 adds simplified persistent upgrade readiness." >&2
     exit 1
     ;;
 esac
