@@ -24,7 +24,7 @@ const HOST_RECEIPT = 'host-prepared.json';
 const BACKUP_RECEIPT = 'application-backup.json';
 const BACKEND_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const execFileAsync = promisify(execFile);
-const HELPER_RELEASE = 'v1.1.6';
+const HELPER_RELEASE = 'v1.1.7';
 const HELPER_BASE_URL = `https://raw.githubusercontent.com/Rediwed/RedMan/${HELPER_RELEASE}/scripts`;
 const UNRAID_RRSYNC_RELEASE = 'v3.2.1';
 const UNRAID_RRSYNC_URL = `https://raw.githubusercontent.com/WayneD/rsync/${UNRAID_RRSYNC_RELEASE}/support/rrsync`;
@@ -32,7 +32,7 @@ const UNRAID_RRSYNC_SHA256 = '34661573a4b773b07191fe4b6f583a348bb0ed70909ad84b1c
 const HELPER_FILES = Object.freeze({
   'prepare-upgrade-host.sh': '7e8e61f5097e2c6652f5b7fe55f0424a2d767f1d8fea3e0d30f04613828db037',
   'setup-backup-user.sh': 'ee055b8de0d933a54d537f3927bcb23eae423cd1de38f306b2701fb644387bdc',
-  'setup-unraid-backup-user.sh': 'bbb5641184115fbfcb1306c74460386915b9f9e98f8b589ae423d2df1b03d6ba',
+  'setup-unraid-backup-user.sh': 'c4b4177bbe4a5f8caada815862656d138a06ae892e960567530f5faedae9b811',
 });
 
 function tableExists(database, table) {

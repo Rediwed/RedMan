@@ -139,7 +139,7 @@ The bridge release prepares an existing host without replacing its container ima
 4. verifies the root-run helper's non-secret receipt and produces final environment configuration;
 5. confirms the backup, host, configuration, and idle-job gates before cutover.
 
-The host helper is downloaded from the official `v1.1.6` tag and verified against embedded SHA-256 values before root execution. On Unraid, the command also downloads the official rsync `v3.2.1` Perl `rrsync` support helper from upstream, verifies its pinned SHA-256, and persists it under `/boot/config/plugins/redman/` for reboot replay. It briefly stops and restarts the same bridge container while capturing rollback metadata. The browser never receives host-root access, and the bridge never performs the final container replacement automatically.
+The host helper is downloaded from the official `v1.1.7` tag and verified against embedded SHA-256 values before root execution. On Unraid, the command also downloads the official rsync `v3.2.1` Perl `rrsync` support helper from upstream, verifies its pinned SHA-256, and persists it under `/boot/config/plugins/redman/` for FAT-safe `bash` boot replay. It briefly stops and restarts the same bridge container while capturing rollback metadata. The browser never receives host-root access, and the bridge never performs the final container replacement automatically.
 
 ### Docker (recommended)
 
@@ -180,7 +180,7 @@ docker compose up -d
 
 ### Unraid
 
-The bridge is source-only until an immutable image is published. Check out the exact `v1.1.6` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation; `v1.1.6` includes portable clean-Unraid host preparation in addition to the corrected auth, large-database, frontend, and assessment workflow.
+The bridge is source-only until an immutable image is published. Check out the exact `v1.1.7` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation; `v1.1.7` includes clean-Unraid provisioning and FAT-safe reboot replay in addition to the corrected auth, large-database, frontend, and assessment workflow.
 
 ### Development
 

@@ -68,7 +68,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --help|-h)
       usage
-      "$CORE_SCRIPT" --help
+      bash "$CORE_SCRIPT" --help
       exit 0
       ;;
     *)
@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -x "$CORE_SCRIPT" ]] || { echo "Portable installer not found: $CORE_SCRIPT" >&2; exit 1; }
+[[ -f "$CORE_SCRIPT" ]] || { echo "Portable installer not found: $CORE_SCRIPT" >&2; exit 1; }
 [[ -n "$DATA_DIR" ]] || { echo "--data-dir is required" >&2; exit 2; }
 
 has_home=false
@@ -112,7 +112,7 @@ if ! $DRY_RUN; then
   fi
 fi
 
-"$CORE_SCRIPT" "${CORE_ARGS[@]}"
+bash "$CORE_SCRIPT" "${CORE_ARGS[@]}"
 if $DRY_RUN || $NO_PERSIST; then exit 0; fi
 
 install -d -m 0700 "$PERSIST_DIR"
@@ -135,7 +135,8 @@ if [[ -f "$PERSIST_RRSYNC" ]]; then
   PERSIST_ARGS+=(--rrsync-source "$PERSIST_RRSYNC")
 fi
 
-BOOT_COMMAND="$PERSIST_WRAPPER"
+printf -v quoted_wrapper '%q' "$PERSIST_WRAPPER"
+BOOT_COMMAND="bash $quoted_wrapper"
 for arg in "${PERSIST_ARGS[@]}"; do
   printf -v quoted_arg '%q' "$arg"
   BOOT_COMMAND+=" $quoted_arg"
@@ -143,7 +144,10 @@ done
 UPDATED_GO="$(mktemp)"
 trap 'rm -f "$UPDATED_GO"' EXIT
 awk -v wrapper="$PERSIST_WRAPPER" -v legacy="$PERSIST_CORE" '
-  index($0, wrapper " ") != 1 && $0 != wrapper && index($0, legacy " ") != 1 && $0 != legacy
+  index($0, wrapper " ") != 1 && $0 != wrapper \
+    && index($0, "bash " wrapper " ") != 1 && $0 != "bash " wrapper \
+    && index($0, legacy " ") != 1 && $0 != legacy \
+    && index($0, "bash " legacy " ") != 1 && $0 != "bash " legacy
 ' "$GO_FILE" > "$UPDATED_GO"
 cat "$UPDATED_GO" > "$GO_FILE"
 printf '\n%s\n' "$BOOT_COMMAND" >> "$GO_FILE"

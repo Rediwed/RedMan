@@ -142,9 +142,11 @@ for (const path of [
 }
 NODE
 
-grep -q '^/boot/config/plugins/redman/setup-unraid-backup-user.sh ' "$BOOT_DIR/go"
+grep -q '^bash /boot/config/plugins/redman/setup-unraid-backup-user.sh ' "$BOOT_DIR/go"
 grep -q -- '--rrsync-source /boot/config/plugins/redman/rrsync' "$BOOT_DIR/go"
 printf '%s  %s\n' "$RRSYNC_SHA256" "$BOOT_DIR/plugins/redman/rrsync" | shasum -a 256 -c - >/dev/null
+chmod 0600 "$BOOT_DIR/plugins/redman/setup-unraid-backup-user.sh" \
+  "$BOOT_DIR/plugins/redman/setup-backup-user.sh" "$BOOT_DIR/plugins/redman/rrsync"
 
 docker run --rm \
   -v "$BOOT_DIR:/boot/config" \

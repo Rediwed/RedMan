@@ -99,7 +99,7 @@ try {
   });
   assert.match(linuxPlan.command, /sudo bash/);
   assert.match(linuxPlan.command, /--backup-root.*redman-backups/);
-  assert.match(linuxPlan.command, /raw\.githubusercontent\.com\/Rediwed\/RedMan\/v1\.1\.6\/scripts/);
+  assert.match(linuxPlan.command, /raw\.githubusercontent\.com\/Rediwed\/RedMan\/v1\.1\.7\/scripts/);
   assert.match(linuxPlan.command, /sha256sum -c/);
   assert.match(linuxPlan.command, /mktemp -d/);
   assert.doesNotMatch(linuxPlan.command, /docker cp/);
