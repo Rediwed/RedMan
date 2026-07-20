@@ -18,10 +18,10 @@ The only optional in-app data remediation is an explicit administrator action th
 
 ## Installing the Bridge
 
-The corrected bridge is published as source tag `v1.1.8`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, assessment, clean-Unraid host/reboot, or editable timezone workflow.
+The corrected bridge is published as source tag `v1.1.9`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, assessment, clean-Unraid host/reboot, editable timezone, or simplified persistent-readiness workflow.
 
 1. Record the current container image ID and export its inspection before changing it.
-2. Check out `v1.1.8` in a clean directory.
+2. Check out `v1.1.9` in a clean directory.
 3. Copy `.env.example` to `.env` and set the existing app-data path, exact reverse-proxy source address, and forward-auth administrator group and/or role. Pangolin Badger provides `Remote-Role`; Authelia commonly provides `Remote-Groups`.
 4. Build the bridge image from the pinned Dockerfile: `docker compose build --pull redman`.
 5. Stop the existing RedMan container during a maintenance window, retain its image, and start the bridge with `docker compose up -d redman`.
@@ -44,7 +44,7 @@ The assessment checks:
 - direct Docker socket configuration;
 - presence of the application backup and host receipt.
 
-Warnings are migration consequences that require review. Blocked checks must be resolved before continuing.
+Warnings describe planned hardened-release migrations and are not additional bridge work. Blocked checks must be resolved before continuing. The default view shows one recommended next action; expand the technical checks only when details are needed.
 
 ### 2. Back Up
 
@@ -54,7 +54,7 @@ Do not replace this with a live filesystem copy of `redman.db`; an active WAL da
 
 ### 3. Prepare the Host
 
-Choose Unraid or generic Linux, enter the existing host app-data path, and explicitly list the narrow host roots that peers may use for restricted backups. No broad root is selected by default. Generate and copy the command, then run it in the NAS host terminal.
+RedMan detects the platform, container, and host app-data path when reliable evidence is available. Explicitly list the narrow host roots that peers may use for restricted backups; no broad root is selected automatically. Expand **Advanced host settings** only when a detected value is wrong. Generate and copy the command, then run it in the NAS host terminal.
 
 The host helper:
 
@@ -72,16 +72,12 @@ Return to the wizard and select **Check receipt**. Do not fabricate or edit the 
 
 ### 4. Configure
 
-Select the future authentication mode and provide:
+The bridge detects the existing authentication mode, public HTTPS origin, exact proxy source, platform, app-data/storage/media paths, IANA timezone, Docker preference, and prepared backup roots. Confirm only:
 
-- the exact public HTTPS origin;
-- the exact reverse-proxy source address;
-- the numeric private SSH address reachable by the other RedMan peer;
-- the IANA timezone used for schedules and timestamps, initially suggested from the existing installation;
-- host data, storage, and media paths;
-- whether Docker monitoring is required.
+- **This NAS private IP**: the address the other RedMan NAS uses to reach this NAS, never the other NAS address;
+- broad `/mnt/user` storage when this installation intentionally spans multiple Unraid shares.
 
-The wizard emits a non-secret environment template. Local authentication uses a placeholder for a new high-entropy bootstrap token; generate that token on the host and do not store it in issue trackers or shell history.
+Use **Advanced settings** only to correct a detected value. Saving writes the non-secret environment and normalized values to `upgrade-readiness/final-configuration.json` atomically with mode `0600` and a SHA-256 integrity value. Local authentication still uses a placeholder for a new high-entropy bootstrap token; generate the real token on the host during cutover and do not store it in issue trackers or shell history.
 
 ### 5. Ready
 
@@ -89,14 +85,14 @@ The final page requires:
 
 - a verified database backup;
 - a valid host preparation receipt;
-- generated hardened configuration;
+- a saved and validated hardened configuration receipt;
 - no active jobs.
 
-Keep the rollback directory and generated configuration outside the container lifecycle until the hardened upgrade is validated.
+When one NAS is ready, complete the wizard on the other RedMan NAS. When every NAS shows **This NAS is ready**, stop: leave the readiness bridges running and take no further action until the hardened RedMan release is published. Keep each rollback directory until that later cutover and representative jobs are validated.
 
 ## Hardened Release Cutover
 
-After every participating NAS has completed the bridge:
+Only after the hardened release is published and every participating NAS has completed the bridge:
 
 1. disable schedules or choose a maintenance window;
 2. confirm the bridge assessment has no blocked checks;

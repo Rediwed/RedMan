@@ -9,6 +9,14 @@ Versioning scheme:
 
 ## [Unreleased]
 
+### Added
+- [x] Added a detected setup that derives the existing origin, proxy, platform, host paths, timezone, Docker preference, and prepared backup roots while leaving the NAS private IP explicit.
+- [x] Persisted the non-secret hardened configuration as an atomic mode-`0600`, SHA-256-validated readiness receipt so Ready survives refreshes and restarts.
+
+### Changed
+- [x] Reduced the default wizard to one recommended action per stage, moved technical checks and raw settings under details, skipped completed host forms, and made Ready explicitly tell operators to leave the bridge running after every NAS is prepared.
+- [x] Hid the unrelated general Settings save bar while the self-contained Upgrade tab is active.
+
 ## [1.1.8] - 2026-07-20
 
 ### Fixed

@@ -137,6 +137,30 @@ try {
   });
   assert.equal(groupAdminBackup.status, 200, await groupAdminBackup.text());
 
+  const finalConfigurationInput = {
+    authMode: 'proxy',
+    publicOrigin: 'https://redman.example.com',
+    trustedProxy: '127.0.0.1',
+    peerHost: '192.168.50.20',
+    dataPath: '/srv/redman',
+    storagePath: '/srv/backups',
+    mediaPath: '/media',
+    timezone: 'Europe/Amsterdam',
+    dockerMonitoring: true,
+  };
+  const viewerConfiguration = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/final-config`, {
+    method: 'POST',
+    headers: { ...roleHeaders, 'Remote-Role': 'Member' },
+    body: JSON.stringify(finalConfigurationInput),
+  });
+  assert.equal(viewerConfiguration.status, 403);
+  const adminConfiguration = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/final-config`, {
+    method: 'POST', headers: roleHeaders, body: JSON.stringify(finalConfigurationInput),
+  });
+  assert.equal(adminConfiguration.status, 200, await adminConfiguration.text());
+  const reassessment = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness`, { headers: roleHeaders });
+  assert.equal((await reassessment.json()).finalConfiguration.status, 'ready');
+
   const blockedMutation = await fetch(`http://127.0.0.1:${mainPort}/api/settings`, {
     method: 'PUT', headers: roleHeaders, body: '{}',
   });

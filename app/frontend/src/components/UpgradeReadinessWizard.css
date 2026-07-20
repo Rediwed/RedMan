@@ -217,6 +217,80 @@
   margin-top: var(--space-lg);
 }
 
+.upgrade-next-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  margin-top: var(--space-lg);
+  padding: var(--space-md);
+  border-left: 3px solid var(--color-info);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.upgrade-next-action > div {
+  min-width: 0;
+}
+
+.upgrade-next-action span,
+.upgrade-detected-list span {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.upgrade-next-action strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+}
+
+.upgrade-next-action p {
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.upgrade-stop-here {
+  max-width: 760px;
+  margin: 0 auto var(--space-lg);
+  border-left-color: var(--color-success);
+  background: rgba(34, 197, 94, 0.08);
+  text-align: left;
+}
+
+.upgrade-details {
+  margin-top: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+}
+
+.upgrade-details > summary {
+  min-height: 44px;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.upgrade-details[open] > summary {
+  color: var(--color-text);
+}
+
+.upgrade-details .upgrade-check-list {
+  margin-top: var(--space-sm);
+}
+
+.upgrade-advanced {
+  margin-top: var(--space-md);
+}
+
 .upgrade-backup-stage {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -256,11 +330,70 @@
   overflow-wrap: anywhere;
 }
 
+.upgrade-host-ready {
+  margin-top: var(--space-lg);
+}
+
+.upgrade-host-ready p {
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.upgrade-code-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-sm);
+}
+
+.upgrade-code-list code {
+  margin: 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
 .upgrade-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-md);
   margin-top: var(--space-lg);
+}
+
+.upgrade-detected-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+}
+
+.upgrade-detected-list > div {
+  min-width: 0;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.upgrade-detected-list > div:nth-child(odd) {
+  padding-right: var(--space-md);
+}
+
+.upgrade-detected-list > div:nth-child(even) {
+  padding-left: var(--space-md);
+  border-left: 1px solid var(--color-border);
+}
+
+.upgrade-detected-list strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+.upgrade-primary-field {
+  padding: var(--space-md);
+  border-left: 3px solid var(--color-info);
+  background: rgba(56, 189, 248, 0.06);
 }
 
 .upgrade-span-2 {
@@ -426,6 +559,17 @@ input[aria-invalid="true"] + .upgrade-field-hint {
   justify-content: center;
 }
 
+.upgrade-saved-config {
+  max-width: 760px;
+  margin-right: auto;
+  margin-left: auto;
+  text-align: left;
+}
+
+.upgrade-saved-config .upgrade-command {
+  margin-top: 0;
+}
+
 .spin {
   animation: upgrade-spin 0.85s linear infinite;
 }
@@ -451,8 +595,16 @@ input[aria-invalid="true"] + .upgrade-field-hint {
   }
 
   .upgrade-check-list,
-  .upgrade-form-grid {
+  .upgrade-form-grid,
+  .upgrade-detected-list {
     grid-template-columns: 1fr;
+  }
+
+  .upgrade-detected-list > div:nth-child(odd),
+  .upgrade-detected-list > div:nth-child(even) {
+    padding-right: 0;
+    padding-left: 0;
+    border-left: 0;
   }
 
   .upgrade-span-2 {
@@ -476,6 +628,17 @@ input[aria-invalid="true"] + .upgrade-field-hint {
   }
 
   .upgrade-resolution .btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  .upgrade-next-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .upgrade-next-action .btn {
     width: 100%;
     min-height: 40px;
     justify-content: center;

@@ -7,6 +7,7 @@ import {
   createHostPreparationPlan,
   createUpgradeBackup,
   remediateUpgradeIssue,
+  saveFinalConfiguration,
 } from '../services/upgradeReadiness.js';
 
 const router = Router();
@@ -46,7 +47,7 @@ router.post('/host-plan', requireBridgeAdmin, (req, res) => {
 
 router.post('/final-config', requireBridgeAdmin, (req, res) => {
   try {
-    res.json(createFinalConfiguration(req.body));
+    res.json(saveFinalConfiguration(db, req.body));
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

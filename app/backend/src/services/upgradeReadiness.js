@@ -22,6 +22,7 @@ export const UPGRADE_BACKUP_PAGES_PER_STEP = 16_384;
 const READINESS_DIR = 'upgrade-readiness';
 const HOST_RECEIPT = 'host-prepared.json';
 const BACKUP_RECEIPT = 'application-backup.json';
+const FINAL_CONFIG_RECEIPT = 'final-configuration.json';
 const BACKEND_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const execFileAsync = promisify(execFile);
 const HELPER_RELEASE = 'v1.1.7';
@@ -66,9 +67,9 @@ function normalizeTimezone(value) {
   return timezone;
 }
 
-function suggestedTimezone(database, fallback) {
+function suggestedTimezone(database, fallback, environment = process.env) {
   const runtimeTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  for (const candidate of [setting(database, 'timezone'), fallback, process.env.TZ, runtimeTimezone, 'UTC']) {
+  for (const candidate of [setting(database, 'timezone'), fallback, environment.TZ, runtimeTimezone, 'UTC']) {
     try {
       return normalizeTimezone(candidate);
     } catch {
@@ -160,6 +161,15 @@ const RESOLUTIONS = Object.freeze({
     ],
     action: { type: 'step', step: 2, label: 'Open Prepare host' },
   },
+  'final-configuration': {
+    timing: 'configure',
+    title: 'Confirm the detected setup',
+    steps: [
+      'Open Configure and enter the private address that the other NAS uses to reach this NAS.',
+      'Review the detected values, then save the configuration for the hardened release.',
+    ],
+    action: { type: 'step', step: 3, label: 'Open Configure' },
+  },
 });
 
 function receiptPath(dataDir, filename) {
@@ -240,6 +250,22 @@ function inspectApplicationBackup(dataDir) {
   return { status: 'ready', path: filePath, receipt };
 }
 
+function inspectFinalConfiguration(dataDir) {
+  const filePath = receiptPath(dataDir, FINAL_CONFIG_RECEIPT);
+  const receipt = readJson(filePath);
+  if (!receipt) return { status: 'missing', path: filePath, receipt: null };
+  const digest = typeof receipt.env === 'string'
+    ? createHash('sha256').update(receipt.env).digest('hex')
+    : '';
+  if (receipt.invalid || receipt.bridgeVersion !== UPGRADE_BRIDGE_VERSION
+      || !receipt.generatedAt || !receipt.configuration
+      || !/^[a-f0-9]{64}$/.test(receipt.envSha256 || '')
+      || digest !== receipt.envSha256) {
+    return { status: 'invalid', path: filePath, receipt: null };
+  }
+  return { status: 'ready', path: filePath, receipt };
+}
+
 function pathCandidates(database) {
   const candidates = new Set();
   const collect = (table, fields) => {
@@ -257,6 +283,67 @@ function pathCandidates(database) {
   collect('hyper_backup_jobs', ['local_path']);
   collect('authorized_peers', ['allowed_path_prefix']);
   return [...candidates].sort();
+}
+
+function exactProxy(value) {
+  const entries = String(value || '').split(',').map(entry => entry.trim()).filter(Boolean);
+  if (entries.length !== 1) return '';
+  const [address, prefix] = entries[0].split('/');
+  const version = isIP(address);
+  if (!version || (prefix && prefix !== (version === 4 ? '32' : '128'))) return '';
+  return entries[0];
+}
+
+function configurationDefaults(database, dataDir, hostPreparation, options = {}) {
+  const environment = options.environment || process.env;
+  const candidates = pathCandidates(database);
+  const configuredPlatform = String(environment.REDMAN_HOST_PLATFORM || '').toLowerCase();
+  const platform = hostPreparation.status === 'ready'
+    ? hostPreparation.receipt.platform
+    : (['linux', 'unraid'].includes(configuredPlatform)
+        ? configuredPlatform
+        : (candidates.some(candidate => candidate.startsWith('/mnt/user/')) ? 'unraid' : 'linux'));
+  const hostDataPath = String(environment.REDMAN_DATA_PATH
+    || (hostPreparation.status === 'ready' ? hostPreparation.receipt.dataDir : '')
+    || (dataDir.endsWith('/app/backend/data')
+        ? (platform === 'unraid' ? '/mnt/user/appdata/redman' : '/srv/redman')
+        : dataDir)).trim();
+  const publicOrigin = String(options.publicOrigin
+    || environment.REDMAN_PUBLIC_ORIGIN
+    || environment.CORS_ORIGIN
+    || '').trim();
+  const configuredAuthMode = String(environment.AUTH_MODE || '').toLowerCase();
+  const authMode = ['local', 'proxy'].includes(configuredAuthMode)
+    ? configuredAuthMode
+    : (exactProxy(environment.TRUSTED_PROXIES) ? 'proxy' : 'local');
+  const storagePath = String(environment.REDMAN_STORAGE_PATH
+    || (platform === 'unraid' ? '/mnt/user' : candidates[0] || '/srv/backups')).trim();
+  const mediaPath = String(environment.REDMAN_MEDIA_PATH
+    || (platform === 'unraid' ? '/mnt/disks' : '/media')).trim();
+  const defaults = {
+    platform,
+    container: String(environment.REDMAN_CONTAINER_NAME || 'redman').trim(),
+    authMode,
+    publicOrigin,
+    trustedProxy: exactProxy(options.trustedProxy || environment.TRUSTED_PROXIES),
+    peerHost: String(options.peerHost || environment.PEER_HOST || setting(database, 'peer_host')).trim(),
+    dataPath: hostDataPath,
+    storagePath,
+    mediaPath,
+    timezone: suggestedTimezone(database, options.timezone, environment),
+    allowBroadStorage: false,
+    dockerMonitoring: Boolean(setting(database, 'docker_socket')),
+    backupRoots: hostPreparation.status === 'ready' ? hostPreparation.receipt.backupRoots : [],
+  };
+  return {
+    ...defaults,
+    needsInput: [
+      ...(!defaults.publicOrigin ? ['publicOrigin'] : []),
+      ...(defaults.authMode === 'proxy' && !defaults.trustedProxy ? ['trustedProxy'] : []),
+      ...(!defaults.peerHost ? ['peerHost'] : []),
+      ...(defaults.storagePath === '/mnt/user' ? ['allowBroadStorage'] : []),
+    ],
+  };
 }
 
 export function assessUpgradeReadiness(database, options = {}) {
@@ -366,11 +453,24 @@ export function assessUpgradeReadiness(database, options = {}) {
     RESOLUTIONS['host-preparation'],
   ));
 
+  const finalConfiguration = inspectFinalConfiguration(dataDir);
+  checks.push(check(
+    'final-configuration',
+    'Hardened configuration',
+    finalConfiguration.status === 'ready' ? 'pass' : 'warning',
+    finalConfiguration.status === 'ready'
+      ? `Saved for ${finalConfiguration.receipt.configuration.publicOrigin}.`
+      : (finalConfiguration.status === 'invalid'
+          ? 'The saved configuration receipt is invalid; generate it again.'
+          : 'Confirm the detected setup and save the hardened configuration.'),
+    RESOLUTIONS['final-configuration'],
+  ));
+
   return {
     bridgeVersion: UPGRADE_BRIDGE_VERSION,
     dataDir,
     databasePath: database.name,
-    suggestedTimezone: suggestedTimezone(database, options.timezone),
+    suggestedTimezone: suggestedTimezone(database, options.timezone, options.environment),
     checks,
     summary: {
       pass: checks.filter(item => item.status === 'pass').length,
@@ -382,8 +482,10 @@ export function assessUpgradeReadiness(database, options = {}) {
       destructiveMedia,
     },
     pathCandidates: pathCandidates(database),
+    configurationDefaults: configurationDefaults(database, dataDir, hostPreparation, options),
     applicationBackup,
     hostPreparation,
+    finalConfiguration,
   };
 }
 
@@ -594,6 +696,9 @@ export function createFinalConfiguration(input = {}) {
     throw new Error('Using /mnt/user requires explicit confirmation that every Unraid share is intentionally in scope');
   }
   const dockerMonitoring = Boolean(input.dockerMonitoring);
+  const normalizedTrustedProxy = trustedPrefix
+    ? trustedProxy
+    : `${trustedProxy}/${trustedVersion === 6 ? '128' : '32'}`;
   const lines = [
     `REDMAN_DATA_PATH=${dataPath}`,
     `REDMAN_STORAGE_PATH=${storagePath}`,
@@ -603,7 +708,7 @@ export function createFinalConfiguration(input = {}) {
     'REDMAN_PEER_PUBLISHED_PORT=8091',
     `AUTH_MODE=${authMode}`,
     `REDMAN_PUBLIC_ORIGIN=${publicOrigin}`,
-    `TRUSTED_PROXIES=${trustedPrefix ? trustedProxy : `${trustedProxy}/${trustedVersion === 6 ? '128' : '32'}`}`,
+    `TRUSTED_PROXIES=${normalizedTrustedProxy}`,
     'PROXY_AUTO_PROVISION_ROLE=',
     `REDMAN_BOOTSTRAP_TOKEN=${authMode === 'local' ? '<generate-a-32-character-random-token>' : ''}`,
     `PEER_HOST=${peerHost}`,
@@ -611,5 +716,40 @@ export function createFinalConfiguration(input = {}) {
     `DOCKER_HOST=${dockerMonitoring ? 'http://docker-socket-proxy:2375' : ''}`,
     `DOCKER_CONTROL_HOST=${dockerMonitoring ? 'http://docker-control-proxy:2375' : ''}`,
   ];
-  return { authMode, timezone, dockerMonitoring, broadStorageConfirmed: storagePath === '/mnt/user', env: `${lines.join('\n')}\n` };
+  return {
+    authMode,
+    timezone,
+    dockerMonitoring,
+    broadStorageConfirmed: storagePath === '/mnt/user',
+    configuration: {
+      authMode,
+      publicOrigin,
+      trustedProxy: normalizedTrustedProxy,
+      peerHost,
+      dataPath,
+      storagePath,
+      mediaPath,
+      timezone,
+      allowBroadStorage: storagePath === '/mnt/user',
+      dockerMonitoring,
+    },
+    env: `${lines.join('\n')}\n`,
+  };
+}
+
+export function saveFinalConfiguration(database, input = {}, options = {}) {
+  const result = createFinalConfiguration(input);
+  const dataDir = resolve(options.dataDir || dirname(database.name));
+  const readinessDir = join(dataDir, READINESS_DIR);
+  mkdirSync(readinessDir, { recursive: true, mode: 0o700 });
+  chmodSync(readinessDir, 0o700);
+  const receipt = {
+    bridgeVersion: UPGRADE_BRIDGE_VERSION,
+    generatedAt: (options.now || new Date()).toISOString(),
+    envSha256: createHash('sha256').update(result.env).digest('hex'),
+    ...result,
+  };
+  const filePath = receiptPath(dataDir, FINAL_CONFIG_RECEIPT);
+  writeJsonAtomic(filePath, receipt);
+  return { ...result, generatedAt: receipt.generatedAt, receiptPath: filePath };
 }
