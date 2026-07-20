@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONTAINER="redman"
 PLATFORM="auto"
 DATA_DIR=""
+RRSYNC_SOURCE=""
 DRY_RUN=false
 BACKUP_ROOTS=("")
 BRIDGE_VERSION=1
@@ -22,6 +23,7 @@ Options:
   --container NAME             Existing bridge container (default: redman)
   --data-dir PATH              Existing RedMan host app-data path (required)
   --backup-root PATH           Approved backup root (required, repeatable)
+  --rrsync-source PATH         Existing verified rrsync helper
   --dry-run                    Print and validate the plan without host changes
   --help                       Show this help
 EOF
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --container) CONTAINER="${2:-}"; shift 2 ;;
     --data-dir) DATA_DIR="${2:-}"; shift 2 ;;
     --backup-root) BACKUP_ROOTS+=("${2:-}"); shift 2 ;;
+    --rrsync-source) RRSYNC_SOURCE="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) usage_error "unknown option: $1" ;;
@@ -62,6 +65,7 @@ done
 [[ "$CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || usage_error "--container is invalid"
 [[ "$PLATFORM" == "auto" || "$PLATFORM" == "linux" || "$PLATFORM" == "unraid" ]] || usage_error "--platform must be auto, linux, or unraid"
 absolute_path "--data-dir" "$DATA_DIR"
+if [[ -n "$RRSYNC_SOURCE" ]]; then absolute_path "--rrsync-source" "$RRSYNC_SOURCE"; fi
 
 ROOT_COUNT=0
 for root in "${BACKUP_ROOTS[@]}"; do
@@ -81,6 +85,7 @@ if [[ "$PLATFORM" == "unraid" ]]; then INSTALLER="$SCRIPT_DIR/setup-unraid-backu
 [[ -x "$INSTALLER" ]] || fail "installer is missing or not executable: $INSTALLER"
 
 INSTALL_ARGS=(--data-dir "$DATA_DIR")
+if [[ -n "$RRSYNC_SOURCE" ]]; then INSTALL_ARGS+=(--rrsync-source "$RRSYNC_SOURCE"); fi
 for root in "${BACKUP_ROOTS[@]}"; do
   [[ -n "$root" ]] && INSTALL_ARGS+=(--backup-root "$root")
 done
@@ -97,6 +102,9 @@ if $DRY_RUN; then
 fi
 
 [[ $(id -u) -eq 0 ]] || fail "run as root (use sudo on generic Linux; Unraid terminals are already root)"
+if [[ -n "$RRSYNC_SOURCE" ]]; then
+  [[ -f "$RRSYNC_SOURCE" && ! -L "$RRSYNC_SOURCE" ]] || fail "rrsync source must be a regular non-symlink file"
+fi
 command -v docker >/dev/null 2>&1 || fail "docker is required"
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
 CANONICAL_DATA_DIR="$(readlink -e -- "$DATA_DIR" 2>/dev/null)" || fail "data directory does not exist: $DATA_DIR"
@@ -106,6 +114,7 @@ DATA_DIR="$CANONICAL_DATA_DIR"
 READINESS_DIR="$DATA_DIR/upgrade-readiness"
 BACKUPS_DIR="$READINESS_DIR/backups"
 INSTALL_ARGS=(--data-dir "$DATA_DIR")
+if [[ -n "$RRSYNC_SOURCE" ]]; then INSTALL_ARGS+=(--rrsync-source "$RRSYNC_SOURCE"); fi
 for root in "${BACKUP_ROOTS[@]}"; do
   [[ -n "$root" ]] && INSTALL_ARGS+=(--backup-root "$root")
 done

@@ -99,7 +99,7 @@ try {
   });
   assert.match(linuxPlan.command, /sudo bash/);
   assert.match(linuxPlan.command, /--backup-root.*redman-backups/);
-  assert.match(linuxPlan.command, /raw\.githubusercontent\.com\/Rediwed\/RedMan\/v1\.1\.3\/scripts/);
+  assert.match(linuxPlan.command, /raw\.githubusercontent\.com\/Rediwed\/RedMan\/v1\.1\.6\/scripts/);
   assert.match(linuxPlan.command, /sha256sum -c/);
   assert.match(linuxPlan.command, /mktemp -d/);
   assert.doesNotMatch(linuxPlan.command, /docker cp/);
@@ -109,6 +109,9 @@ try {
     backupRoots: ['/mnt/user/backups'],
   });
   assert.doesNotMatch(unraidPlan.command, /sudo bash/);
+  assert.match(unraidPlan.command, /WayneD\/rsync\/v3\.2\.1\/support\/rrsync/);
+  assert.match(unraidPlan.command, /34661573a4b773b07191fe4b6f583a348bb0ed70909ad84b1cc24ce58aaf27b0/);
+  assert.match(unraidPlan.command, /--rrsync-source "\$REDMAN_BRIDGE_TMP\/rrsync"/);
   assert.throws(() => createHostPreparationPlan({
     platform: 'linux',
     dataDir: "/srv/redman'; touch /tmp/injected; #",

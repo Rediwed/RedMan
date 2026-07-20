@@ -4,7 +4,7 @@ The readiness bridge is an intermediate RedMan release for installations created
 
 ## Safety Boundary
 
-The browser and RedMan container never receive host-root access. The wizard performs read-only assessment, creates a SQLite online backup, and generates commands and configuration. The host command downloads all three helper scripts from the official `v1.1.3` tag, verifies embedded SHA-256 checksums, and only then asks for root execution.
+The browser and RedMan container never receive host-root access. The wizard performs read-only assessment, creates a SQLite online backup, and generates commands and configuration. The host command downloads all three helper scripts from the official `v1.1.6` tag, plus the official rsync `v3.2.1` Perl `rrsync` helper on Unraid, verifies every embedded SHA-256 checksum, and only then asks for root execution.
 
 The bridge does not:
 
@@ -18,10 +18,10 @@ The only optional in-app data remediation is an explicit administrator action th
 
 ## Installing the Bridge
 
-The corrected bridge is published as source tag `v1.1.5`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, or actionable-assessment workflow.
+The corrected bridge is published as source tag `v1.1.6`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, assessment, or clean-Unraid host workflow.
 
 1. Record the current container image ID and export its inspection before changing it.
-2. Check out `v1.1.5` in a clean directory.
+2. Check out `v1.1.6` in a clean directory.
 3. Copy `.env.example` to `.env` and set the existing app-data path, exact reverse-proxy source address, and forward-auth administrator group and/or role. Pangolin Badger provides `Remote-Role`; Authelia commonly provides `Remote-Groups`.
 4. Build the bridge image from the pinned Dockerfile: `docker compose build --pull redman`.
 5. Stop the existing RedMan container during a maintenance window, retain its image, and start the bridge with `docker compose up -d redman`.

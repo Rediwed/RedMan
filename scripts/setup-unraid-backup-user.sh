@@ -6,9 +6,11 @@ CORE_SCRIPT="$SCRIPT_DIR/setup-backup-user.sh"
 PERSIST_DIR="/boot/config/plugins/redman"
 PERSIST_WRAPPER="$PERSIST_DIR/setup-unraid-backup-user.sh"
 PERSIST_CORE="$PERSIST_DIR/setup-backup-user.sh"
+PERSIST_RRSYNC="$PERSIST_DIR/rrsync"
 GO_FILE="/boot/config/go"
 DATA_DIR=""
 BACKUP_USER="redman-backup"
+RRSYNC_SOURCE=""
 DRY_RUN=false
 NO_PERSIST=false
 CORE_ARGS=()
@@ -41,7 +43,12 @@ while [[ $# -gt 0 ]]; do
       PERSIST_ARGS+=("$1" "$BACKUP_USER")
       shift 2
       ;;
-    --home-dir|--group|--authorized-keys|--authorized-keys-command|--sshd-config|--rrsync-source|--rrsync-path|--backup-root|--supplementary-group)
+    --rrsync-source)
+      RRSYNC_SOURCE="${2:-}"
+      CORE_ARGS+=("$1" "$RRSYNC_SOURCE")
+      shift 2
+      ;;
+    --home-dir|--group|--authorized-keys|--authorized-keys-command|--sshd-config|--rrsync-path|--backup-root|--supplementary-group)
       CORE_ARGS+=("$1" "${2:-}")
       PERSIST_ARGS+=("$1" "${2:-}")
       shift 2
@@ -114,6 +121,18 @@ if [[ "$CORE_SCRIPT" != "$PERSIST_CORE" ]]; then
 fi
 if [[ "$0" != "$PERSIST_WRAPPER" ]]; then
   install -m 0700 "$0" "$PERSIST_WRAPPER"
+fi
+if [[ -n "$RRSYNC_SOURCE" ]]; then
+  if [[ "$RRSYNC_SOURCE" != "$PERSIST_RRSYNC" ]]; then
+    install -m 0700 "$RRSYNC_SOURCE" "$PERSIST_RRSYNC"
+  else
+    chmod 0700 "$PERSIST_RRSYNC"
+  fi
+elif [[ -f /usr/local/bin/rrsync ]]; then
+  install -m 0700 /usr/local/bin/rrsync "$PERSIST_RRSYNC"
+fi
+if [[ -f "$PERSIST_RRSYNC" ]]; then
+  PERSIST_ARGS+=(--rrsync-source "$PERSIST_RRSYNC")
 fi
 
 BOOT_COMMAND="$PERSIST_WRAPPER"

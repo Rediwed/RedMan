@@ -4,7 +4,7 @@ RUN apk add --no-cache \
   bash=5.3.3-r1 \
   docker-cli=29.5.2-r0 \
   openssh-server=10.2_p1-r0 \
+  perl=5.42.2-r0 \
   rsync=3.4.3-r0 \
-  rrsync=3.4.3-r0 \
   shadow=4.18.0-r0 \
   coreutils=9.8-r1

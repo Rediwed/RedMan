@@ -9,6 +9,8 @@ HOST_FIXTURE_IMAGE="redman-upgrade-host-fixture:$$"
 DATA_DIR="$FIXTURE/data"
 BACKUP_DIR="$FIXTURE/backups"
 BOOT_DIR="$FIXTURE/boot-config"
+RRSYNC_FILE="$FIXTURE/rrsync"
+RRSYNC_SHA256="34661573a4b773b07191fe4b6f583a348bb0ed70909ad84b1cc24ce58aaf27b0"
 
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -20,6 +22,11 @@ trap cleanup EXIT
 
 mkdir -p "$DATA_DIR" "$BACKUP_DIR" "$BOOT_DIR"
 : > "$BOOT_DIR/go"
+curl -fsSL --proto '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/WayneD/rsync/v3.2.1/support/rrsync \
+  -o "$RRSYNC_FILE"
+printf '%s  %s\n' "$RRSYNC_SHA256" "$RRSYNC_FILE" | shasum -a 256 -c - >/dev/null
+chmod 0700 "$RRSYNC_FILE"
 
 docker build -t "$IMAGE" "$ROOT" >/dev/null
 docker build -f "$ROOT/test/Dockerfile.host-fixture" -t "$HOST_FIXTURE_IMAGE" "$ROOT" >/dev/null
@@ -75,6 +82,7 @@ run_host_preparation() {
     -v "$DATA_DIR:/srv/redman" \
     -v "$BACKUP_DIR:/srv/backups" \
     -v "$BOOT_DIR:/boot/config" \
+    -v "$RRSYNC_FILE:/bridge-rrsync:ro" \
     "$HOST_FIXTURE_IMAGE" sh -c "
     set -eu
     ssh-keygen -A >/dev/null 2>&1
@@ -85,7 +93,8 @@ run_host_preparation() {
       --platform unraid \\
       --container '$CONTAINER' \\
       --data-dir /srv/redman \\
-      --backup-root /srv/backups
+      --backup-root /srv/backups \
+      --rrsync-source /bridge-rrsync
   "
 }
 
@@ -134,6 +143,51 @@ for (const path of [
 NODE
 
 grep -q '^/boot/config/plugins/redman/setup-unraid-backup-user.sh ' "$BOOT_DIR/go"
+grep -q -- '--rrsync-source /boot/config/plugins/redman/rrsync' "$BOOT_DIR/go"
+printf '%s  %s\n' "$RRSYNC_SHA256" "$BOOT_DIR/plugins/redman/rrsync" | shasum -a 256 -c - >/dev/null
+
+docker run --rm \
+  -v "$BOOT_DIR:/boot/config" \
+  -v "$DATA_DIR:/srv/redman" \
+  -v "$BACKUP_DIR:/srv/backups" \
+  "$HOST_FIXTURE_IMAGE" sh -c '
+  set -eu
+  ssh-keygen -A >/dev/null 2>&1
+  mkdir -p /etc/rc.d
+  printf "#!/bin/sh\nexit 0\n" > /etc/rc.d/rc.sshd
+  chmod 0755 /etc/rc.d/rc.sshd
+  sh -c "$(tail -n 1 /boot/config/go)"
+  test -x /usr/local/bin/rrsync
+  perl -c /usr/local/bin/rrsync >/dev/null
+'
+
+docker run --rm \
+  -v "$BOOT_DIR/plugins/redman/rrsync:/usr/local/bin/rrsync:ro" \
+  "$HOST_FIXTURE_IMAGE" sh -c '
+  set -eu
+  mkdir -p /srv/source /srv/target /srv/outside
+  printf payload > /srv/source/file.txt
+  printf stale > /srv/target/stale.txt
+  cat > /tmp/fake-rsh <<"EOF"
+#!/bin/sh
+shift
+export SSH_ORIGINAL_COMMAND="$*"
+exec /usr/local/bin/rrsync /srv/target
+EOF
+  chmod 0700 /tmp/fake-rsh
+  rsync -avz --delete-after --no-owner --no-group --omit-dir-times \
+    --itemize-changes --stats --partial --partial-dir=.rsync-partial \
+    --timeout=300 --info=progress2 --out-format="%i %l %n" \
+    -e /tmp/fake-rsh /srv/source/ dummy:/ >/dev/null
+  test "$(cat /srv/target/file.txt)" = payload
+  test ! -e /srv/target/stale.txt
+  if rsync -avz -e /tmp/fake-rsh /srv/source/ dummy:../../outside/ >/tmp/escape.log 2>&1; then
+    echo "rrsync path escape unexpectedly succeeded" >&2
+    exit 1
+  fi
+  test ! -e /srv/outside/file.txt
+'
+
 test "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" = true
 docker exec "$CONTAINER" node --input-type=module -e '
   const response = await fetch("http://127.0.0.1:8090/api/upgrade-readiness");

@@ -61,11 +61,11 @@ for (const file of files) {
     process.exit(1);
   }
 }
-if (!source.includes("const HELPER_RELEASE = 'v1.1.3'")) {
-  console.error('Upgrade helper release must be pinned to v1.1.3 for the large-database-safe bridge publication');
+if (!source.includes("const HELPER_RELEASE = 'v1.1.6'")) {
+  console.error('Upgrade helper release must be pinned to v1.1.6 for portable Unraid host preparation');
   process.exit(1);
 }
-console.log('Host helper integrity: 3 embedded checksums match v1.1.3 sources');
+console.log('Host helper integrity: 3 embedded checksums match v1.1.6 sources');
 NODE
 }
 
@@ -103,9 +103,9 @@ run_checks
 
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
 case "$CURRENT_VERSION:$MODE" in
-  1.0.0:minor|1.1.0:patch|1.1.1:patch|1.1.2:patch|1.1.3:patch|1.1.4:patch) ;;
+  1.0.0:minor|1.1.0:patch|1.1.1:patch|1.1.2:patch|1.1.3:patch|1.1.4:patch|1.1.5:patch) ;;
   *)
-    echo "Bridge releases are limited to v1.1.0 through v1.1.5; v1.1.5 adds actionable assessment remediation." >&2
+    echo "Bridge releases are limited to v1.1.0 through v1.1.6; v1.1.6 fixes clean Unraid rrsync provisioning." >&2
     exit 1
     ;;
 esac
