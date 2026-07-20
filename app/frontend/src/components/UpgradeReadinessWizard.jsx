@@ -66,6 +66,17 @@ function validHttpsOrigin(value) {
   }
 }
 
+function validTimezone(value) {
+  const timezone = String(value || '').trim();
+  if (!/^[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z0-9._+-]+)*$/.test(timezone)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function canonicalHostPath(value) {
   const raw = value.trim();
   if (!/^\/[A-Za-z0-9._/-]+$/.test(raw) || raw.split('/').includes('..')) return null;
@@ -126,6 +137,7 @@ export default function UpgradeReadinessWizard() {
     dataPath: '/mnt/user/appdata/redman',
     storagePath: '',
     mediaPath: '',
+    timezone: null,
     allowBroadStorage: false,
     dockerMonitoring: false,
   });
@@ -136,6 +148,10 @@ export default function UpgradeReadinessWizard() {
     try {
       const result = await getUpgradeReadiness();
       setAssessment(result);
+      setConfigForm(current => ({
+        ...current,
+        timezone: current.timezone === null ? result.suggestedTimezone || 'UTC' : current.timezone,
+      }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -159,6 +175,7 @@ export default function UpgradeReadinessWizard() {
     publicOrigin: validHttpsOrigin(configForm.publicOrigin) ? '' : 'Use one exact HTTPS origin without a path.',
     trustedProxy: validExactIp(configForm.trustedProxy) ? '' : 'Use one exact IPv4 /32 or IPv6 /128 host.',
     peerHost: validPrivatePeer(configForm.peerHost) ? '' : 'Use a numeric private or VPN IP reachable by the peer.',
+    timezone: validTimezone(configForm.timezone) ? '' : 'Use UTC or a valid IANA zone such as Europe/Amsterdam.',
     dataPath: !validHostPath(configForm.dataPath)
       ? 'Use a non-root absolute host path.'
       : (isAllUnraidShares(configForm.dataPath) ? 'App-data may not be all Unraid user shares.' : ''),
@@ -437,6 +454,24 @@ export default function UpgradeReadinessWizard() {
             <div className="form-group upgrade-span-2"><label>Exact public HTTPS origin</label><input aria-invalid={Boolean(configIssues.publicOrigin)} placeholder="https://redman.example.com" value={configForm.publicOrigin} onChange={event => setConfigForm({ ...configForm, publicOrigin: event.target.value })} /><span className="upgrade-field-hint">{configIssues.publicOrigin || 'Example: https://redman.example.com'}</span></div>
             <div className="form-group"><label>Exact proxy source IP</label><input aria-invalid={Boolean(configIssues.trustedProxy)} placeholder="172.20.0.5" value={configForm.trustedProxy} onChange={event => setConfigForm({ ...configForm, trustedProxy: event.target.value })} /><span className="upgrade-field-hint">{configIssues.trustedProxy || 'The source address RedMan sees from the proxy.'}</span></div>
             <div className="form-group"><label>Private peer SSH IP</label><input aria-invalid={Boolean(configIssues.peerHost)} placeholder="192.168.50.20" value={configForm.peerHost} onChange={event => setConfigForm({ ...configForm, peerHost: event.target.value })} /><span className="upgrade-field-hint">{configIssues.peerHost || 'Advertised to the other RedMan host.'}</span></div>
+            <div className="form-group upgrade-span-2">
+              <label>Timezone</label>
+              <input
+                list="redman-timezones"
+                aria-invalid={Boolean(configIssues.timezone)}
+                placeholder="Europe/Amsterdam"
+                value={configForm.timezone ?? ''}
+                onChange={event => setConfigForm({ ...configForm, timezone: event.target.value })}
+              />
+              <datalist id="redman-timezones">
+                <option value="Europe/Amsterdam" />
+                <option value="UTC" />
+                <option value="Europe/London" />
+                <option value="America/New_York" />
+                <option value="Asia/Tokyo" />
+              </datalist>
+              <span className="upgrade-field-hint">{configIssues.timezone || 'Controls scheduled jobs and timestamps, including daylight-saving time.'}</span>
+            </div>
             <div className="form-group"><label>Host data path</label><input aria-invalid={Boolean(configIssues.dataPath)} value={configForm.dataPath} onChange={event => setConfigForm({ ...configForm, dataPath: event.target.value })} /><span className="upgrade-field-hint">{configIssues.dataPath}</span></div>
             <div className="form-group"><label>Host storage path</label><input aria-invalid={Boolean(configIssues.storagePath)} value={configForm.storagePath} onChange={event => setConfigForm({ ...configForm, storagePath: event.target.value })} /><span className="upgrade-field-hint">{configIssues.storagePath}</span></div>
             <div className="form-group upgrade-span-2"><label>Host media path</label><input aria-invalid={Boolean(configIssues.mediaPath)} value={configForm.mediaPath} onChange={event => setConfigForm({ ...configForm, mediaPath: event.target.value })} /><span className="upgrade-field-hint">{configIssues.mediaPath}</span></div>

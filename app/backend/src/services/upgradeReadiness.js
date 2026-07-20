@@ -53,6 +53,31 @@ function setting(database, key) {
   return String(database.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || '');
 }
 
+function normalizeTimezone(value) {
+  const timezone = String(value || '').trim();
+  if (!/^[A-Za-z][A-Za-z0-9._+-]*(?:\/[A-Za-z0-9._+-]+)*$/.test(timezone)) {
+    throw new Error('Timezone must be a valid IANA zone such as Europe/Amsterdam or UTC');
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+  } catch {
+    throw new Error('Timezone must be a valid IANA zone such as Europe/Amsterdam or UTC');
+  }
+  return timezone;
+}
+
+function suggestedTimezone(database, fallback) {
+  const runtimeTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  for (const candidate of [setting(database, 'timezone'), fallback, process.env.TZ, runtimeTimezone, 'UTC']) {
+    try {
+      return normalizeTimezone(candidate);
+    } catch {
+      // Try the next configured source.
+    }
+  }
+  return 'UTC';
+}
+
 function check(id, label, status, detail, resolution = null) {
   return { id, label, status, detail, resolution: status === 'pass' ? null : resolution };
 }
@@ -345,6 +370,7 @@ export function assessUpgradeReadiness(database, options = {}) {
     bridgeVersion: UPGRADE_BRIDGE_VERSION,
     dataDir,
     databasePath: database.name,
+    suggestedTimezone: suggestedTimezone(database, options.timezone),
     checks,
     summary: {
       pass: checks.filter(item => item.status === 'pass').length,
@@ -559,6 +585,9 @@ export function createFinalConfiguration(input = {}) {
   const dataPath = absolutePath(input.dataPath, 'Data path');
   const storagePath = absolutePath(input.storagePath, 'Storage path');
   const mediaPath = absolutePath(input.mediaPath, 'Media path');
+  const timezone = normalizeTimezone(
+    Object.prototype.hasOwnProperty.call(input, 'timezone') ? input.timezone : 'UTC',
+  );
   if (dataPath === '/mnt/user') throw new Error('Data path may not authorize every Unraid user share');
   if (mediaPath === '/mnt/user') throw new Error('Media path may not authorize every Unraid user share');
   if (storagePath === '/mnt/user' && input.allowBroadStorage !== true) {
@@ -578,9 +607,9 @@ export function createFinalConfiguration(input = {}) {
     'PROXY_AUTO_PROVISION_ROLE=',
     `REDMAN_BOOTSTRAP_TOKEN=${authMode === 'local' ? '<generate-a-32-character-random-token>' : ''}`,
     `PEER_HOST=${peerHost}`,
-    'TZ=UTC',
+    `TZ=${timezone}`,
     `DOCKER_HOST=${dockerMonitoring ? 'http://docker-socket-proxy:2375' : ''}`,
     `DOCKER_CONTROL_HOST=${dockerMonitoring ? 'http://docker-control-proxy:2375' : ''}`,
   ];
-  return { authMode, dockerMonitoring, broadStorageConfirmed: storagePath === '/mnt/user', env: `${lines.join('\n')}\n` };
+  return { authMode, timezone, dockerMonitoring, broadStorageConfirmed: storagePath === '/mnt/user', env: `${lines.join('\n')}\n` };
 }

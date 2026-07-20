@@ -180,7 +180,7 @@ docker compose up -d
 
 ### Unraid
 
-The bridge is source-only until an immutable image is published. Check out the exact `v1.1.7` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation; `v1.1.7` includes clean-Unraid provisioning and FAT-safe reboot replay in addition to the corrected auth, large-database, frontend, and assessment workflow.
+The bridge is source-only until an immutable image is published. Check out the exact `v1.1.8` tag and use the app-data-only Compose definition above. Do not import an old Community Applications template: those templates may restore the Docker socket, share mounts, peer port, or mutable `latest` image that this maintenance bridge deliberately removes. Earlier `v1.1.x` tags are superseded for production installation; `v1.1.8` adds editable IANA timezone configuration to the clean-Unraid, FAT-safe, corrected auth, large-database, frontend, and assessment workflow.
 
 ### Development
 

@@ -18,10 +18,10 @@ The only optional in-app data remediation is an explicit administrator action th
 
 ## Installing the Bridge
 
-The corrected bridge is published as source tag `v1.1.7`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, assessment, or clean-Unraid host/reboot workflow.
+The corrected bridge is published as source tag `v1.1.8`. Build that exact tag locally; do not use an unpinned `latest` image. Earlier `v1.1.x` tags are superseded for production installation because they lack part of the corrected auth, large-database, frontend, assessment, clean-Unraid host/reboot, or editable timezone workflow.
 
 1. Record the current container image ID and export its inspection before changing it.
-2. Check out `v1.1.7` in a clean directory.
+2. Check out `v1.1.8` in a clean directory.
 3. Copy `.env.example` to `.env` and set the existing app-data path, exact reverse-proxy source address, and forward-auth administrator group and/or role. Pangolin Badger provides `Remote-Role`; Authelia commonly provides `Remote-Groups`.
 4. Build the bridge image from the pinned Dockerfile: `docker compose build --pull redman`.
 5. Stop the existing RedMan container during a maintenance window, retain its image, and start the bridge with `docker compose up -d redman`.
@@ -77,6 +77,7 @@ Select the future authentication mode and provide:
 - the exact public HTTPS origin;
 - the exact reverse-proxy source address;
 - the numeric private SSH address reachable by the other RedMan peer;
+- the IANA timezone used for schedules and timestamps, initially suggested from the existing installation;
 - host data, storage, and media paths;
 - whether Docker monitoring is required.
 

@@ -33,6 +33,7 @@ database.exec(`
   CREATE TABLE media_drives (id INTEGER PRIMARY KEY, delete_after_import INTEGER);
   CREATE TABLE ssd_backup_configs (id INTEGER PRIMARY KEY, dest_path TEXT);
   INSERT INTO settings VALUES ('docker_socket', '/var/run/docker.sock');
+  INSERT INTO settings VALUES ('timezone', 'Europe/Amsterdam');
   INSERT INTO hyper_backup_jobs VALUES (1, '/srv/source', '/srv/remote', 'root');
   INSERT INTO authorized_peers VALUES (1, '/', 0, 1, NULL);
   INSERT INTO media_drives VALUES (1, 1);
@@ -50,6 +51,7 @@ try {
   assert.equal(assessment.summary.warning, 5);
   assert.equal(assessment.summary.rootJobs, 1);
   assert.equal(assessment.summary.unsafePeers, 1);
+  assert.equal(assessment.suggestedTimezone, 'Europe/Amsterdam');
   assert.equal(assessment.checks.find(item => item.id === 'application-backup').resolution.action.step, 1);
   assert.equal(assessment.checks.find(item => item.id === 'legacy-ssh-jobs').resolution.action.step, 2);
   assert.equal(assessment.checks.find(item => item.id === 'legacy-peers').resolution.timing, 'after-cutover');
@@ -136,10 +138,32 @@ try {
     dataPath: '/srv/redman',
     storagePath: '/srv/redman-backups',
     mediaPath: '/media',
+    timezone: 'Europe/Amsterdam',
     dockerMonitoring: true,
   });
   assert.match(config.env, /TRUSTED_PROXIES=172\.20\.0\.5\/32/);
   assert.match(config.env, /DOCKER_CONTROL_HOST=http:\/\/docker-control-proxy:2375/);
+  assert.match(config.env, /TZ=Europe\/Amsterdam/);
+  assert.equal(config.timezone, 'Europe/Amsterdam');
+  const legacyConfig = createFinalConfiguration({
+    authMode: 'proxy', publicOrigin: 'https://redman.example.com',
+    trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
+    dataPath: '/srv/redman', storagePath: '/srv/backups', mediaPath: '/media',
+  });
+  assert.match(legacyConfig.env, /TZ=UTC/);
+  const multiSegmentConfig = createFinalConfiguration({
+    authMode: 'proxy', publicOrigin: 'https://redman.example.com',
+    trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
+    dataPath: '/srv/redman', storagePath: '/srv/backups', mediaPath: '/media',
+    timezone: 'America/Argentina/Buenos_Aires',
+  });
+  assert.match(multiSegmentConfig.env, /TZ=America\/Argentina\/Buenos_Aires/);
+  assert.equal(createFinalConfiguration({
+    authMode: 'proxy', publicOrigin: 'https://redman.example.com',
+    trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
+    dataPath: '/srv/redman', storagePath: '/srv/backups', mediaPath: '/media',
+    timezone: 'GMT',
+  }).timezone, 'GMT');
   assert.doesNotMatch(config.env, /password|api.key/i);
   assert.throws(() => createFinalConfiguration({
     authMode: 'proxy',
@@ -191,6 +215,20 @@ try {
     authMode: 'proxy', publicOrigin: '', trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
     dataPath: '/srv/redman', storagePath: '/srv/backups', mediaPath: '/media',
   }), /HTTPS/);
+  assert.throws(() => createFinalConfiguration({
+    authMode: 'proxy', publicOrigin: 'https://redman.example.com',
+    trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
+    dataPath: '/srv/redman', storagePath: '/srv/backups', mediaPath: '/media',
+    timezone: 'Mars/Olympus_Mons',
+  }), /IANA zone/);
+  for (const timezone of ['', 'Europe/Amsterdam\nTZ=UTC', '../../etc']) {
+    assert.throws(() => createFinalConfiguration({
+      authMode: 'proxy', publicOrigin: 'https://redman.example.com',
+      trustedProxy: '172.20.0.5', peerHost: '192.168.50.20',
+      dataPath: '/srv/redman', storagePath: '/srv/backups', mediaPath: '/media',
+      timezone,
+    }), /IANA zone/);
+  }
 
   console.log('Upgrade readiness: assessment, backup, host plan, injection rejection, and final config passed');
 } finally {

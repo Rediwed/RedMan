@@ -60,6 +60,7 @@ const server = spawn(process.execPath, [resolve(root, 'app/backend/src/index.js'
     TRUSTED_PROXIES: '127.0.0.1/32,::1/128',
     REDMAN_ADMIN_GROUP: 'upgrade-admins',
     REDMAN_ADMIN_ROLE: 'Admin',
+    TZ: 'Europe/Amsterdam',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -99,6 +100,7 @@ try {
   const assessment = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness`, { headers: roleHeaders });
   assert.equal(assessment.status, 200);
   const assessmentBody = await assessment.json();
+  assert.equal(assessmentBody.suggestedTimezone, 'Europe/Amsterdam');
   assert.equal(assessmentBody.checks.find(item => item.id === 'application-backup').resolution.action.step, 1);
 
   const viewerRemediation = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/remediate`, {
