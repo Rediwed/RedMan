@@ -9,8 +9,10 @@ Versioning scheme:
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-07-20
+
 ### Fixed
-- [x] Added checksum-pinned official Perl `rrsync` provisioning for Unraid releases that ship rsync without the support helper or Python, including `/boot` persistence and reboot replay.
+- Added checksum-pinned official Perl `rrsync` provisioning for Unraid releases that ship rsync without the support helper or Python, including `/boot` persistence and reboot replay.
 
 ## [1.1.5] - 2026-07-20
 

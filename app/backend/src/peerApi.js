@@ -38,7 +38,7 @@ export function createPeerApi() {
     res.json({
       ok: true,
       instance: instanceName?.value || 'RedMan',
-      version: '1.1.5',
+      version: '1.1.6',
       timestamp: new Date().toISOString(),
     });
   });
