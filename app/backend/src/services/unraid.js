@@ -1,12 +1,14 @@
-// Unraid share auto-detection service
-// Parses /boot/config/shares/*.cfg and scans /mnt/user/ + /mnt/cache/
+// Storage/share auto-detection service.
+// Parses Unraid share config when configured, otherwise scans storage roots.
 
 import { readdir, readFile, stat } from 'fs/promises';
 import { join } from 'path';
+import { resolveAllowedBrowsePath } from './filesystemAccess.js';
+import { getAvailableStorageRoots, storageConfig } from './storageConfig.js';
 
-const SHARES_CONFIG_DIR = '/boot/config/shares';
-const MNT_USER = '/mnt/user';
-const MNT_CACHE = '/mnt/cache';
+const SHARES_CONFIG_DIR = storageConfig.shareConfigDir;
+const MNT_USER = storageConfig.roots.includes('/mnt/user') ? '/mnt/user' : storageConfig.roots[0];
+const MNT_CACHE = storageConfig.roots.includes('/mnt/cache') ? '/mnt/cache' : null;
 
 // Parse an Unraid share .cfg file (INI-like format)
 function parseCfg(content, filename) {
@@ -25,6 +27,7 @@ function parseCfg(content, filename) {
 
 // Get shares from Unraid config files
 async function getShareConfigs() {
+  if (!SHARES_CONFIG_DIR || !MNT_USER) return [];
   try {
     const files = await readdir(SHARES_CONFIG_DIR);
     const cfgFiles = files.filter(f => f.endsWith('.cfg'));
@@ -43,7 +46,7 @@ async function getShareConfigs() {
           include: cfg.shareInclude || '',
           exclude: cfg.shareExclude || '',
           userPath: join(MNT_USER, name),
-          cachePath: join(MNT_CACHE, name),
+          cachePath: MNT_CACHE ? join(MNT_CACHE, name) : '',
         });
       } catch {
         // Skip unreadable files
@@ -87,11 +90,9 @@ export async function getShares() {
     return cfgShares;
   }
 
-  // Fallback: scan /mnt/user/ and /mnt/cache/ directly
-  const [userDirs, cacheDirs] = await Promise.all([
-    scanDir(MNT_USER),
-    scanDir(MNT_CACHE),
-  ]);
+  // Fallback: scan configured storage roots directly
+  const userDirs = await scanDir(MNT_USER);
+  const cacheDirs = MNT_CACHE ? await scanDir(MNT_CACHE) : [];
 
   const shareMap = new Map();
 
@@ -122,18 +123,35 @@ export async function getShares() {
     }
   }
 
+  for (const root of storageConfig.roots) {
+    if (root === MNT_USER || root === MNT_CACHE) continue;
+    for (const dir of await scanDir(root)) {
+      shareMap.set(`${root}:${dir.name}`, {
+        name: dir.name,
+        comment: '',
+        allocation: '',
+        useCache: '',
+        path: dir.path,
+        userPath: dir.path,
+        cachePath: '',
+      });
+    }
+  }
+
   return Array.from(shareMap.values());
 }
 
 // Browse a directory for its contents (for path picker)
 export async function browsePath(dirPath) {
   try {
-    const entries = await readdir(dirPath, { withFileTypes: true });
+    const roots = getAvailableStorageRoots();
+    const confined = resolveAllowedBrowsePath(dirPath, roots);
+    const entries = await readdir(confined.path, { withFileTypes: true });
     return entries
       .filter(e => e.isDirectory())
       .map(e => ({
         name: e.name,
-        path: join(dirPath, e.name),
+        path: join(confined.path, e.name),
         type: 'directory',
       }))
       .sort((a, b) => a.name.localeCompare(b.name));

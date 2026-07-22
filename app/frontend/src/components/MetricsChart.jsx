@@ -1,7 +1,10 @@
 import { useRef, useEffect } from 'react';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatTimeOnly } from '../utils/dateFormat.js';
 import './MetricsChart.css';
 
 export default function MetricsChart({ data, dataKey, label, color, maxValue, unit = '%' }) {
+  const { settings } = useSettings();
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -74,10 +77,10 @@ export default function MetricsChart({ data, dataKey, label, color, maxValue, un
       ctx.font = '10px system-ui';
       ctx.textAlign = 'left';
       const first = new Date(data[0].recorded_at);
-      ctx.fillText(formatTime(first), padding.left, h - 2);
+      ctx.fillText(formatTimeOnly(data[0].recorded_at, settings), padding.left, h - 2);
       ctx.textAlign = 'right';
       const last = new Date(data[data.length - 1].recorded_at);
-      ctx.fillText(formatTime(last), w - padding.right, h - 2);
+      ctx.fillText(formatTimeOnly(data[data.length - 1].recorded_at, settings), w - padding.right, h - 2);
     }
   }, [data, dataKey, color, maxValue, unit]);
 
@@ -97,8 +100,4 @@ function formatValue(val, unit) {
     return `${Math.round(val)}B`;
   }
   return `${val.toFixed(1)}${unit}`;
-}
-
-function formatTime(date) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

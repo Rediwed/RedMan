@@ -3,11 +3,24 @@
 
 import os from 'os';
 import db from '../db.js';
-import { runRsyncWithSsh, parseItemizeAction } from './rsync.js';
-import { notifyBackupResult } from './notify.js';
+import { runRsyncWithSsh, cancelSsdRun } from './rsync.js';
+import { createJobNotificationTracker, notifyBackupResult, shouldNotify } from './notify.js';
+import { isCancelledRun } from './runStatus.js';
+import { claimBackupRun } from './runClaim.js';
+import { assertLocalSourceHasEntries } from './sourceHealth.js';
+import { validatePrivatePeerBaseUrl } from './peerUrlPolicy.js';
+import { decryptPeerApiKey } from './peerSecrets.js';
+import { runtimeConfig } from './runtimeConfig.js';
+import { validateSshHost, validateSshPort, validateSshUser } from '../middleware/validation.js';
+import { validatePrivatePeerHost } from './peerUrlPolicy.js';
+import { fetchWithoutRedirect } from './httpPolicy.js';
 
 const IS_MAC = os.platform() === 'darwin';
 const activeRuns = new Map();
+
+export function cancelHyperRun(runId) {
+  return cancelSsdRun(runId);
+}
 
 // Rsync exit codes → user-friendly descriptions
 const RSYNC_EXIT_MESSAGES = {
@@ -37,26 +50,47 @@ export function getActiveHyperRun(runId) {
   return activeRuns.get(runId);
 }
 
+export function resolveHyperSshTarget(job, prepareResult) {
+  const host = job.ssh_host || (prepareResult.sshHost
+    ? validatePrivatePeerHost(prepareResult.sshHost, 'Remote prepare SSH host')
+    : new URL(job.remote_url).hostname);
+  const user = job.ssh_user || prepareResult.sshUser || runtimeConfig.sshUser;
+  const port = job.ssh_port || prepareResult.sshPort || runtimeConfig.sshPort;
+  if (!validateSshHost(host)) throw new Error('Remote prepare returned an invalid SSH host');
+  if (!validateSshUser(user)) throw new Error('Remote prepare returned an invalid SSH user');
+  if (!validateSshPort(port)) throw new Error('Remote prepare returned an invalid SSH port');
+  return { host, user, port: Number(port) };
+}
+
 export async function executeHyperBackup(jobId, existingRunId = null) {
   const job = db.prepare('SELECT * FROM hyper_backup_jobs WHERE id = ?').get(jobId);
   if (!job) throw new Error(`Hyper Backup job ${jobId} not found`);
 
   let runId = existingRunId;
   if (runId) {
-    db.prepare(`UPDATE backup_runs SET status = 'running' WHERE id = ?`).run(runId);
+    db.prepare(`UPDATE backup_runs SET status = 'running', peer_static_pubkey = ? WHERE id = ?`)
+      .run(job.peer_static_pubkey, runId);
   } else {
-    const run = db.prepare(`
-      INSERT INTO backup_runs (feature, config_id, status) VALUES ('hyper-backup', ?, 'running')
-    `).run(jobId);
-    runId = Number(run.lastInsertRowid);
+    const claim = claimBackupRun(db, 'hyper-backup', jobId, job.peer_static_pubkey);
+    if (!claim.claimed) return { runId: claim.runId, status: 'running', skipped: true };
+    runId = claim.runId;
   }
 
   const startTime = Date.now();
   activeRuns.set(runId, { status: 'preparing', progress: null, startedAt: startTime });
+  const notifications = createJobNotificationTracker({
+    job, feature: 'Hyper Backup', name: job.name, runId, startedAt: startTime,
+  });
 
   try {
+    const remoteApiKey = decryptPeerApiKey(job.remote_api_key_encrypted);
+    if (!remoteApiKey) throw new Error('Hyper Backup peer credential is unavailable');
+    if (job.direction === 'push') {
+      await assertLocalSourceHasEntries(job.local_path, 'Hyper Backup source');
+    }
+
     // Step 1: Call remote peer API to prepare
-    const prepareResult = await callPeerApi(job.remote_url, job.remote_api_key, 'POST', '/peer/backup/prepare', {
+    const prepareResult = await callPeerApi(job.remote_url, remoteApiKey, 'POST', '/peer/backup/prepare', {
       direction: job.direction,
       remotePath: job.remote_path,
       runId,
@@ -65,15 +99,15 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
     if (!prepareResult.ok) {
       throw new Error(`Remote prepare failed: ${prepareResult.error || 'Unknown error'}`);
     }
+    notifications.start();
 
     // Step 2: Execute rsync over SSH
     activeRuns.set(runId, { status: 'transferring', progress: null, startedAt: startTime });
-    const sshHost = job.ssh_host || new URL(job.remote_url).hostname;
-    const sshUser = job.ssh_user || 'root';
-    const sshPort = job.ssh_port || 22;
+    const { host: sshHost, user: sshUser, port: sshPort } = resolveHyperSshTarget(job, prepareResult);
 
     const args = [
-      '-avz', '--delete',
+      '-avz', '--delete-after',
+      '--no-owner', '--no-group', '--omit-dir-times',
       '--itemize-changes', '--stats',
       // Resume partial transfers on interruption (critical for multi-TB datasets)
       '--partial',
@@ -93,48 +127,48 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
       args.push(`${sshUser}@${sshHost}:${job.remote_path}/`, job.local_path + '/');
     }
 
+    const insertFile = db.prepare(`
+      INSERT INTO backup_run_files (run_id, file_path, action, size) VALUES (?, ?, ?, ?)
+    `);
+    const insertAllFiles = db.transaction((entries) => {
+      for (const entry of entries) insertFile.run(runId, entry.path, entry.action, entry.size);
+    });
+    let pendingFileEntries = [];
+    const flushFileEntries = () => {
+      if (pendingFileEntries.length === 0) return;
+      insertAllFiles(pendingFileEntries);
+      pendingFileEntries = [];
+    };
+
     const result = await runRsyncWithSsh(args, (rsyncProgress) => {
       activeRuns.set(runId, {
         status: 'transferring', startedAt: startTime,
         ...rsyncProgress,
       });
+      notifications.progress(rsyncProgress);
+    }, runId, (entry) => {
+      pendingFileEntries.push(entry);
+      if (pendingFileEntries.length >= 1000) flushFileEntries();
     });
+    flushFileEntries();
     activeRuns.set(runId, { status: 'completing', startedAt: startTime, ...result.progress });
 
+    const persistedStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
+    const status = isCancelledRun(persistedStatus, result.exitCode)
+      ? 'cancelled'
+      : result.exitCode === 0
+        ? (result.progress.filesFailed > 0 ? 'partial' : 'completed')
+        : ([23, 24].includes(result.exitCode) && result.progress.filesCopied > 0 ? 'partial' : 'failed');
+
     // Step 3: Notify remote peer that transfer is complete
-    await callPeerApi(job.remote_url, job.remote_api_key, 'POST', '/peer/backup/complete', {
+    await callPeerApi(job.remote_url, remoteApiKey, 'POST', '/peer/backup/complete', {
       runId,
-      status: result.exitCode === 0 ? 'completed' : 'failed',
+      status,
       stats: result.progress,
     });
 
-    // Store file details (batched in a single transaction for performance)
-    const insertFile = db.prepare(`
-      INSERT INTO backup_run_files (run_id, file_path, action, size) VALUES (?, ?, ?, ?)
-    `);
-    const insertAllFiles = db.transaction((entries) => {
-      for (const e of entries) insertFile.run(e.runId, e.path, e.action, e.size);
-    });
-    const fileEntries = [];
-    const lines = (result.stdout || '').split('\n');
-    for (const line of lines) {
-      const match = line.match(/^([<>.ch*][fdLDS][cstpoguax.+?]{7,9})\s+(\d+)\s+(.+)$/);
-      if (match) {
-        const action = parseItemizeAction(match[1]);
-        fileEntries.push({ runId, path: match[3], action, size: parseInt(match[2]) || 0 });
-        continue;
-      }
-      // Handle *deleting lines
-      const delMatch = line.match(/^\*deleting\s+(.+)$/);
-      if (delMatch) {
-        fileEntries.push({ runId, path: delMatch[1], action: 'deleted', size: 0 });
-      }
-    }
-    if (fileEntries.length > 0) insertAllFiles(fileEntries);
-
     // Update run record
     const duration = (Date.now() - startTime) / 1000;
-    const status = result.exitCode === 0 ? 'completed' : 'failed';
     db.prepare(`
       UPDATE backup_runs SET
         status = ?, completed_at = datetime('now'),
@@ -146,17 +180,25 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
       status,
       result.progress.filesTotal, result.progress.filesCopied, result.progress.filesFailed,
       result.progress.bytesTransferred, duration,
-      result.exitCode !== 0 ? buildRsyncErrorMessage(result) : null,
+      status === 'cancelled'
+        ? 'Cancelled by user'
+        : result.exitCode !== 0 ? buildRsyncErrorMessage(result) : null,
       runId,
     );
 
     // Notification
-    if (job.notify_on_success && status === 'completed') {
+    if (status === 'completed' && shouldNotify(job, 'success')) {
       await notifyBackupResult('Hyper Backup', job.name, 'completed', {
         filesCopied: result.progress.filesCopied, filesFailed: result.progress.filesFailed,
         bytesTransferred: result.progress.bytesTransferred, duration,
       });
-    } else if (job.notify_on_failure && status === 'failed') {
+    } else if (status === 'partial' && shouldNotify(job, 'partial')) {
+      await notifyBackupResult('Hyper Backup', job.name, 'partial', {
+        filesCopied: result.progress.filesCopied, filesFailed: result.progress.filesFailed,
+        bytesTransferred: result.progress.bytesTransferred, duration,
+        errorMessage: buildRsyncErrorMessage(result),
+      });
+    } else if (status === 'failed' && shouldNotify(job, 'failure')) {
       await notifyBackupResult('Hyper Backup', job.name, 'failed', {
         filesCopied: result.progress.filesCopied, bytesTransferred: result.progress.bytesTransferred, duration,
       });
@@ -165,17 +207,23 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
     return { runId, status };
   } catch (err) {
     const duration = (Date.now() - startTime) / 1000;
+    const persistedStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
+    if (persistedStatus === 'cancelled') {
+      return { runId, status: 'cancelled' };
+    }
+
     db.prepare(`
       UPDATE backup_runs SET status = 'failed', completed_at = datetime('now'),
         error_message = ?, duration_seconds = ?
       WHERE id = ?
     `).run(err.message, duration, runId);
 
-    if (job.notify_on_failure) {
+    if (shouldNotify(job, 'failure')) {
       await notifyBackupResult('Hyper Backup', job.name, 'failed', { duration });
     }
     throw err;
   } finally {
+    notifications.close();
     activeRuns.delete(runId);
   }
 }
@@ -190,11 +238,27 @@ export async function testPeerConnection(remoteUrl, apiKey) {
   }
 }
 
+// Browse directories on a remote peer
+export async function browsePeerDirectory(remoteUrl, apiKey, dir) {
+  const query = dir ? `?dir=${encodeURIComponent(dir)}` : '';
+  return callPeerApi(remoteUrl, apiKey, 'GET', `/peer/browse${query}`);
+}
+
+// Get filesystem roots on a remote peer
+export async function getPeerRoots(remoteUrl, apiKey) {
+  return callPeerApi(remoteUrl, apiKey, 'GET', '/peer/roots');
+}
+
+// Get Unraid shares on a remote peer
+export async function getPeerShares(remoteUrl, apiKey) {
+  return callPeerApi(remoteUrl, apiKey, 'GET', '/peer/shares');
+}
+
 // Notify all known Hyper Backup peers that this instance is shutting down.
 // Best-effort: failures are logged but don't block shutdown.
 export async function notifyPeersOfShutdown() {
   // Get unique peer URLs + keys from hyper backup jobs
-  const jobs = db.prepare('SELECT DISTINCT remote_url, remote_api_key FROM hyper_backup_jobs').all();
+  const jobs = db.prepare('SELECT DISTINCT remote_url, remote_api_key_encrypted FROM hyper_backup_jobs').all();
   if (jobs.length === 0) return;
 
   const notified = new Set();
@@ -206,7 +270,7 @@ export async function notifyPeersOfShutdown() {
     notified.add(job.remote_url);
 
     promises.push(
-      callPeerApi(job.remote_url, job.remote_api_key, 'POST', '/peer/shutdown', {
+      callPeerApi(job.remote_url, decryptPeerApiKey(job.remote_api_key_encrypted), 'POST', '/peer/shutdown', {
         reason: 'graceful shutdown',
       }).then(() => {
         console.log(`[shutdown] Notified peer at ${job.remote_url}`);
@@ -219,24 +283,25 @@ export async function notifyPeersOfShutdown() {
   // Wait for all notifications with a 5-second timeout so shutdown isn't blocked
   await Promise.race([
     Promise.allSettled(promises),
-    new Promise(resolve => setTimeout(resolve, 5000)),
+    new Promise(resolve => { setTimeout(resolve, 5000); }),
   ]);
 }
 
 // Helper to call the peer API
 async function callPeerApi(baseUrl, apiKey, method, path, body = null) {
+  baseUrl = validatePrivatePeerBaseUrl(baseUrl);
   const url = `${baseUrl}${path}`;
   const headers = {
     'Authorization': `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
 
-  const options = { method, headers };
+  const options = { method, headers, signal: AbortSignal.timeout(15000) };
   if (body) options.body = JSON.stringify(body);
 
   let response;
   try {
-    response = await fetch(url, options);
+    response = await fetchWithoutRedirect(url, options);
   } catch (err) {
     // Network-level errors → friendly messages
     const code = err.cause?.code || '';

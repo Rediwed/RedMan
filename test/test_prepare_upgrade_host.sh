@@ -37,6 +37,7 @@ docker run --rm \
 docker run -d \
   --name "$CONTAINER" \
   -e AUTH_DISABLED=true \
+  -e REDMAN_LOCAL_DEV=1 \
   -e NODE_ENV=test \
   -e REDMAN_UPGRADE_BRIDGE=true \
   -e PEER_HOST=127.0.0.1 \

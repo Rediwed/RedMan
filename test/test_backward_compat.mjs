@@ -9,10 +9,14 @@
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
+import { createRequire } from 'module';
+import { getSchemaVersion, runMigrations, validateMigrations } from '../app/backend/src/migrations.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT = resolve(__dirname, '..');
+const require = createRequire(join(ROOT, 'app/backend/package.json'));
+const Database = require('better-sqlite3');
 
 // ── CLI args ──
 const args = process.argv.slice(2);
@@ -23,7 +27,7 @@ function getArg(name, fallback) {
 
 const API_URL = getArg('--api-url', 'http://localhost:8090');
 const PEER_URL = getArg('--peer-url', 'http://localhost:8091');
-const PEER_KEY = getArg('--peer-key', 'test-peer-key-beta');
+const PEER_KEY = getArg('--peer-key', 'test-peer-key-alpha');
 const SKIP_LIVE = args.includes('--skip-live');
 
 // ── Load contract ──
@@ -97,64 +101,38 @@ function testContractIntegrity() {
 function testDatabaseSchema() {
   console.log('\n🗄️  Suite 2: Database Schema Contract\n');
 
-  const seedPath = join(ROOT, 'app/backend/src/seed.js');
-  const dbPath = join(ROOT, 'app/backend/src/db.js');
+  const database = new Database(':memory:');
+  try {
+    runMigrations(database);
+    for (const [table, schema] of Object.entries(contract.database)) {
+      const exists = database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      if (!exists) {
+        fail(`Table '${table}' missing from migrated schema`);
+        continue;
+      }
+      pass(`Table '${table}' present in migrated schema`);
 
-  if (!existsSync(seedPath)) {
-    fail('seed.js not found');
-    return;
-  }
-
-  const seedContent = readFileSync(seedPath, 'utf-8');
-  const dbContent = existsSync(dbPath) ? readFileSync(dbPath, 'utf-8') : '';
-
-  for (const [table, schema] of Object.entries(contract.database)) {
-    // Check table exists in seed.js
-    const tableRegex = new RegExp(`CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${table}\\b`, 'i');
-    if (tableRegex.test(seedContent) || tableRegex.test(dbContent)) {
-      pass(`Table '${table}' found in schema definitions`);
-    } else {
-      fail(`Table '${table}' missing from seed.js/db.js`);
-      continue;
-    }
-
-    // Check each column exists in the CREATE TABLE for this table
-    // Extract from CREATE TABLE ... to the next db.exec or end of statement
-    // We search for the table name then grab everything until the closing `)`; followed by a newline
-    const tableIdx = seedContent.indexOf(`CREATE TABLE ${table}`);
-    if (tableIdx < 0) {
-      skip(`Cannot parse CREATE TABLE block for '${table}' — check manually`);
-      continue;
-    }
-
-    // Find the matching closing paren by counting parens from the opening `(`
-    const openIdx = seedContent.indexOf('(', tableIdx);
-    let depth = 0;
-    let closeIdx = -1;
-    for (let i = openIdx; i < seedContent.length; i++) {
-      if (seedContent[i] === '(') depth++;
-      if (seedContent[i] === ')') { depth--; if (depth === 0) { closeIdx = i; break; } }
-    }
-
-    if (closeIdx < 0) {
-      skip(`Cannot find closing paren for '${table}' CREATE TABLE — check manually`);
-      continue;
-    }
-
-    const block = seedContent.slice(openIdx, closeIdx + 1);
-    for (const col of Object.keys(schema.columns)) {
-      if (block.includes(col)) {
-        pass(`  ${table}.${col} present`);
-      } else {
-        // Column might be added via ALTER TABLE in db.js
-        const alterRegex = new RegExp(`ALTER\\s+TABLE\\s+${table}\\s+ADD\\s+COLUMN\\s+${col}\\b`, 'i');
-        if (alterRegex.test(dbContent)) {
-          pass(`  ${table}.${col} present (via db.js migration)`);
-        } else {
-          fail(`  ${table}.${col} missing`, `expected in ${table}`);
+      const columns = new Map(database.prepare(`PRAGMA table_info("${table}")`).all().map(column => [column.name, column]));
+      for (const [columnName, expectedDefinition] of Object.entries(schema.columns)) {
+        const column = columns.get(columnName);
+        if (!column) {
+          fail(`  ${table}.${columnName} missing`);
+          continue;
         }
+
+        const expected = expectedDefinition.toUpperCase();
+        const expectedType = expected.split(/\s+/)[0];
+        const issues = [];
+        if (column.type.toUpperCase() !== expectedType) issues.push(`type ${column.type || '(none)'}, expected ${expectedType}`);
+        if (expected.includes('NOT NULL') && column.notnull !== 1) issues.push('expected NOT NULL');
+        if (expected.includes('PRIMARY KEY') && column.pk === 0) issues.push('expected PRIMARY KEY');
+
+        if (issues.length === 0) pass(`  ${table}.${columnName} matches ${expectedDefinition}`);
+        else fail(`  ${table}.${columnName} contract mismatch`, issues.join(', '));
       }
     }
+  } finally {
+    database.close();
   }
 }
 
@@ -276,13 +254,10 @@ async function testLiveApiEndpoints() {
   for (const ep of sampleEndpoints) {
     const path = ep.replace('GET ', '');
     const res = await fetchSafe(`${API_URL}${path}`);
-    if (res && (res.ok || res.status === 401)) {
-      // 401 means endpoint exists but auth is required — still valid
+    if (res?.ok) {
       pass(`${ep} → ${res.status}`);
     } else if (res) {
-      // 404 or 500 means endpoint is missing or broken
-      if (res.status === 404) fail(`${ep} → 404 Not Found`);
-      else pass(`${ep} → ${res.status}`);
+      fail(`${ep} returned error`, `status ${res.status}`);
     } else {
       fail(`${ep} → unreachable`);
     }
@@ -305,7 +280,7 @@ async function testLivePeerApi() {
   });
 
   if (!healthRes) {
-    skip('Peer API not reachable — skipping');
+    fail('Peer API not reachable', `${PEER_URL}/peer/health`);
     return;
   }
 
@@ -319,8 +294,6 @@ async function testLivePeerApi() {
       if (field in health) pass(`  peer health.${field} present`);
       else fail(`  peer health.${field} missing from response`);
     }
-  } else if (healthRes.status === 401) {
-    pass('GET /peer/health → 401 (auth working, endpoint exists)');
   } else {
     fail('GET /peer/health unexpected status', `${healthRes.status}`);
   }
@@ -329,8 +302,10 @@ async function testLivePeerApi() {
   const storageRes = await fetchSafe(`${PEER_URL}/peer/storage`, {
     headers: { 'Authorization': `Bearer ${PEER_KEY}` },
   });
-  if (storageRes && (storageRes.ok || storageRes.status === 401)) {
+  if (storageRes?.ok) {
     pass(`GET /peer/storage → ${storageRes.status}`);
+  } else if (storageRes) {
+    fail('GET /peer/storage returned error', `status ${storageRes.status}`);
   } else {
     fail('GET /peer/storage not reachable');
   }
@@ -350,23 +325,11 @@ function testMigrationSystem() {
 
   const content = readFileSync(dbPath, 'utf-8');
 
-  // Check that migrations are safe (idempotent patterns)
-  const hasTableCheck = content.includes('tableExists');
-  const hasPragmaTableInfo = content.includes('PRAGMA table_info');
-  const hasCreateIfNotExists = /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i.test(content) || content.includes('tableExists');
-  const hasCreateIndexIfNotExists = /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS/i.test(content);
+  if (content.includes('runMigrations(db)')) pass('db.js delegates schema ownership to runMigrations()');
+  else fail('db.js does not invoke the formal migration system');
 
-  if (hasTableCheck) pass('db.js uses tableExists() guard');
-  else fail('db.js missing tableExists() guard — migrations may not be idempotent');
-
-  if (hasPragmaTableInfo) pass('db.js checks column existence via PRAGMA table_info');
-  else fail('db.js missing PRAGMA table_info checks');
-
-  if (hasCreateIfNotExists) pass('db.js uses safe CREATE TABLE pattern');
-  else fail('db.js may have unsafe CREATE TABLE without IF NOT EXISTS');
-
-  if (hasCreateIndexIfNotExists) pass('db.js uses CREATE INDEX IF NOT EXISTS');
-  else fail('db.js may have unsafe CREATE INDEX without IF NOT EXISTS');
+  if (!/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX)\b/i.test(content)) pass('db.js contains no inline schema mutations');
+  else fail('db.js still contains inline schema mutations');
 
   // Check WAL mode
   if (content.includes("journal_mode = WAL")) pass('WAL mode enabled');
@@ -380,7 +343,6 @@ function testMigrationSystem() {
   if (content.includes('busy_timeout')) pass('Busy timeout configured');
   else fail('Busy timeout not configured');
 
-  // Check migrations.js exists (formal migration system)
   const migrationsPath = join(ROOT, 'app/backend/src/migrations.js');
   if (existsSync(migrationsPath)) {
     pass('migrations.js formal migration system exists');
@@ -388,8 +350,23 @@ function testMigrationSystem() {
     const migContent = readFileSync(migrationsPath, 'utf-8');
     if (migContent.includes('schema_migrations')) pass('  schema_migrations tracking table used');
     else fail('  migrations.js missing schema_migrations tracking');
+
+    const database = new Database(':memory:');
+    try {
+      const firstRun = runMigrations(database);
+      const secondRun = runMigrations(database);
+      const validation = validateMigrations(database);
+      if (firstRun.ran > 0) pass(`  fresh database migrated to schema ${getSchemaVersion(database)}`);
+      else fail('  fresh database ran no migrations');
+      if (secondRun.ran === 0) pass('  second migration run is idempotent');
+      else fail('  second migration run reapplied migrations', `${secondRun.ran} reran`);
+      if (validation.ok) pass('  all numbered migrations recorded');
+      else fail('  migration tracking incomplete', `missing: ${validation.missing.join(', ')}`);
+    } finally {
+      database.close();
+    }
   } else {
-    skip('migrations.js not found (using inline db.js migrations only)');
+    fail('migrations.js not found');
   }
 }
 

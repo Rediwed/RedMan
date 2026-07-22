@@ -9,5 +9,6 @@ if (Test-Path $nodePath) {
     exit 1
 }
 
+if (-not $env:PEER_HOST) { $env:PEER_HOST = "127.0.0.1" }
 Set-Location (Join-Path $PSScriptRoot "app")
 npm run dev

@@ -1,23 +1,95 @@
 services:
-  redman:
-    build: .
-    container_name: redman
+  docker-socket-proxy:
+    profiles: ["docker-monitoring"]
+    build:
+      context: .
+      target: docker-api-proxy
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+    pids_limit: 32
+    environment:
+      - REDMAN_DOCKER_PROXY_MODE=read
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+    restart: unless-stopped
+
+  docker-control-proxy:
+    profiles: ["docker-monitoring"]
+    build:
+      context: .
+      target: docker-api-proxy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+    pids_limit: 32
+    environment:
+      - REDMAN_DOCKER_PROXY_MODE=control
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+    restart: unless-stopped
+
+  redman:
+    build: .
+    mem_limit: ${REDMAN_MEMORY_LIMIT:-1536m}
+    memswap_limit: ${REDMAN_MEMORY_SWAP_LIMIT:-2048m}
+    cpus: ${REDMAN_CPU_LIMIT:-2}
+    pids_limit: ${REDMAN_PIDS_LIMIT:-256}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
     ports:
       - "${REDMAN_WEB_BIND:-127.0.0.1}:${REDMAN_WEB_PORT:-8090}:8090"
+      - "${REDMAN_PEER_BIND:?Set the private host address for the peer API}:${REDMAN_PEER_PUBLISHED_PORT:-8091}:8091"
     volumes:
-      - ${REDMAN_DATA_PATH:?Set the existing RedMan host app-data path}:/app/backend/data
+      - ${REDMAN_DATA_PATH:?Set the host directory for RedMan data}:/app/backend/data
+      - ${REDMAN_STORAGE_PATH:?Set the host storage root}:${REDMAN_STORAGE_PATH}
+      - ${REDMAN_MEDIA_PATH:?Set the host removable-media root}:${REDMAN_MEDIA_PATH}
+      - type: bind
+        source: ${REDMAN_HOST_AUTHORIZED_KEYS_PATH:?Set the host redman-backup authorized_keys file}
+        target: /host-ssh/authorized_keys
+        bind:
+          create_host_path: false
     environment:
       - NODE_ENV=production
-      - REDMAN_UPGRADE_BRIDGE=true
-      - TRUSTED_PROXIES=${TRUSTED_PROXIES:?Set the exact reverse-proxy source IP}
+      - AUTH_MODE=${AUTH_MODE:-proxy}
+      - REDMAN_PUBLIC_ORIGIN=${REDMAN_PUBLIC_ORIGIN:?Set the exact public HTTPS RedMan origin}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:?Set the exact proxy source IP/CIDR}
+      - PROXY_AUTO_PROVISION_ROLE=${PROXY_AUTO_PROVISION_ROLE:-}
+      - REDMAN_BOOTSTRAP_TOKEN=${REDMAN_BOOTSTRAP_TOKEN:-}
+      - REDMAN_UPGRADE_BRIDGE=${REDMAN_UPGRADE_BRIDGE:-false}
       - REDMAN_ADMIN_GROUP=${REDMAN_ADMIN_GROUP:-}
       - REDMAN_ADMIN_ROLE=${REDMAN_ADMIN_ROLE:-}
       - PORT=8090
       - PEER_API_PORT=8091
+      - PEER_HOST=${PEER_HOST:?Set the SSH hostname or IPv4 address reachable by peers}
+      - SSH_USER=redman-backup
+      - RRSYNC_PATH=/usr/local/bin/rrsync
+      - REDMAN_STORAGE_ROOTS=${REDMAN_STORAGE_PATH},${REDMAN_MEDIA_PATH}
+      - REDMAN_MEDIA_ROOT=${REDMAN_MEDIA_PATH}
+      - REDMAN_SHARE_CONFIG_DIR=
+      - TZ=${TZ:-UTC}
+      - RCLONE_CONFIG=/app/backend/data/rclone.conf
+      - DOCKER_HOST=${DOCKER_HOST:-}
+      - DOCKER_CONTROL_HOST=${DOCKER_CONTROL_HOST:-}
+    networks:
+      - default
+      - docker-api
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8090/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -25,3 +97,7 @@ services:
       start_period: 10s
       retries: 3
     restart: unless-stopped
+
+networks:
+  docker-api:
+    internal: true

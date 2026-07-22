@@ -3,11 +3,21 @@
 // and reconstructs file trees at any point in time.
 // Supports delta-compressed versions and GFS tiered retention pruning.
 
-import { readdir, stat, copyFile, mkdir, rm } from 'fs/promises';
+import { readdir, stat, copyFile, mkdir, rename, rm } from 'fs/promises';
 import { join, relative, dirname } from 'path';
-import { existsSync } from 'fs';
+import { createReadStream, existsSync } from 'fs';
+import { createHash, randomBytes } from 'crypto';
 import db from '../db.js';
 import { readManifest, reconstructFile, promoteDeltaToFull, cleanupTempFile, computeVersionStats, withConfigLock } from './deltaVersion.js';
+import { applyVersionOverlay, getNewerVersions, parseVersionTimestamp } from './versionSelection.js';
+import { getOrCreateSnapshotSummary, readSnapshotSummary } from './snapshotSummary.js';
+import {
+  normalizeSnapshotRelativePath,
+  prepareRestoreDestination,
+  resolveExistingSnapshotPath,
+  resolveSnapshotRoot,
+  validateSnapshotTimestamp,
+} from './snapshotPathPolicy.js';
 
 /**
  * List all available snapshots (version timestamps) for a config.
@@ -22,6 +32,7 @@ export async function listSnapshots(configId) {
 
   const entries = await readdir(versionsDir, { withFileTypes: true });
   const snapshots = [];
+  let scannedLegacySnapshot = false;
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -29,18 +40,15 @@ export async function listSnapshots(configId) {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(entry.name)) continue;
 
     const dirPath = join(versionsDir, entry.name);
-    const info = await stat(dirPath);
-    const fileCount = await countFiles(dirPath);
-
-    // Read manifest for delta stats
     const manifest = await readManifest(dirPath);
-    let diskSize = 0;
-    let originalSize = 0;
-    if (manifest) {
-      for (const [, fEntry] of Object.entries(manifest.files)) {
-        originalSize += fEntry.originalSize || 0;
-        diskSize += fEntry.type === 'delta' ? (fEntry.deltaSize || 0) : (fEntry.originalSize || 0);
-      }
+    let summary = await readSnapshotSummary(dirPath);
+    if (!summary) {
+      summary = await getOrCreateSnapshotSummary(dirPath, manifest, {
+        scanLimit: scannedLegacySnapshot ? 1 : 5_000,
+        timeBudgetMs: scannedLegacySnapshot ? 100 : 2_000,
+        cacheIncomplete: true,
+      });
+      scannedLegacySnapshot = true;
     }
 
     // Determine retention tier for display
@@ -49,12 +57,13 @@ export async function listSnapshots(configId) {
     snapshots.push({
       timestamp: entry.name,
       date: entry.name.replace(/T(\d{2})-(\d{2})-(\d{2})$/, 'T$1:$2:$3'),
-      fileCount,
-      sizeBytes: info.size,
-      diskSize: manifest ? diskSize : null,
-      originalSize: manifest ? originalSize : null,
+      fileCount: summary.fileCount,
+      sizeBytes: summary.diskSize,
+      diskSize: summary.diskSize,
+      originalSize: summary.originalSize,
+      summaryIncomplete: summary.incomplete === true,
       tier,
-      created: info.birthtime.toISOString(),
+      created: summary.created,
     });
   }
 
@@ -88,13 +97,15 @@ export async function browseSnapshot(configId, timestamp, subPath = '') {
 
   const destRoot = config.dest_path;
   const versionsDir = join(destRoot, '.versions');
+  validateSnapshotTimestamp(timestamp);
+  const normalizedSubPath = normalizeSnapshotRelativePath(subPath, { allowEmpty: true });
 
   // Build a merged view: start with current dest, then overlay newer versions
-  const browsePath = subPath ? join(destRoot, subPath) : destRoot;
+  const browsePath = resolveExistingSnapshotPath(destRoot, normalizedSubPath, { allowEmpty: true });
   const entries = new Map(); // name -> entry info
 
   // 1. Read current destination directory
-  if (existsSync(browsePath)) {
+  if (browsePath) {
     const dirEntries = await readdir(browsePath, { withFileTypes: true });
     for (const entry of dirEntries) {
       if (entry.name === '.versions') continue; // Skip the versions dir itself
@@ -114,23 +125,24 @@ export async function browseSnapshot(configId, timestamp, subPath = '') {
   //    These versions contain the OLD files that were replaced — we need to overlay them
   if (existsSync(versionsDir)) {
     const allVersions = (await readdir(versionsDir, { withFileTypes: true }))
-      .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(e.name))
-      .map(e => e.name)
-      .sort();
+      .filter(e => e.isDirectory())
+      .map(e => e.name);
 
     // Versions NEWER than the requested timestamp have files that represent what was REPLACED
-    const newerVersions = allVersions.filter(v => v > timestamp);
+    const newerVersions = getNewerVersions(allVersions, timestamp);
 
     for (const ver of newerVersions) {
-      const verSubPath = subPath ? join(versionsDir, ver, subPath) : join(versionsDir, ver);
-      if (!existsSync(verSubPath)) continue;
+      const versionRoot = resolveSnapshotRoot(versionsDir, ver);
+      if (!versionRoot) continue;
+      const verSubPath = resolveExistingSnapshotPath(versionRoot, normalizedSubPath, { allowEmpty: true });
+      if (!verSubPath) continue;
 
       // Read manifest for this version to handle delta files
-      const manifest = await readManifest(join(versionsDir, ver));
+      const manifest = await readManifest(versionRoot);
 
       const verEntries = await readdir(verSubPath, { withFileTypes: true });
       for (const entry of verEntries) {
-        if (entry.name === '_manifest.json') continue; // Hide manifest from listing
+        if (entry.name === '_manifest.json' || entry.name === '_summary.json') continue;
         let displayName = entry.name;
         let isDelta = false;
 
@@ -146,13 +158,13 @@ export async function browseSnapshot(configId, timestamp, subPath = '') {
         // Use original size from manifest for delta files
         let displaySize = info.size;
         if (isDelta && manifest) {
-          const relPath = subPath ? `${subPath}/${displayName}` : displayName;
+          const relPath = normalizedSubPath ? `${normalizedSubPath}/${displayName}` : displayName;
           const mEntry = manifest.files[relPath];
           if (mEntry) displaySize = mEntry.originalSize || info.size;
         }
 
-        // Overlay: the versioned file is what existed BEFORE this newer backup replaced it
-        entries.set(displayName, {
+        // The earliest newer version containing this path is its state at the requested snapshot.
+        applyVersionOverlay(entries, displayName, {
           name: displayName,
           isDirectory: entry.isDirectory(),
           size: displaySize,
@@ -166,13 +178,16 @@ export async function browseSnapshot(configId, timestamp, subPath = '') {
 
     // 3. Also check the requested version itself for files that only exist there
     //    (files that were deleted in a later backup and only preserved in this version)
-    const versionPath = subPath ? join(versionsDir, timestamp, subPath) : join(versionsDir, timestamp);
-    if (existsSync(versionPath)) {
-      const selfManifest = await readManifest(join(versionsDir, timestamp));
+    const requestedVersionRoot = resolveSnapshotRoot(versionsDir, timestamp);
+    const versionPath = requestedVersionRoot
+      ? resolveExistingSnapshotPath(requestedVersionRoot, normalizedSubPath, { allowEmpty: true })
+      : null;
+    if (versionPath) {
+      const selfManifest = await readManifest(requestedVersionRoot);
 
       const verEntries = await readdir(versionPath, { withFileTypes: true });
       for (const entry of verEntries) {
-        if (entry.name === '_manifest.json') continue;
+        if (entry.name === '_manifest.json' || entry.name === '_summary.json') continue;
         let displayName = entry.name;
         let isDelta = false;
 
@@ -187,7 +202,7 @@ export async function browseSnapshot(configId, timestamp, subPath = '') {
 
         let displaySize = info.size;
         if (isDelta && selfManifest) {
-          const relPath = subPath ? `${subPath}/${displayName}` : displayName;
+          const relPath = normalizedSubPath ? `${normalizedSubPath}/${displayName}` : displayName;
           const mEntry = selfManifest.files[relPath];
           if (mEntry) displaySize = mEntry.originalSize || info.size;
         }
@@ -227,45 +242,51 @@ export async function resolveFilePath(configId, timestamp, filePath) {
 
   const destRoot = config.dest_path;
   const versionsDir = join(destRoot, '.versions');
+  validateSnapshotTimestamp(timestamp);
+  const normalizedFilePath = normalizeSnapshotRelativePath(filePath);
 
   // Check newer versions first (they contain the old state that was valid at our timestamp)
   if (existsSync(versionsDir)) {
     const allVersions = (await readdir(versionsDir, { withFileTypes: true }))
-      .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(e.name))
-      .map(e => e.name)
-      .sort()
-      .reverse(); // Check newest first
+      .filter(e => e.isDirectory())
+      .map(e => e.name);
 
-    // Newer versions contain what was replaced → the state at our timestamp
-    for (const ver of allVersions) {
-      if (ver <= timestamp) break;
+    // The earliest newer version containing the path holds its state at this snapshot.
+    for (const ver of getNewerVersions(allVersions, timestamp)) {
+      const versionRoot = resolveSnapshotRoot(versionsDir, ver);
+      if (!versionRoot) continue;
 
       // Check for delta file first (.rdelta)
-      const deltaCandidate = join(versionsDir, ver, filePath + '.rdelta');
-      if (existsSync(deltaCandidate)) {
-        const result = await reconstructFile(destRoot, versionsDir, ver, filePath);
+      const deltaCandidate = resolveExistingSnapshotPath(versionRoot, normalizedFilePath, { suffix: '.rdelta' });
+      if (deltaCandidate) {
+        const result = await reconstructFile(destRoot, versionsDir, ver, normalizedFilePath);
         if (result) return result;
       }
 
       // Check for full file
-      const candidate = join(versionsDir, ver, filePath);
-      if (existsSync(candidate)) return { path: candidate, isTemp: false };
+      const candidate = resolveExistingSnapshotPath(versionRoot, normalizedFilePath);
+      if (candidate) return { path: candidate, isTemp: false };
     }
 
     // Check the requested version itself
-    const deltaCandidate = join(versionsDir, timestamp, filePath + '.rdelta');
-    if (existsSync(deltaCandidate)) {
-      const result = await reconstructFile(destRoot, versionsDir, timestamp, filePath);
+    const requestedVersionRoot = resolveSnapshotRoot(versionsDir, timestamp);
+    const deltaCandidate = requestedVersionRoot
+      ? resolveExistingSnapshotPath(requestedVersionRoot, normalizedFilePath, { suffix: '.rdelta' })
+      : null;
+    if (deltaCandidate) {
+      const result = await reconstructFile(destRoot, versionsDir, timestamp, normalizedFilePath);
       if (result) return result;
     }
 
-    const candidate = join(versionsDir, timestamp, filePath);
-    if (existsSync(candidate)) return { path: candidate, isTemp: false };
+    const candidate = requestedVersionRoot
+      ? resolveExistingSnapshotPath(requestedVersionRoot, normalizedFilePath)
+      : null;
+    if (candidate) return { path: candidate, isTemp: false };
   }
 
   // Fall back to current destination (file hasn't changed since this snapshot)
-  const currentPath = join(destRoot, filePath);
-  if (existsSync(currentPath)) return { path: currentPath, isTemp: false };
+  const currentPath = resolveExistingSnapshotPath(destRoot, normalizedFilePath);
+  if (currentPath) return { path: currentPath, isTemp: false };
 
   throw new Error('File not found at the specified snapshot');
 }
@@ -274,42 +295,60 @@ export async function resolveFilePath(configId, timestamp, filePath) {
  * Restore a file from a snapshot to the original source location.
  * Handles delta-compressed files by reconstructing them first.
  */
-export async function restoreFile(configId, timestamp, filePath) {
+function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+export async function restoreFile(configId, timestamp, filePath, { verify = true } = {}) {
   const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(configId);
   if (!config) throw new Error('Config not found');
 
-  const resolved = await resolveFilePath(configId, timestamp, filePath);
-  const restoreDest = join(config.source_path, filePath);
+  validateSnapshotTimestamp(timestamp);
+  const restore = prepareRestoreDestination(config.source_path, filePath);
+  const restoreDest = restore.path;
+  filePath = restore.relativePath;
+  const event = db.prepare(`
+    INSERT INTO restore_events (config_id, snapshot_timestamp, file_path, restored_to)
+    VALUES (?, ?, ?, ?)
+  `).run(configId, timestamp, filePath, restoreDest);
+  const eventId = Number(event.lastInsertRowid);
+  let resolved;
+  const restoreTemporary = join(dirname(restoreDest), `.${randomBytes(8).toString('hex')}.${process.pid}.redman-restore`);
 
-  // Ensure parent directory exists
-  await mkdir(dirname(restoreDest), { recursive: true });
-
-  await copyFile(resolved.path, restoreDest);
-
-  // Clean up temp file if it was reconstructed from delta
-  if (resolved.isTemp) await cleanupTempFile(resolved.path);
-
-  return { restored: filePath, to: restoreDest };
-}
-
-/**
- * Count files recursively in a directory.
- */
-async function countFiles(dirPath) {
-  let count = 0;
   try {
-    const entries = await readdir(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        count += await countFiles(join(dirPath, entry.name));
-      } else {
-        count++;
-      }
+    resolved = await resolveFilePath(configId, timestamp, filePath);
+    await copyFile(resolved.path, restoreTemporary);
+
+    let verified = false;
+    if (verify) {
+      const [expectedHash, restoredHash] = await Promise.all([
+        hashFile(resolved.path),
+        hashFile(restoreTemporary),
+      ]);
+      if (expectedHash !== restoredHash) throw new Error('Restored file verification failed');
+      verified = true;
     }
-  } catch {
-    // Directory may have been removed
+    await rename(restoreTemporary, restoreDest);
+
+    db.prepare(`
+      UPDATE restore_events SET status = ?, verified_at = ?, completed_at = datetime('now') WHERE id = ?
+    `).run(verified ? 'verified' : 'completed', verified ? new Date().toISOString() : null, eventId);
+    return { restored: filePath, to: restoreDest, verified, restoreEventId: eventId };
+  } catch (err) {
+    db.prepare(`
+      UPDATE restore_events SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?
+    `).run(err.message, eventId);
+    throw err;
+  } finally {
+    await rm(restoreTemporary, { force: true }).catch(() => {});
+    if (resolved?.isTemp) await cleanupTempFile(resolved.path);
   }
-  return count;
 }
 
 /**
@@ -318,7 +357,9 @@ async function countFiles(dirPath) {
  * Delta-aware: promotes dependent deltas to full before deleting their keyframes.
  * Falls back to simple retention_days if no retention_policy is set.
  */
-export async function pruneVersions(configId) {
+export async function pruneVersions(configId, options = {}) {
+  const signal = options.signal;
+  signal?.throwIfAborted();
   return withConfigLock(configId, async () => {
     const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(configId);
     if (!config) throw new Error('Config not found');
@@ -343,7 +384,8 @@ export async function pruneVersions(configId) {
     const periodBuckets = new Map(); // "tier:period" → newest timestamp
 
     for (const ts of allTimestamps) {
-      const date = parseTimestamp(ts);
+      signal?.throwIfAborted();
+      const date = parseVersionTimestamp(ts);
       const ageHours = (now - date.getTime()) / 3600_000;
       const ageDays = ageHours / 24;
 
@@ -402,16 +444,13 @@ export async function pruneVersions(configId) {
     const destRoot = config.dest_path;
 
     for (const ts of allTimestamps) {
+      signal?.throwIfAborted();
       if (keep.has(ts)) continue;
 
       const dirPath = join(versionsDir, ts);
 
-      // Delta-aware: check if any kept snapshot has deltas depending on files here as keyframes
-      try {
-        await promoteDependent(destRoot, versionsDir, ts, keep);
-      } catch (err) {
-        console.error(`[version-prune] Failed to promote dependents for ${ts}:`, err.message);
-      }
+      // Delta-aware: refuse deletion unless every retained dependent is safe.
+      await promoteDependent(destRoot, versionsDir, ts, allTimestamps, signal);
 
       await rm(dirPath, { recursive: true, force: true });
       pruned++;
@@ -423,28 +462,34 @@ export async function pruneVersions(configId) {
     }
 
     // Update cached version stats
-    try {
-      await computeVersionStats(configId);
-    } catch {}
+    if (options.updateStats !== false) {
+      try {
+        await computeVersionStats(configId, { signal });
+      } catch (err) {
+        if (signal?.aborted) throw err;
+      }
+    }
 
     return { pruned, kept: keep.size };
-  });
+  }, { signal });
 }
 
 /**
  * Before deleting a snapshot, promote any delta files in newer kept snapshots
  * that reference this snapshot as their base to full copies.
  */
-async function promoteDependent(destRoot, versionsDir, deletingTimestamp, keepSet) {
-  for (const keptTs of keepSet) {
-    if (keptTs <= deletingTimestamp) continue; // Only check newer snapshots
-    const keptDir = join(versionsDir, keptTs);
-    const manifest = await readManifest(keptDir);
+async function promoteDependent(destRoot, versionsDir, deletingTimestamp, allTimestamps, signal) {
+  for (const dependentTimestamp of allTimestamps) {
+    signal?.throwIfAborted();
+    if (dependentTimestamp >= deletingTimestamp) continue; // Older snapshots can reference newer bases
+    const dependentDir = join(versionsDir, dependentTimestamp);
+    const manifest = await readManifest(dependentDir);
     if (!manifest) continue;
 
     for (const [filePath, entry] of Object.entries(manifest.files)) {
+      signal?.throwIfAborted();
       if (entry.type === 'delta' && entry.base === deletingTimestamp) {
-        await promoteDeltaToFull(destRoot, versionsDir, keptTs, filePath);
+        await promoteDeltaToFull(destRoot, versionsDir, dependentTimestamp, filePath, { signal });
       }
     }
   }
@@ -482,7 +527,7 @@ function getSnapshotTier(timestamp, config) {
   const policy = parseRetentionPolicy(config);
   if (!policy) return null;
 
-  const date = parseTimestamp(timestamp);
+  const date = parseVersionTimestamp(timestamp);
   const ageHours = (Date.now() - date.getTime()) / 3600_000;
   const ageDays = ageHours / 24;
 
@@ -504,12 +549,4 @@ function getISOWeek(date) {
   const week1 = new Date(d.getFullYear(), 0, 4);
   const weekNum = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
   return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
-}
-
-/**
- * Parse a timestamp string to Date.
- */
-function parseTimestamp(ts) {
-  const d = ts.replace(/T(\d{2})-(\d{2})-(\d{2})$/, 'T$1:$2:$3');
-  return new Date(d);
 }

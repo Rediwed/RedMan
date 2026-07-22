@@ -35,6 +35,7 @@ mkdirSync(destHyper, { recursive: true });
 
 const currentUser = userInfo().username;
 const host = 'localhost';
+const testStorageLimitBytes = 10 * 1024 ** 3;
 
 // ── Seed Instance A ──────────────────────────────────────────────────
 
@@ -55,9 +56,10 @@ dbA.transaction(() => {
 
 // Create authorized peer entry for Instance B to connect to A
 dbA.prepare(`
-  INSERT OR REPLACE INTO authorized_peers (id, name, api_key, allowed_path_prefix, enabled)
-  VALUES (1, 'Instance B (Test Remote)', 'test-peer-key-alpha', '/', 1)
-`).run();
+  INSERT OR REPLACE INTO authorized_peers
+    (id, name, api_key, allowed_path_prefix, storage_limit_bytes, enabled)
+  VALUES (1, 'Instance B (Test Remote)', 'test-peer-key-alpha', ?, ?, 1)
+`).run(destHyper, testStorageLimitBytes);
 console.log(`  ✅ Authorized peer: Instance B → A (key: test-peer-key-alpha)`);
 
 // SSD Backup config: source → dest_ssd
@@ -119,9 +121,10 @@ dbB.transaction(() => {
 
 // Create authorized peer entry for Instance A to connect to B
 dbB.prepare(`
-  INSERT OR REPLACE INTO authorized_peers (id, name, api_key, allowed_path_prefix, enabled)
-  VALUES (1, 'Instance A (Test Primary)', 'test-peer-key-beta', '/', 1)
-`).run();
+  INSERT OR REPLACE INTO authorized_peers
+    (id, name, api_key, allowed_path_prefix, storage_limit_bytes, enabled)
+  VALUES (1, 'Instance A (Test Primary)', 'test-peer-key-beta', ?, ?, 1)
+`).run(destHyper, testStorageLimitBytes);
 console.log(`  ✅ Authorized peer: Instance A → B (key: test-peer-key-beta)`);
 
 // Hyper Backup job: pull from A (reverse direction for testing both modes)

@@ -1,19 +1,27 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getMediaDrives, getKnownDrives, updateMediaDrive, scanDrive, getScanProgress,
-  startDriveImport, getImportProgress, ejectDrive, getMediaImportRuns,
-  getMediaImportStatus,
+  startDriveImport, cancelDriveImport, getImportProgress, ejectDrive, getMediaImportRuns,
+  getMediaImportStatus, getMediaImportRunFiles,
 } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatDateTime, formatDateShort as fmtDateShort } from '../utils/dateFormat.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import {
   Camera, HardDrive, Search, Upload, LogOut, RefreshCw,
-  Image, Video, Folder, Clock, AlertTriangle, Info, CheckCircle,
+  Image, Video, Folder, Clock, AlertTriangle, Info, CheckCircle, X,
+  FileCheck, FileX, Copy,
 } from 'lucide-react';
 import JobProgress from '../components/JobProgress.jsx';
+import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import { DialogSurface } from '../components/Dialog.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import './MediaImportPage.css';
 
 export default function MediaImportPage() {
+  const auth = useAuth();
+  const { settings } = useSettings();
   const [drives, setDrives] = useState([]);
   const [knownDrives, setKnownDrives] = useState([]);
   const [runs, setRuns] = useState([]);
@@ -22,6 +30,14 @@ export default function MediaImportPage() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeImports, setActiveImports] = useState({});
+  const [detailRun, setDetailRun] = useState(null);
+  const [detailFiles, setDetailFiles] = useState(null);
+  const [detailFilter, setDetailFilter] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [actionResult, setActionResult] = useState(null);
+  const [deleteVerifiedTarget, setDeleteVerifiedTarget] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const scanPollRef = useRef(new Set());
 
   const refresh = useCallback(async () => {
     try {
@@ -36,7 +52,9 @@ export default function MediaImportPage() {
       setRuns(r.runs);
       setRunsMeta({ total: r.total, pages: r.pages });
       setStatus(s);
-    } catch { /* silent */ }
+    } catch (err) {
+      setActionResult({ type: 'error', message: err.message });
+    }
     setLoading(false);
   }, [runsPage]);
 
@@ -48,6 +66,14 @@ export default function MediaImportPage() {
     const interval = setInterval(refresh, 10000);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  // Clear any in-flight scan polls on unmount
+  useEffect(() => {
+    return () => {
+      for (const id of scanPollRef.current) clearInterval(id);
+      scanPollRef.current.clear();
+    };
+  }, []);
 
   // Poll active imports for progress
   useEffect(() => {
@@ -68,7 +94,9 @@ export default function MediaImportPage() {
           } else {
             setActiveImports(prev => ({ ...prev, [runId]: progress }));
           }
-        } catch { /* silent */ }
+        } catch (err) {
+          setActionResult({ type: 'error', message: `Import progress unavailable: ${err.message}` });
+        }
       }
     }, 2000);
 
@@ -80,13 +108,24 @@ export default function MediaImportPage() {
       await scanDrive(driveId);
       // Poll for scan completion
       const pollScan = setInterval(async () => {
-        const progress = await getScanProgress(driveId);
-        if (progress.status === 'completed' || progress.status === 'failed') {
+        try {
+          const progress = await getScanProgress(driveId);
+          if (progress.status === 'completed' || progress.status === 'failed') {
+            clearInterval(pollScan);
+            scanPollRef.current.delete(pollScan);
+            if (progress.status === 'failed') setActionResult({ type: 'error', message: progress.error || 'Drive scan failed' });
+            refresh();
+          }
+        } catch (err) {
           clearInterval(pollScan);
-          refresh();
+          scanPollRef.current.delete(pollScan);
+          setActionResult({ type: 'error', message: `Drive scan unavailable: ${err.message}` });
         }
       }, 1000);
-    } catch { /* silent */ }
+      scanPollRef.current.add(pollScan);
+    } catch (err) {
+      setActionResult({ type: 'error', message: err.message });
+    }
   }
 
   async function handleImport(driveId) {
@@ -94,17 +133,20 @@ export default function MediaImportPage() {
       const result = await startDriveImport(driveId);
       setActiveImports(prev => ({ ...prev, [result.runId]: { status: 'running', percent: 0 } }));
     } catch (err) {
-      alert(err.message);
+      setActionResult({ type: 'error', message: err.message });
     }
   }
 
   async function handleEject(driveId) {
     try {
       const result = await ejectDrive(driveId);
-      if (!result.ok) alert(`Eject failed: ${result.error}`);
-      else refresh();
+      if (!result.ok) setActionResult({ type: 'error', message: `Eject failed: ${result.error}` });
+      else {
+        setActionResult({ type: 'success', message: 'Drive ejected safely.' });
+        refresh();
+      }
     } catch (err) {
-      alert(err.message);
+      setActionResult({ type: 'error', message: err.message });
     }
   }
 
@@ -112,7 +154,42 @@ export default function MediaImportPage() {
     try {
       await updateMediaDrive(driveId, { [key]: value ? 1 : 0 });
       refresh();
-    } catch { /* silent */ }
+      return true;
+    } catch (err) {
+      setActionResult({ type: 'error', message: err.message });
+      return false;
+    }
+  }
+
+  async function confirmDeleteVerified() {
+    setConfirming(true);
+    const updated = await handleToggle(deleteVerifiedTarget.id, 'delete_after_import', true);
+    setConfirming(false);
+    if (updated) {
+      setActionResult({ type: 'success', message: `Verified-source deletion enabled for ${deleteVerifiedTarget.name || deleteVerifiedTarget.label}.` });
+      setDeleteVerifiedTarget(null);
+    }
+  }
+  async function openRunDetail(run, filterAction = null) {
+    setDetailRun(run);
+    setDetailFilter(filterAction);
+    setDetailLoading(true);
+    try {
+      const data = await getMediaImportRunFiles(run.id, filterAction);
+      setDetailFiles(data);
+    } catch { setDetailFiles({ files: [], summary: [] }); }
+    setDetailLoading(false);
+  }
+
+  async function changeDetailFilter(action) {
+    if (!detailRun) return;
+    setDetailFilter(action);
+    setDetailLoading(true);
+    try {
+      const data = await getMediaImportRunFiles(detailRun.id, action);
+      setDetailFiles(data);
+    } catch { setDetailFiles({ files: [], summary: [] }); }
+    setDetailLoading(false);
   }
 
   if (loading) return <div className="empty-state"><p>Loading...</p></div>;
@@ -128,6 +205,12 @@ export default function MediaImportPage() {
           <button className="btn btn-ghost btn-sm" onClick={refresh}><RefreshCw size={14} /> Refresh</button>
         </div>
       </div>
+
+      {actionResult && (
+        <div className={`alert alert-${actionResult.type}`} role={actionResult.type === 'error' ? 'alert' : 'status'}>
+          {actionResult.message}
+        </div>
+      )}
 
       {/* Connected Drives */}
       <section>
@@ -145,15 +228,30 @@ export default function MediaImportPage() {
                 key={drive.mountPath || drive.id}
                 drive={drive}
                 activeImport={Object.values(activeImports).find(i => i.driveId === drive.id)}
+                onCancel={() => {
+                  const entry = Object.entries(activeImports).find(([, i]) => i.driveId === drive.id);
+                  if (entry) cancelDriveImport(parseInt(entry[0])).then(() => refresh());
+                }}
                 onScan={() => handleScan(drive.id)}
                 onImport={() => handleImport(drive.id)}
                 onEject={() => handleEject(drive.id)}
+                ejectSupported={!!status?.ejectSupported}
+                canManage={auth.isAdmin}
                 onToggle={(key, val) => handleToggle(drive.id, key, val)}
+                onRequestDeleteVerified={() => { setActionResult(null); setDeleteVerifiedTarget(drive); }}
               />
             ))}
           </div>
         )}
       </section>
+
+      {/* Import History */}
+      {deleteVerifiedTarget && (
+        <ConfirmDialog title="Enable verified-source deletion" confirmLabel="Enable deletion" destructive busy={confirming} error={actionResult?.type === 'error' ? actionResult.message : null} onClose={() => setDeleteVerifiedTarget(null)} onConfirm={confirmDeleteVerified}>
+          <p>After a successful or partial import, RedMan may delete source files from <strong>{deleteVerifiedTarget.name || deleteVerifiedTarget.label}</strong>.</p>
+          <p className="form-hint">Only files individually verified by Immich and unchanged since upload are eligible. Failed, unknown, changed, or unsafe files remain on the drive.</p>
+        </ConfirmDialog>
+      )}
 
       {/* Import History */}
       <section>
@@ -178,10 +276,10 @@ export default function MediaImportPage() {
                 </thead>
                 <tbody>
                   {runs.map(run => (
-                    <tr key={run.id}>
+                    <tr key={run.id} className="clickable-row" onClick={() => openRunDetail(run)}>
                       <td><StatusBadge status={run.status} /></td>
                       <td>{run.drive_name || run.drive_label || `Drive #${run.config_id}`}</td>
-                      <td>{formatDate(run.started_at)}</td>
+                      <td>{formatDateTime(run.started_at, settings)}</td>
                       <td>{run.duration_seconds ? formatDuration(run.duration_seconds) : '—'}</td>
                       <td>{run.files_copied ?? 0}</td>
                       <td>{run.files_failed > 0 ? <span className="text-danger">{run.files_failed}</span> : 0}</td>
@@ -216,8 +314,8 @@ export default function MediaImportPage() {
                 </div>
                 <div className="drive-meta">
                   {drive.detected_camera && <span>📸 {drive.detected_camera}</span>}
-                  {drive.last_seen_at && <span>Last seen: {formatDate(drive.last_seen_at)}</span>}
-                  {drive.last_import_at && <span>Last import: {formatDate(drive.last_import_at)}</span>}
+                  {drive.last_seen_at && <span>Last seen: {formatDateTime(drive.last_seen_at, settings)}</span>}
+                  {drive.last_import_at && <span>Last import: {formatDateTime(drive.last_import_at, settings)}</span>}
                   {drive.auto_import ? <span className="badge badge-auto">Auto-import on</span> : null}
                 </div>
               </div>
@@ -225,11 +323,103 @@ export default function MediaImportPage() {
           </div>
         </section>
       )}
+      {/* Run Detail Modal */}
+      {detailRun && (
+        <DialogSurface ariaLabel={`Import details for ${detailRun.drive_name || detailRun.drive_label}`} className="modal-lg" onClose={() => { setDetailRun(null); setDetailFiles(null); }}>
+            <div className="modal-header">
+              <h3>Import Details — {detailRun.drive_name || detailRun.drive_label}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setDetailRun(null); setDetailFiles(null); }} title="Close" aria-label="Close import details">
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="run-detail-meta">
+                <StatusBadge status={detailRun.status} />
+                <span>{formatDateTime(detailRun.started_at, settings)}</span>
+                <span>{detailRun.duration_seconds ? formatDuration(detailRun.duration_seconds) : '—'}</span>
+                <span>{detailRun.files_copied ?? 0} uploaded</span>
+                {detailRun.files_failed > 0 && <span className="text-danger">{detailRun.files_failed} errors</span>}
+              </div>
+
+              {/* Photo date range — where to find them in Immich */}
+              {detailFiles?.dateRange?.earliest && (
+                <div className="photo-date-range">
+                  <Clock size={14} />
+                  <span>
+                    Photos dated: <strong>{fmtDateShort(detailFiles.dateRange.earliest, settings)}</strong>
+                    {detailFiles.dateRange.latest !== detailFiles.dateRange.earliest && (
+                      <> — <strong>{fmtDateShort(detailFiles.dateRange.latest, settings)}</strong></>
+                    )}
+                  </span>
+                  <span className="form-hint">Find them in Immich's timeline around this date</span>
+                </div>
+              )}
+
+              {/* Filter tabs */}
+              {detailFiles && detailFiles.summary && (
+                <div className="detail-filter-tabs">
+                  <button
+                    className={`btn btn-sm ${!detailFilter ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => changeDetailFilter(null)}
+                  >
+                    All ({detailFiles.summary.reduce((a, s) => a + s.count, 0)})
+                  </button>
+                  {detailFiles.summary.map(s => (
+                    <button
+                      key={s.action}
+                      className={`btn btn-sm ${detailFilter === s.action ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={() => changeDetailFilter(s.action)}
+                    >
+                      {s.action === 'uploaded' && <><FileCheck size={13} /> Uploaded ({s.count})</>}
+                      {s.action === 'error' && <><FileX size={13} /> Errors ({s.count})</>}
+                      {s.action === 'duplicate' && <><Copy size={13} /> Duplicates ({s.count})</>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* File list */}
+              {detailLoading ? (
+                <p>Loading...</p>
+              ) : detailFiles && detailFiles.files.length > 0 ? (
+                <div className="table-wrapper detail-file-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>File</th>
+                        <th>Status</th>
+                        <th>Photo Date</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailFiles.files.map(f => (
+                        <tr key={f.id} className={f.action === 'error' ? 'row-error' : ''}>
+                          <td className="file-path-cell">{f.file_path}</td>
+                          <td>
+                            {f.action === 'uploaded' && <span className="badge badge-success"><FileCheck size={12} /> Uploaded</span>}
+                            {f.action === 'error' && <span className="badge badge-danger"><FileX size={12} /> Error</span>}
+                            {f.action === 'duplicate' && <span className="badge badge-muted"><Copy size={12} /> Duplicate</span>}
+                          </td>
+                          <td className="date-cell">{f.file_date ? fmtDateShort(f.file_date, settings) : '—'}</td>
+                          <td className="error-cell">{f.error || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-muted">No file details recorded for this run.</p>
+              )}
+            </div>
+        </DialogSurface>
+      )}
     </div>
   );
 }
 
-function DriveCard({ drive, activeImport, onScan, onImport, onEject, onToggle }) {
+function DriveCard({ drive, activeImport, onScan, onImport, onEject, ejectSupported, canManage, onToggle, onRequestDeleteVerified, onCancel }) {
+  const { settings } = useSettings();
   const scan = drive.scan;
   const isScanning = scan && scan.status === 'scanning';
   const scanDone = scan && scan.status === 'completed';
@@ -251,8 +441,8 @@ function DriveCard({ drive, activeImport, onScan, onImport, onEject, onToggle })
         {drive.sizeHuman && <span>💾 {drive.sizeHuman}</span>}
         {drive.filesystem && drive.filesystem !== 'unknown' && <span>📁 {drive.filesystem}</span>}
         {drive.detected_camera && <span>📸 {drive.detected_camera}</span>}
-        {drive.last_seen_at && <span>Last seen: {formatDate(drive.last_seen_at)}</span>}
-        {drive.last_import_at && <span>Last import: {formatDate(drive.last_import_at)}</span>}
+        {drive.last_seen_at && <span>Last seen: {formatDateTime(drive.last_seen_at, settings)}</span>}
+        {drive.last_import_at && <span>Last import: {formatDateTime(drive.last_import_at, settings)}</span>}
       </div>
 
       {/* Scan results */}
@@ -273,7 +463,7 @@ function DriveCard({ drive, activeImport, onScan, onImport, onEject, onToggle })
 
       {/* Import progress */}
       {isImporting && (
-        <JobProgress progress={activeImport} feature="media-import" />
+        <JobProgress progress={activeImport} feature="media-import" onCancel={canManage ? onCancel : null} />
       )}
 
       {/* New drive suggestion */}
@@ -285,48 +475,45 @@ function DriveCard({ drive, activeImport, onScan, onImport, onEject, onToggle })
       )}
 
       {/* Toggles */}
-      <div className="drive-toggles">
+      {canManage && <div className="drive-toggles">
         <label className="toggle-label-sm">
           <input type="checkbox" className="toggle"
             checked={!!drive.auto_import}
             onChange={e => onToggle('auto_import', e.target.checked)} />
           Auto-import
         </label>
-        <label className="toggle-label-sm">
+        <label className="toggle-label-sm" title="Delete only files individually verified as uploaded or already present in Immich">
           <input type="checkbox" className="toggle"
             checked={!!drive.delete_after_import}
-            onChange={e => onToggle('delete_after_import', e.target.checked)} />
-          Delete after
+            onChange={e => {
+              if (e.target.checked) onRequestDeleteVerified();
+              else onToggle('delete_after_import', false);
+            }} />
+          Delete verified
         </label>
         <label className="toggle-label-sm">
           <input type="checkbox" className="toggle"
             checked={!!drive.eject_after_import}
+            disabled={!ejectSupported}
             onChange={e => onToggle('eject_after_import', e.target.checked)} />
-          Eject after
+          {ejectSupported ? 'Eject after' : 'Eject unavailable'}
         </label>
-      </div>
+      </div>}
 
       {/* Actions */}
-      <div className="drive-actions">
+      {canManage && <div className="drive-actions">
         <button className="btn btn-primary btn-sm" onClick={onImport} disabled={isImporting || isScanning}>
           <Upload size={14} /> Import Now
         </button>
         <button className="btn btn-secondary btn-sm" onClick={onScan} disabled={isScanning || isImporting}>
           <Search size={14} /> Scan
         </button>
-        <button className="btn btn-ghost btn-sm" onClick={onEject} disabled={isImporting}>
+        <button className="btn btn-ghost btn-sm" onClick={onEject} disabled={isImporting || !ejectSupported} title={ejectSupported ? 'Eject drive' : 'No host eject helper configured'}>
           <LogOut size={14} /> Eject
         </button>
-      </div>
+      </div>}
     </div>
   );
-}
-
-function formatDate(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso + (iso.includes('Z') ? '' : 'Z'));
-  return d.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' })
-    + ' ' + d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDuration(seconds) {

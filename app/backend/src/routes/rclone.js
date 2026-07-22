@@ -3,10 +3,22 @@
 import { Router } from 'express';
 import db from '../db.js';
 import {
-  listRemotes, browseRemote, executeRcloneJob, getActiveRcloneRun,
+  listRemotes, browseRemote, executeRcloneJob, getActiveRcloneRun, cancelRcloneRun,
   getProviderTypes, getRemoteConfig, createRemote, updateRemote, deleteRemote, testRemote,
+  validateRcloneJobInput,
 } from '../services/rclone.js';
 import { scheduleJob, removeJob, getJobSkipCount, isJobRunning } from '../services/scheduler.js';
+import {
+  cancelFeatureRun,
+  getRunDetail,
+  getRunProgress,
+  listFeatureRuns,
+  normalizePagination,
+  startClaimedRun,
+} from '../services/runLifecycle.js';
+import { validateCronExpression } from '../services/schedulePolicy.js';
+import { notifyJobCancelled, shouldNotify } from '../services/notify.js';
+import { getJobHealth } from '../services/jobHealth.js';
 
 const router = Router();
 
@@ -37,6 +49,10 @@ router.get('/jobs', (req, res) => {
     ...j,
     consecutive_skips: getJobSkipCount('rclone', j.id),
     scheduler_running: isJobRunning('rclone', j.id),
+    health: getJobHealth(db, {
+      feature: 'rclone', configId: j.id, cronExpression: j.cron_expression,
+      enabled: !!j.enabled, running: isJobRunning('rclone', j.id),
+    }),
   }));
   res.json(enriched);
 });
@@ -50,24 +66,34 @@ router.get('/jobs/:id', (req, res) => {
 
 // Create a new sync job
 router.post('/jobs', (req, res) => {
-  const { name, local_path, remote_name, remote_path, sync_direction, cron_expression, notify_on_success, notify_on_failure } = req.body;
+  const { name, local_path, remote_name, remote_path, sync_direction, cron_expression, notify_mode, notify_on_start, notify_on_success, notify_on_failure } = req.body;
 
   if (!name || !local_path || !remote_name || !remote_path) {
     return res.status(400).json({ error: 'name, local_path, remote_name, and remote_path are required' });
   }
+  const schedule = cron_expression || '0 3 * * *';
+  if (!validateCronExpression(schedule)) return res.status(400).json({ error: 'cron_expression must be a valid 5-field cron expression' });
 
   if (sync_direction && !['upload', 'download', 'bisync'].includes(sync_direction)) {
     return res.status(400).json({ error: 'sync_direction must be "upload", "download", or "bisync"' });
   }
+  let safeJob;
+  try {
+    safeJob = validateRcloneJobInput({ local_path, remote_name, remote_path, sync_direction });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const result = db.prepare(`
-    INSERT INTO rclone_jobs (name, local_path, remote_name, remote_path, sync_direction, cron_expression, bisync_resync_needed, notify_on_success, notify_on_failure)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO rclone_jobs (name, local_path, remote_name, remote_path, sync_direction, cron_expression, bisync_resync_needed, notify_mode, notify_on_start, notify_on_success, notify_on_failure)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    name, local_path, remote_name, remote_path,
-    sync_direction || 'upload',
-    cron_expression || '0 3 * * *',
+    name, safeJob.local_path, remote_name, remote_path,
+    safeJob.sync_direction,
+    schedule,
     sync_direction === 'bisync' ? 1 : 0,
+    notify_mode || 'global',
+    notify_on_start !== undefined ? (notify_on_start ? 1 : 0) : 1,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : 1,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : 1,
   );
@@ -86,10 +112,24 @@ router.put('/jobs/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM rclone_jobs WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Job not found' });
 
-  const { name, local_path, remote_name, remote_path, sync_direction, cron_expression, enabled, notify_on_success, notify_on_failure } = req.body;
+  const { name, local_path, remote_name, remote_path, sync_direction, cron_expression, enabled, notify_mode, notify_on_start, notify_on_success, notify_on_failure } = req.body;
+  if (cron_expression !== undefined && !validateCronExpression(cron_expression)) {
+    return res.status(400).json({ error: 'cron_expression must be a valid 5-field cron expression' });
+  }
 
   // If direction changed to bisync, mark resync needed
   const newDirection = sync_direction ?? existing.sync_direction;
+  let safeJob;
+  try {
+    safeJob = validateRcloneJobInput({
+      local_path: local_path ?? existing.local_path,
+      remote_name: remote_name ?? existing.remote_name,
+      remote_path: remote_path ?? existing.remote_path,
+      sync_direction: newDirection,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   const bisyncResync = (newDirection === 'bisync' && existing.sync_direction !== 'bisync') ? 1 : existing.bisync_resync_needed;
 
   db.prepare(`
@@ -97,18 +137,20 @@ router.put('/jobs/:id', (req, res) => {
       name = ?, local_path = ?, remote_name = ?, remote_path = ?,
       sync_direction = ?, cron_expression = ?, enabled = ?,
       bisync_resync_needed = ?,
-      notify_on_success = ?, notify_on_failure = ?,
+      notify_mode = ?, notify_on_start = ?, notify_on_success = ?, notify_on_failure = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).run(
     name ?? existing.name,
-    local_path ?? existing.local_path,
+    safeJob.local_path,
     remote_name ?? existing.remote_name,
     remote_path ?? existing.remote_path,
     newDirection,
     cron_expression ?? existing.cron_expression,
     enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
     bisyncResync,
+    notify_mode || existing.notify_mode || 'global',
+    notify_on_start !== undefined ? (notify_on_start ? 1 : 0) : existing.notify_on_start,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : existing.notify_on_success,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : existing.notify_on_failure,
     req.params.id,
@@ -140,54 +182,60 @@ router.post('/jobs/:id/run', async (req, res) => {
   const job = db.prepare('SELECT * FROM rclone_jobs WHERE id = ?').get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
 
-  const run = db.prepare(`
-    INSERT INTO backup_runs (feature, config_id, status) VALUES ('rclone', ?, 'running')
-  `).run(job.id);
-  const runId = Number(run.lastInsertRowid);
+  try {
+    const claim = startClaimedRun({
+      db,
+      feature: 'rclone',
+      configId: job.id,
+      execute: executeRcloneJob,
+      onError: err => console.error(`[rclone] Run failed for job ${job.id}:`, err.message),
+    });
+    if (!claim.claimed) {
+      return res.status(409).json({ error: 'Sync is already running', activeRunId: claim.runId });
+    }
+    res.json({ runId: claim.runId, status: 'started' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-  executeRcloneJob(job.id, runId).catch(err => {
-    console.error(`[rclone] Run failed for job ${job.id}:`, err.message);
-  });
-
-  res.json({ runId, status: 'started' });
+// Cancel a running sync
+router.post('/runs/:id/cancel', (req, res) => {
+  const runId = parseInt(req.params.id);
+  const result = cancelFeatureRun(db, { feature: 'rclone', runId, cancelProcess: cancelRcloneRun });
+  if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
+  const job = db.prepare('SELECT * FROM rclone_jobs WHERE id = ?').get(result.run.config_id);
+  if (job && shouldNotify(job, 'cancel')) notifyJobCancelled('Rclone Sync', job.name);
+  res.json({ status: 'cancelled' });
 });
 
 // List runs
 router.get('/runs', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const offset = (page - 1) * limit;
-  const jobId = req.query.job_id;
+  const pagination = normalizePagination(req.query);
+  res.json(listFeatureRuns(db, {
+    feature: 'rclone',
+    configId: req.query.job_id,
+    ...pagination,
+  }));
+});
 
-  let query = "SELECT * FROM backup_runs WHERE feature = 'rclone'";
-  let countQuery = "SELECT COUNT(*) as total FROM backup_runs WHERE feature = 'rclone'";
-  const params = [];
-
-  if (jobId) {
-    query += ' AND config_id = ?';
-    countQuery += ' AND config_id = ?';
-    params.push(jobId);
-  }
-
-  const total = db.prepare(countQuery).get(...params).total;
-  const runs = db.prepare(query + ' ORDER BY started_at DESC LIMIT ? OFFSET ?').all(...params, limit, offset);
-
-  res.json({ runs, page, limit, total, totalPages: Math.ceil(total / limit) });
+// Lightweight active progress without file queries
+router.get('/runs/:id/progress', (req, res) => {
+  const run = getRunProgress(db, 'rclone', req.params.id, getActiveRcloneRun);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  return res.json(run);
 });
 
 // Get run detail (paginated file list for scale — defaults to first 1000)
 router.get('/runs/:id', (req, res) => {
-  const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'rclone'").get(req.params.id);
+  const run = getRunDetail(db, {
+    feature: 'rclone',
+    runId: req.params.id,
+    query: req.query,
+    getActiveRun: getActiveRcloneRun,
+  });
   if (!run) return res.status(404).json({ error: 'Run not found' });
-
-  const filePage = Math.max(1, parseInt(req.query.filePage) || 1);
-  const fileLimit = Math.min(5000, Math.max(1, parseInt(req.query.fileLimit) || 1000));
-  const fileOffset = (filePage - 1) * fileLimit;
-  const totalFiles = db.prepare('SELECT COUNT(*) as count FROM backup_run_files WHERE run_id = ?').get(run.id).count;
-  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path LIMIT ? OFFSET ?').all(run.id, fileLimit, fileOffset);
-  const progress = getActiveRcloneRun(run.id);
-
-  res.json({ ...run, files, totalFiles, filePage, fileLimit, liveProgress: progress || null });
+  res.json(run);
 });
 
 // ===== Remote configuration management =====

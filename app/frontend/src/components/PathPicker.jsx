@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { FolderOpen, FolderClosed, ArrowUp, HardDrive, Home, Check } from 'lucide-react';
 import { browseDirectory, getFilesystemRoots, getSsdShares } from '../api/index.js';
 import PillTabs from './PillTabs.jsx';
+import { DialogSurface } from './Dialog.jsx';
 import './PathPicker.css';
 
 const PICKER_TABS = [
@@ -70,11 +71,10 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
       </div>
 
       {browsing && (
-        <div className="modal-overlay" onClick={() => setBrowsing(false)}>
-          <div className="modal picker-modal" onClick={(e) => e.stopPropagation()}>
+        <DialogSurface ariaLabel="Select directory" className="picker-modal" onClose={() => setBrowsing(false)}>
             <div className="modal-header">
               <h2><FolderOpen size={18} /> Select Directory</h2>
-              <button className="btn btn-ghost btn-sm" onClick={() => setBrowsing(false)}>✕</button>
+              <button type="button" className="btn btn-ghost btn-sm" aria-label="Close directory picker" title="Close" onClick={() => setBrowsing(false)}>✕</button>
             </div>
             <div className="modal-body">
               <PillTabs tabs={PICKER_TABS} active={tab} onChange={setTab} />
@@ -86,7 +86,7 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
                       <p className="form-hint" style={{ marginBottom: 'var(--space-md)' }}>Choose a starting point:</p>
                       <div className="browse-grid">
                         {roots.map(r => (
-                          <button key={r.path} className="browse-share" onClick={() => navigate(r.path)}>
+                          <button type="button" key={r.path} className="browse-share" onClick={(e) => { e.stopPropagation(); navigate(r.path); }}>
                             <span className="browse-share-name">
                               {r.icon === 'home' ? <Home size={14} /> : <HardDrive size={14} />} {r.name}
                             </span>
@@ -98,7 +98,7 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
                   ) : (
                     <>
                       <div className="browse-path-bar">
-                        <button className="btn btn-ghost btn-sm" onClick={goUp} disabled={parentPath === currentPath}>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={goUp} disabled={parentPath === currentPath}>
                           <ArrowUp size={14} /> Up
                         </button>
                         <code className="browse-current-path">{currentPath}</code>
@@ -110,7 +110,7 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
                       ) : (
                         <div className="browse-list">
                           {entries.map(e => (
-                            <button key={e.path} className="browse-entry" onClick={() => navigate(e.path)}>
+                            <button type="button" key={e.path} className="browse-entry" onClick={() => navigate(e.path)}>
                               <FolderClosed size={14} /> {e.name}
                             </button>
                           ))}
@@ -129,7 +129,7 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
                   {shares.length > 0 && (
                     <div className="browse-grid">
                       {shares.map(s => (
-                        <button key={s.name} className="browse-share" onClick={() => selectPath(s.userPath || s.cachePath || s.path)}>
+                        <button type="button" key={s.name} className="browse-share" onClick={(e) => { e.stopPropagation(); selectPath(s.userPath || s.cachePath || s.path); }}>
                           <span className="browse-share-name"><HardDrive size={14} /> {s.name}</span>
                           {s.comment && <span className="browse-share-desc">{s.comment}</span>}
                           <span className="browse-share-path">{s.userPath || s.cachePath || ''}</span>
@@ -143,16 +143,15 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
 
             {currentPath && tab === 'browse' && (
               <div className="modal-footer">
-                <button className="btn btn-ghost" onClick={() => { setCurrentPath(''); setEntries([]); }}>
+                <button type="button" className="btn btn-ghost" onClick={() => { setCurrentPath(''); setEntries([]); }}>
                   Back to Roots
                 </button>
-                <button className="btn btn-primary" onClick={() => selectPath(currentPath)}>
+                <button type="button" className="btn btn-primary" onClick={() => selectPath(currentPath)}>
                   <Check size={14} /> Select "{currentPath.split('/').pop() || '/'}"
                 </button>
               </div>
             )}
-          </div>
-        </div>
+        </DialogSurface>
       )}
     </div>
   );

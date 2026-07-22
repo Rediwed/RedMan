@@ -2,22 +2,35 @@
 // Copies the SQLite DB to backup destinations after each successful run.
 // Also provides recovery: rebuilds configs from .versions/ filesystem manifests.
 
-import { copyFile, readdir, readFile, stat, mkdir } from 'fs/promises';
-import { join, basename, dirname } from 'path';
+import { readdir, readFile, stat, mkdir } from 'fs/promises';
+import { join } from 'path';
 import { existsSync } from 'fs';
 import db from '../db.js';
+import {
+  createOnlineDatabaseBackup,
+  stageDatabaseRestore,
+} from './databaseFileSafety.js';
 
 const DB_BACKUP_DIR = '_db_backups';
 const MAX_DB_BACKUPS = 5;
+const AUTOMATIC_DB_BACKUP_INTERVAL_MS = 24 * 60 * 60_000;
 
 // ── Automatic DB Backup ──
 
 /**
  * Copy the RedMan database to a backup destination.
- * Called after each successful SSD backup run.
+ * Called after successful SSD backup runs, but automatically writes at most once per day.
  * Stores up to MAX_DB_BACKUPS rotated copies in dest_path/.versions/_db_backups/
  */
-export async function backupDatabase(destPath) {
+export async function backupDatabase(destPath, options = {}) {
+  const force = options.force === true;
+  const minimumIntervalMs = options.minimumIntervalMs ?? AUTOMATIC_DB_BACKUP_INTERVAL_MS;
+  const now = options.now ?? Date.now();
+  const signal = options.signal;
+  signal?.throwIfAborted();
+  if (!Number.isFinite(minimumIntervalMs) || minimumIntervalMs < 0 || minimumIntervalMs > AUTOMATIC_DB_BACKUP_INTERVAL_MS) {
+    throw new Error(`Database backup interval must be between 0 and ${AUTOMATIC_DB_BACKUP_INTERVAL_MS} milliseconds`);
+  }
   const dbPath = db.name; // better-sqlite3 exposes the DB file path
   if (!dbPath || !existsSync(dbPath)) {
     console.warn('[db-backup] Database file not found, skipping backup');
@@ -27,39 +40,50 @@ export async function backupDatabase(destPath) {
   const backupDir = join(destPath, '.versions', DB_BACKUP_DIR);
   await mkdir(backupDir, { recursive: true });
 
-  // Checkpoint WAL to ensure all data is in the main DB file
-  try {
-    db.pragma('wal_checkpoint(TRUNCATE)');
-  } catch (err) {
-    console.warn('[db-backup] WAL checkpoint failed, copying anyway:', err.message);
+  signal?.throwIfAborted();
+  const existingBackups = await listBackupFiles(backupDir);
+  if (!force && existingBackups[0] && now - existingBackups[0].modifiedMs < minimumIntervalMs) {
+    await rotateBackups(backupDir, MAX_DB_BACKUPS);
+    console.log(`[db-backup] Skipping automatic backup; latest copy is ${Math.max(0, Math.round((now - existingBackups[0].modifiedMs) / 60_000))} minute(s) old`);
+    return null;
   }
 
+  // Leave room before writing so failed validation cannot grow the backup set indefinitely.
+  signal?.throwIfAborted();
+  await rotateBackups(backupDir, MAX_DB_BACKUPS - 1);
+
   // Create timestamped backup
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const timestamp = new Date(now).toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const backupName = `redman-${timestamp}.db`;
   const backupPath = join(backupDir, backupName);
 
-  await copyFile(dbPath, backupPath);
+  await createOnlineDatabaseBackup(db, backupPath, { signal });
   console.log(`[db-backup] Database backed up to ${backupPath}`);
 
   // Rotate: keep only the most recent MAX_DB_BACKUPS copies
-  await rotateBackups(backupDir);
+  signal?.throwIfAborted();
+  await rotateBackups(backupDir, MAX_DB_BACKUPS);
 
   return backupPath;
 }
 
-async function rotateBackups(backupDir) {
-  try {
-    const files = await readdir(backupDir);
-    const dbFiles = files
-      .filter(f => f.startsWith('redman-') && f.endsWith('.db'))
-      .sort()
-      .reverse(); // newest first
+async function listBackupFiles(backupDir) {
+  const files = await readdir(backupDir);
+  const backups = [];
+  for (const filename of files.filter(file => file.startsWith('redman-') && file.endsWith('.db'))) {
+    const info = await stat(join(backupDir, filename));
+    backups.push({ filename, modifiedMs: info.mtimeMs });
+  }
+  return backups.sort((left, right) => right.modifiedMs - left.modifiedMs);
+}
 
-    for (const old of dbFiles.slice(MAX_DB_BACKUPS)) {
+async function rotateBackups(backupDir, keep = MAX_DB_BACKUPS) {
+  try {
+    const backups = await listBackupFiles(backupDir);
+    for (const old of backups.slice(keep)) {
       const { unlink } = await import('fs/promises');
-      await unlink(join(backupDir, old));
-      console.log(`[db-backup] Rotated old backup: ${old}`);
+      await unlink(join(backupDir, old.filename));
+      console.log(`[db-backup] Rotated old backup: ${old.filename}`);
     }
   } catch (err) {
     console.warn('[db-backup] Rotation cleanup error:', err.message);
@@ -202,36 +226,12 @@ export async function getAvailableDbBackups(destPath) {
 
 export async function restoreDbFromBackup(backupFilePath) {
   const dbPath = db.name;
-  if (!existsSync(backupFilePath)) {
-    throw new Error(`Backup file not found: ${backupFilePath}`);
-  }
-
-  // Validate it's a real SQLite file
-  const header = Buffer.alloc(16);
-  const { open } = await import('fs/promises');
-  const fh = await open(backupFilePath, 'r');
-  await fh.read(header, 0, 16, 0);
-  await fh.close();
-  if (header.toString('utf-8', 0, 15) !== 'SQLite format 3') {
-    throw new Error('Backup file is not a valid SQLite database');
-  }
-
-  // Close current DB, copy backup over, reopen
-  // NOTE: This requires a process restart to take full effect
-  const backupDir = dirname(dbPath);
-  const safeCopy = join(backupDir, `redman-pre-restore-${Date.now()}.db`);
-
-  // Save current (possibly broken) DB as safety net
-  if (existsSync(dbPath)) {
-    await copyFile(dbPath, safeCopy);
-  }
-
-  await copyFile(backupFilePath, dbPath);
+  const pendingPath = await stageDatabaseRestore(backupFilePath, dbPath);
 
   return {
-    restored: backupFilePath,
-    previousSavedAs: safeCopy,
-    message: 'Database restored. Restart RedMan for changes to take effect.',
+    staged: backupFilePath,
+    pendingPath,
+    message: 'Database restore verified and staged. Restart RedMan to install it safely.',
   };
 }
 

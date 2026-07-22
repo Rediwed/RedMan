@@ -18,5 +18,6 @@ if ! command -v node &> /dev/null; then
     fi
 fi
 
+export PEER_HOST="${PEER_HOST:-127.0.0.1}"
 cd "$(dirname "$0")/app"
 npm run dev

@@ -9,6 +9,19 @@ Versioning scheme:
 
 ## [Unreleased]
 
+### Added
+- [x] Added the hardened full runtime with explicit local/proxy authentication, protected peer credentials, restricted backup accounts, exact-path Docker proxies, and schema 26 migrations.
+
+### Changed
+- [x] Ported the hardened application onto the clean v1.1.9 bridge baseline while retaining opt-in upgrade-readiness mode, its rollback workflow, and release checks.
+- [x] Made Docker and Unraid the runtime resource-policy owners: deployment preserves existing UI-managed limits, writes reconstruction metadata, and RedMan adapts delta concurrency to effective cgroup memory, CPU, and PID ceilings.
+
+### Fixed
+- [x] Made snapshot conversion, pruning, file/database restore, Rclone destinations, legacy summary scans, Unraid capabilities, and deployment builds fail closed under interruption, unsafe paths, resource pressure, or validation errors.
+
+### Security
+- [x] Bounded startup migrations, credential conversion, database/pairing retention, private temporary cleanup, and per-run Immich retries; prevented incomplete retention cycles from resetting their cap every minute; moved large database integrity checks out of the API process, throttled automatic copies to once daily, constrained delta compression, and kept runs active through observable, cancellable post-processing; reconciled managed peer SSH grants fail closed at startup; scoped SSH identity strictly to RedMan app data; capped unauthenticated pairing payloads and storage; required private web/peer binding; rejected root SSH transfers at every runtime boundary; and added breakglass-hash-verified sequential deployment with restart-disabled canaries and host observation before promotion.
+
 ## [1.1.9] - 2026-07-20
 
 ### Added

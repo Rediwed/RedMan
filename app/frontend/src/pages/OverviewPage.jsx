@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getOverviewSummary, getDockerContainers, getDockerStatus, dockerAction, getContainerMetrics } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
+import { useSettings } from '../contexts/SettingsContext.jsx';
+import { formatDateTime } from '../utils/dateFormat.js';
+import { formatBytes } from '../utils/formatBytes.js';
 import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Container, RotateCw, Square, Play, CheckCircle2, XCircle } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import MetricsChart from '../components/MetricsChart.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import './OverviewPage.css';
 
 export default function OverviewPage() {
+  const auth = useAuth();
+  const { settings } = useSettings();
   const [summary, setSummary] = useState(null);
   const [containers, setContainers] = useState([]);
   const [dockerAvailable, setDockerAvailable] = useState(false);
@@ -14,6 +20,7 @@ export default function OverviewPage() {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
+  const [actionResult, setActionResult] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -28,7 +35,7 @@ export default function OverviewPage() {
         setContainers(c);
       }
     } catch (err) {
-      console.error('Failed to load overview:', err);
+      setActionResult({ type: 'error', message: `Failed to load overview: ${err.message}` });
     }
     setLoading(false);
   }, []);
@@ -42,11 +49,13 @@ export default function OverviewPage() {
 
   async function handleAction(containerId, action) {
     setActionLoading(`${containerId}:${action}`);
+    setActionResult(null);
     try {
       await dockerAction(containerId, action);
+      setActionResult({ type: 'success', message: `Container ${action} request accepted.` });
       setTimeout(load, 1500);
     } catch (err) {
-      alert(`Action failed: ${err.message}`);
+      setActionResult({ type: 'error', message: `Action failed: ${err.message}` });
     }
     setActionLoading(null);
   }
@@ -71,7 +80,7 @@ export default function OverviewPage() {
   const features = [
     { key: 'ssd-backup', name: 'SSD Backup', icon: HardDrive, color: 'var(--color-ssd)', link: '/ssd-backup' },
     { key: 'hyper-backup', name: 'Hyper Backup', icon: RefreshCw, color: 'var(--color-hyper)', link: '/hyper-backup' },
-    { key: 'rclone', name: 'Rclone Sync', icon: Cloud, color: 'var(--color-rclone)', link: '/rclone' },
+    { key: 'rclone', name: 'Cloud Backup', icon: Cloud, color: 'var(--color-rclone)', link: '/rclone' },
   ];
 
   return (
@@ -82,6 +91,12 @@ export default function OverviewPage() {
           {summary?.activeJobs || 0} scheduled jobs active
         </span>
       </div>
+
+      {actionResult && (
+        <div className={`alert alert-${actionResult.type}`} role={actionResult.type === 'error' ? 'alert' : 'status'}>
+          {actionResult.message}
+        </div>
+      )}
 
       {/* Feature summary cards */}
       <div className="feature-cards">
@@ -109,7 +124,7 @@ export default function OverviewPage() {
                 <div className="feature-stat">
                   <span className="feature-stat-value feature-stat-small">
                     {data?.lastRun?.started_at
-                      ? new Date(data.lastRun.started_at).toLocaleString()
+                      ? formatDateTime(data.lastRun.started_at, settings)
                       : 'Never'}
                   </span>
                   <span className="feature-stat-label">Last Run Time</span>
@@ -127,6 +142,22 @@ export default function OverviewPage() {
                   <span className="feature-footer-label">
                     Versions: {summary.versionStats.snapshotCount} snapshots · {formatBytes(summary.versionStats.totalDiskSize)}
                     {summary.versionStats.spaceSaved > 0 && ` (saved ${formatBytes(summary.versionStats.spaceSaved)} with deltas)`}
+                    {summary.versionStats.incompleteSnapshots > 0 && ` · ${summary.versionStats.incompleteSnapshots} summary unavailable`}
+                  </span>
+                </div>
+              )}
+              {f.key === 'hyper-backup' && data?.cumulative?.totalRuns > 0 && (
+                <div className="feature-card-footer">
+                  <span className="feature-footer-label">
+                    Total: {formatBytes(data.cumulative.totalBytes)} transferred · {data.cumulative.totalFiles} files across {data.cumulative.totalRuns} runs
+                  </span>
+                </div>
+              )}
+              {f.key === 'rclone' && data?.cumulative?.totalRuns > 0 && (
+                <div className="feature-card-footer">
+                  <span className="feature-footer-label">
+                    Total: {formatBytes(data.cumulative.totalBytes)} synced · {data.cumulative.totalFiles} files across {data.cumulative.totalRuns} runs
+                    {data.cumulative.remotes?.length > 0 && ` · ${data.cumulative.remotes.map(r => r.remote).join(', ')}`}
                   </span>
                 </div>
               )}
@@ -153,7 +184,7 @@ export default function OverviewPage() {
                   </div>
                   <div className="container-right">
                     <StatusBadge status={c.state} />
-                    <div className="container-actions">
+                    {auth.isAdmin && <div className="container-actions">
                       {c.state === 'running' ? (
                         <>
                           <button
@@ -174,7 +205,7 @@ export default function OverviewPage() {
                           disabled={actionLoading === `${c.id}:start`}
                         ><Play size={14} /></button>
                       )}
-                    </div>
+                    </div>}
                   </div>
                 </div>
 
@@ -199,11 +230,4 @@ export default function OverviewPage() {
       </div>
     </div>
   );
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }

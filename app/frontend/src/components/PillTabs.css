@@ -1,5 +1,7 @@
 .pill-tabs {
-  display: inline-flex;
+  display: flex;
+  max-width: 100%;
+  overflow-x: auto;
   gap: 4px;
   background: var(--color-surface-alt);
   border-radius: var(--radius-full);
@@ -8,6 +10,7 @@
 }
 
 .pill-tab {
+  flex: 0 0 auto;
   padding: 6px 16px;
   border-radius: var(--radius-full);
   border: none;

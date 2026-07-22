@@ -1,3 +1,31 @@
+.snapshot-summary {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.exclude-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.exclude-preview code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.restore-confirm-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-xs) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.restore-confirm-details dt { color: var(--color-text-muted); font-size: 0.8rem; }
+.restore-confirm-details dd { min-width: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 480px) {
+  .restore-confirm-details { grid-template-columns: 1fr; }
+}
 .ssd-page {}
 
 .config-list {
@@ -57,7 +85,7 @@
 }
 
 .config-detail code,
-.config-detail span:not(.detail-label) {
+.config-detail > span:not(.detail-label) {
   font-family: var(--font-mono);
   font-size: 0.82rem;
   color: var(--color-text);
@@ -95,6 +123,7 @@
 .runs-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-md);
   margin-bottom: var(--space-md);
 }
@@ -102,9 +131,15 @@
 .runs-header h2 {
   font-size: 1.15rem;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
 }
 
 .runs-header select {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 100%;
   padding: 0.3rem 0.6rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);

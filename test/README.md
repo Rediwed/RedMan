@@ -36,6 +36,13 @@ pip install -r test/requirements.txt
 - macOS Remote Login enabled (for Hyper Backup SSH testing):
   **System Settings → General → Sharing → Remote Login → ON**
 
+The production backup-account bootstrap has rootless `--dry-run` coverage and
+is also executed twice inside a pristine Alpine/OpenSSH container during
+greenfield validation. This proves real account/group creation, key-file mode
+`0600`, idempotent and replaceable Unraid boot hooks including an actual replay,
+`rrsync` installation, restricted transfers, and `sshd -t` without modifying
+the development Mac or any real host.
+
 ## Quick Start
 
 ```bash
@@ -48,6 +55,38 @@ python test/generate_test_data.py --size small
 # 3. Open Instance A UI
 open http://localhost:5175
 ```
+
+The launcher enables the guarded local-development auth bypass with both
+`AUTH_DISABLED=true` and `REDMAN_LOCAL_DEV=1`. Production mode ignores this
+bypass. Live compatibility checks require successful authenticated responses;
+`401 Unauthorized` is treated as a test failure.
+
+Run the focused audit-mitigation regressions without starting servers:
+
+```bash
+cd app
+npm run test:mitigations
+```
+
+The pre-push gate runs this suite automatically before compatibility and
+integration checks.
+
+Native-auth regressions cover explicit mode configuration, Argon2id lifecycle,
+lockout, cookie/CSRF behavior, route permissions, session fixation/logout,
+recovery, role/disable revocation, and database backup/restore. To exercise the
+real first-admin UI against disposable data:
+
+```bash
+DB_PATH="$PWD/test/data/local-auth.db" \
+AUTH_MODE=local \
+REDMAN_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)" \
+SESSION_COOKIE_SECURE=false \
+NODE_ENV=development \
+npm run dev --prefix app
+```
+
+`SESSION_COOKIE_SECURE=false` is for this HTTP development fixture only. Local
+authentication refuses insecure cookies in production.
 
 ## Test Data Generator
 
@@ -145,6 +184,8 @@ python test/generate_test_data.py --size small --force
 ## Two-Instance Test Setup
 
 Tests Hyper Backup by running two RedMan instances on the same machine.
+Both test instances set `PEER_HOST=127.0.0.1`; production requires an address reachable by the other host.
+Each start migrates existing fixture databases and refreshes deterministic peer keys, paths, jobs, and finite 10 GB test quotas so old fixtures cannot drift from current access policy.
 
 ### Architecture
 
@@ -354,7 +395,9 @@ curl -X POST localhost:8090/api/hyper-backup/jobs/1/run
 
 ### Database Backup & Recovery
 
-The RedMan database is automatically backed up to each SSD backup destination after every successful run. Backups are stored in `dest_path/.versions/_db_backups/` with up to 5 rotated copies.
+The RedMan database is automatically backed up to each SSD backup destination at most once per 24 hours after a successful run. Manual Settings backups always run on demand. Backups and restore staging use timeout-bounded, cancellable child processes and store up to 5 rotated copies in `dest_path/.versions/_db_backups/`; excess copies are trimmed even when the daily write is skipped.
+
+Focused mitigation coverage includes atomic delta publication, fail-closed dependency pruning, atomic file restore failure preservation, database restore cancellation/rollback, bounded legacy summaries, rclone path confinement, and symlink-aware SSD path checks.
 
 #### Scan for Backups
 
@@ -420,11 +463,47 @@ node test/test_backward_compat.mjs --api-url http://localhost:8090 --peer-url ht
 8. **Live API endpoints** — Sample GET endpoints return expected status codes
 9. **Live Peer API** — Peer health endpoint returns expected fields
 
+### Handshake Crypto
+
+Standalone test for the Noise XX-style pairing handshake. Validates crypto primitives without needing a running server:
+
+```bash
+node test/test_handshake.mjs
+```
+
+**19 tests covering:**
+1. Full handshake flow — both sides derive the same API key independently
+2. Signature verification — ephemeral keys signed by static Ed25519 identity
+3. Tamper detection — modified ephemeral keys or wrong identities rejected
+4. Secretbox encryption — payload encrypts/decrypts, wrong keys fail
+5. Replay prevention — different tokens produce different derived keys
+6. Forward secrecy — new ephemeral keys produce different API keys
+7. Fingerprint format — `XXXX:XXXX:XXXX:XXXX` hex format validation
+8. Old-style detection — missing/outdated version field caught for 426 rejection
+9. Deterministic HKDF — fixed inputs always produce the same output (test vector)
+
 **Contract file:** `app/backend/src/contracts/v1.json` — the source of truth for all backward compatibility checks.
 
 ### Pre-Push Validation
 
-Run the full test gate before publishing:
+Run the noninteractive routine quality gate before pushing or deploying:
+
+```bash
+npm --prefix app run validate
+```
+
+This runs lint, focused and integration regressions, clean-volume startup,
+static compatibility, frontend build, full dependency audit, desktop/mobile
+browser smoke plus Axe accessibility checks, and pristine Linux/OpenSSH and
+Compose acceptance tests. Compose also proves public health redaction,
+authenticated health details, managed host-key updates, and first-admin
+bootstrap/login. A live Docker proxy test proves reads/stats/start/stop work
+while all broader mutation endpoints are denied; Compose then enables the
+optional sidecars and exercises RedMan's real list/start/restart/stop client
+flow. Generated browser databases, screenshots, and traces are written below
+ignored `test/data/` paths.
+
+For the large generated backup pipeline, use the comprehensive pre-push gate:
 
 ```bash
 # Full suite: compat + medium integration test + frontend build
@@ -435,6 +514,12 @@ Run the full test gate before publishing:
 
 # Compat checks only (fastest)
 ./pre-push.sh --compat-only
+
+# Full suite + deploy an explicitly configured generic target
+./pre-push.sh --deploy --custom
+
+# Full suite + deploy a named profile from .redman-deploy-profiles.sh
+./pre-push.sh --deploy --profile nas
 
 # Keep test data after run
 ./pre-push.sh --keep-data
@@ -448,6 +533,7 @@ Run the full test gate before publishing:
 5. Backward compatibility — live API validation
 6. Comprehensive integration test (medium scale by default)
 7. Stop test instances
+8. Deploy the explicitly selected target (only with `--deploy` plus a target)
 
 Publication and installation remain separate. The bridge release script never deploys to a private target.
 

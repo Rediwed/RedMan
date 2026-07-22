@@ -50,7 +50,7 @@ const MAX_FILES = 500_000;
  * Scan a drive for photos and videos. Runs async to avoid blocking.
  * Returns a scan ID for progress polling.
  */
-export function startScan(driveId, mountPath) {
+export function startScan(driveId, mountPath, options = {}) {
   if (activeScans.has(driveId)) {
     return activeScans.get(driveId);
   }
@@ -74,11 +74,15 @@ export function startScan(driveId, mountPath) {
   };
 
   activeScans.set(driveId, scan);
-  runScan(scan).catch(err => {
-    scan.status = 'failed';
-    scan.error = err.message;
-    scan.completedAt = new Date().toISOString();
-  });
+  runScan(scan)
+    .catch(err => {
+      scan.status = 'failed';
+      scan.error = err.message;
+      scan.completedAt = new Date().toISOString();
+    })
+    .finally(() => {
+      try { options.onComplete?.(scan); } catch { /* completion observers cannot alter scan state */ }
+    });
 
   return scan;
 }
@@ -150,6 +154,10 @@ async function runScan(scan) {
       }
 
       if (!entry.isFile()) continue;
+
+      // Skip macOS resource fork files (._filename) and .DS_Store
+      if (entry.name.startsWith('._') || entry.name === '.DS_Store') continue;
+
       fileCount++;
 
       const ext = extname(entry.name).toLowerCase();

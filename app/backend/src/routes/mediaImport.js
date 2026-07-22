@@ -2,12 +2,15 @@
 
 import { Router } from 'express';
 import db from '../db.js';
+import { validateDeleteAfterImportSetting } from '../services/mediaDeletionPolicy.js';
 import { detectDrives, isDriveMounted, getConnectedDrives } from '../services/driveMonitor.js';
 import { startScan, getScanProgress, clearScan } from '../services/driveScanner.js';
 import {
-  startImport, getActiveImport, testImmichConnection, isImmichGoAvailable, ejectDrive,
+  startImport, getActiveImport, cancelImport, testImmichConnection, isImmichGoAvailable,
+  ejectDrive, isEjectSupported,
 } from '../services/immichImport.js';
-import { notifyDriveScanStarted, notifyDriveScanCompleted } from '../services/notify.js';
+import { notifyDriveScanStarted, notifyDriveScanCompleted, notifyJobCancelled } from '../services/notify.js';
+import { cancelFeatureRun } from '../services/runLifecycle.js';
 
 const router = Router();
 
@@ -17,7 +20,17 @@ const router = Router();
 router.get('/drives', (req, res) => {
   try {
     const connected = getConnectedDrives();
-    const drives = connected.map(drive => {
+
+    // Get hidden drives list
+    let hidden = [];
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'hidden_drives'").get();
+      hidden = JSON.parse(row?.value || '[]');
+    } catch { /* ignore */ }
+
+    const drives = connected
+      .filter(drive => !hidden.some(h => drive.mountPath === h || drive.mountPath?.startsWith(h + '/')))
+      .map(drive => {
       const dbRow = findDriveInDb(drive);
       return {
         ...drive,
@@ -79,6 +92,15 @@ router.put('/drives/:id', (req, res) => {
 
   const { name, auto_import, delete_after_import, eject_after_import } = req.body;
 
+  let safeDeleteAfterImport = null;
+  if (delete_after_import !== undefined) {
+    try {
+      safeDeleteAfterImport = validateDeleteAfterImportSetting(delete_after_import);
+    } catch (err) {
+      return res.status(409).json({ error: err.message });
+    }
+  }
+
   db.prepare(`
     UPDATE media_drives SET
       name = COALESCE(?, name),
@@ -90,7 +112,7 @@ router.put('/drives/:id', (req, res) => {
   `).run(
     name ?? null,
     auto_import ?? null,
-    delete_after_import ?? null,
+    safeDeleteAfterImport,
     eject_after_import ?? null,
     drive.id
   );
@@ -110,13 +132,8 @@ router.post('/drives/:id/scan', (req, res) => {
   }
 
   notifyDriveScanStarted(drive.mount_path);
-  const scan = startScan(drive.id, drive.mount_path);
-
-  // When scan completes, update DB with camera detection
-  const checkComplete = setInterval(() => {
-    const progress = getScanProgress(drive.id);
-    if (progress && (progress.status === 'completed' || progress.status === 'failed')) {
-      clearInterval(checkComplete);
+  const scan = startScan(drive.id, drive.mount_path, {
+    onComplete(progress) {
       if (progress.status === 'completed') {
         if (progress.detectedCamera) {
           db.prepare('UPDATE media_drives SET detected_camera = ?, updated_at = datetime(\'now\') WHERE id = ?')
@@ -124,8 +141,8 @@ router.post('/drives/:id/scan', (req, res) => {
         }
         notifyDriveScanCompleted(drive.mount_path, progress);
       }
-    }
-  }, 1000);
+    },
+  });
 
   res.json(scan);
 });
@@ -156,6 +173,16 @@ router.get('/runs/:id/progress', (req, res) => {
   res.json(progress);
 });
 
+// Cancel a running import
+router.post('/runs/:id/cancel', (req, res) => {
+  const runId = parseInt(req.params.id);
+  const result = cancelFeatureRun(db, { feature: 'media-import', runId, cancelProcess: cancelImport });
+  if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
+  const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(result.run.config_id);
+  notifyJobCancelled('Media Import', drive?.name || drive?.label || `Drive ${result.run.config_id}`);
+  res.json({ status: 'cancelled' });
+});
+
 // ── Import History ────────────────────────────────────────────────
 
 router.get('/runs', (req, res) => {
@@ -164,18 +191,19 @@ router.get('/runs', (req, res) => {
   const offset = (page - 1) * limit;
   const driveId = req.query.drive_id;
 
-  let query = `SELECT r.*, d.name as drive_name, d.label as drive_label
-    FROM backup_runs r
-    LEFT JOIN media_drives d ON r.config_id = d.id
-    WHERE r.feature = 'media-import'`;
+  let where = `WHERE r.feature = 'media-import'`;
   const params = [];
 
   if (driveId) {
-    query += ' AND r.config_id = ?';
+    where += ' AND r.config_id = ?';
     params.push(driveId);
   }
 
-  const total = db.prepare(query.replace(/SELECT r\.\*.*FROM/, 'SELECT COUNT(*) as count FROM')).get(...params);
+  const total = db.prepare(`SELECT COUNT(*) as count FROM backup_runs r ${where}`).get(...params);
+  let query = `SELECT r.*, d.name as drive_name, d.label as drive_label
+    FROM backup_runs r
+    LEFT JOIN media_drives d ON r.config_id = d.id
+    ${where}`;
   query += ' ORDER BY r.started_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
@@ -197,6 +225,38 @@ router.get('/runs/:id', (req, res) => {
   if (progress) run.progress = progress;
 
   res.json(run);
+});
+
+// Get per-file details for a run
+router.get('/runs/:id/files', (req, res) => {
+  const runId = req.params.id;
+  const run = db.prepare('SELECT id FROM backup_runs WHERE id = ? AND feature = ?').get(runId, 'media-import');
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+
+  const action = req.query.action; // filter by action: uploaded, error, duplicate
+  let query = 'SELECT * FROM backup_run_files WHERE run_id = ?';
+  const params = [runId];
+
+  if (action) {
+    query += ' AND action = ?';
+    params.push(action);
+  }
+
+  query += ' ORDER BY id';
+  const files = db.prepare(query).all(...params);
+
+  // Summary counts
+  const summary = db.prepare(`
+    SELECT action, COUNT(*) as count FROM backup_run_files WHERE run_id = ? GROUP BY action
+  `).all(runId);
+
+  // Date range of imported photos (where Immich places them in timeline)
+  const dateRange = db.prepare(`
+    SELECT MIN(file_date) as earliest, MAX(file_date) as latest
+    FROM backup_run_files WHERE run_id = ? AND file_date IS NOT NULL
+  `).get(runId);
+
+  res.json({ files, summary, dateRange: dateRange || null });
 });
 
 // ── Eject ─────────────────────────────────────────────────────────
@@ -226,6 +286,7 @@ router.get('/status', (req, res) => {
     immichGoAvailable: isImmichGoAvailable(),
     connectedDrives: getConnectedDrives().length,
     knownDrives: db.prepare('SELECT COUNT(*) as count FROM media_drives').get().count,
+    ejectSupported: isEjectSupported(),
   });
 });
 

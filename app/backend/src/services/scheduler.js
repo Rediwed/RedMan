@@ -4,6 +4,8 @@
 import cron from 'node-cron';
 import db from '../db.js';
 import { notifyJobSkipped } from './notify.js';
+import { nextCronOccurrence, validateCronExpression } from './schedulePolicy.js';
+import { getDatabaseRetentionPolicy, runDatabaseRetentionBatches } from './databaseRetention.js';
 
 const activeJobs = new Map(); // key: `${feature}:${configId}`, value: cron task
 
@@ -73,7 +75,7 @@ async function executeWithRetry(executor, configId, key) {
       if (attempt < MAX_RETRIES && isTransientError(err)) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
         console.warn(`[scheduler] ${key} failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err.message}. Retrying in ${delay / 1000}s...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => { setTimeout(resolve, delay); });
       } else {
         throw err; // non-transient or max retries exhausted
       }
@@ -88,7 +90,7 @@ export function scheduleJob(feature, configId, cronExpression) {
   // Remove existing job if any
   removeJob(feature, configId);
 
-  if (!cron.validate(cronExpression)) {
+  if (!validateCronExpression(cronExpression)) {
     console.error(`[scheduler] Invalid cron expression for ${key}: ${cronExpression}`);
     return false;
   }
@@ -152,43 +154,19 @@ export function stopAllJobs() {
 }
 
 export function getNextRun(cronExpression) {
-  // Simple next-run calculation using node-cron's validate
-  // For display purposes, parse the cron expression manually
-  if (!cron.validate(cronExpression)) return null;
-
-  // node-cron doesn't expose next run directly; compute from Date
-  // Return a rough estimate based on the cron pattern
-  const now = new Date();
-  const parts = cronExpression.split(' ');
-
-  // For simple patterns like "0 * * * *" (hourly at minute 0)
-  if (parts[0] !== '*' && parts[1] === '*') {
-    const targetMinute = parseInt(parts[0]);
-    const next = new Date(now);
-    next.setSeconds(0, 0);
-    next.setMinutes(targetMinute);
-    if (next <= now) next.setHours(next.getHours() + 1);
-    return next.toISOString();
+  try {
+    return nextCronOccurrence(cronExpression);
+  } catch {
+    return null;
   }
-
-  // For "0 2 * * *" (daily at 02:00)
-  if (parts[0] !== '*' && parts[1] !== '*' && parts[2] === '*') {
-    const targetMinute = parseInt(parts[0]);
-    const targetHour = parseInt(parts[1]);
-    const next = new Date(now);
-    next.setSeconds(0, 0);
-    next.setMinutes(targetMinute);
-    next.setHours(targetHour);
-    if (next <= now) next.setDate(next.getDate() + 1);
-    return next.toISOString();
-  }
-
-  // Fallback — return null (UI will show "custom schedule")
-  return null;
 }
 
 export function getActiveJobCount() {
   return activeJobs.size;
+}
+
+export function getRunningJobCount() {
+  return runningJobs.size;
 }
 
 // Look up a human-readable job name from DB
@@ -222,4 +200,76 @@ export function getJobSkipCount(feature, configId) {
 // Check if a job is currently running
 export function isJobRunning(feature, configId) {
   return runningJobs.has(`${feature}:${configId}`);
+}
+
+// ── Bounded database retention ──
+
+const RETENTION_START_DELAY_MS = 60_000;
+const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const RETENTION_BATCH_SIZE = 1_000;
+const RETENTION_RUN_FILE_BATCH_SIZE = 100;
+const RETENTION_MAX_BATCHES = 25;
+const RETENTION_YIELD_MS = 250;
+const RETENTION_MAX_DURATION_MS = 30_000;
+
+let retentionTimer = null;
+let retentionRun = null;
+let retentionStopped = true;
+
+function scheduleRetention(delayMs) {
+  if (retentionStopped) return null;
+  if (retentionTimer) clearTimeout(retentionTimer);
+  retentionTimer = setTimeout(() => {
+    retentionTimer = null;
+    runRetentionCycle().catch(err => {
+      console.error('[retention] Cycle failed:', err.message);
+      if (!retentionStopped) scheduleRetention(RETENTION_INTERVAL_MS);
+    });
+  }, delayMs);
+  retentionTimer.unref?.();
+  return retentionTimer;
+}
+
+async function runRetentionCycle() {
+  if (retentionStopped || retentionRun) return;
+  retentionRun = runDatabaseRetentionBatches(db, {}, {
+    batchSize: RETENTION_BATCH_SIZE,
+    runFileBatchSize: RETENTION_RUN_FILE_BATCH_SIZE,
+    maxBatches: RETENTION_MAX_BATCHES,
+    yieldMs: RETENTION_YIELD_MS,
+    maxDurationMs: RETENTION_MAX_DURATION_MS,
+    shouldStop: () => retentionStopped,
+    onProgress: ({ batch, totals }) => {
+      if (batch % 10 === 0) {
+        const removed = Object.values(totals).reduce((sum, count) => sum + count, 0);
+        console.log(`[retention] Progress: ${batch} batch(es), ${removed} row(s) removed`);
+      }
+    },
+  });
+
+  let result;
+  try {
+    result = await retentionRun;
+  } finally {
+    retentionRun = null;
+  }
+  if (retentionStopped || result.cancelled) return;
+
+  const removed = Object.values(result.totals).reduce((sum, count) => sum + count, 0);
+  console.log(`[retention] Cycle: ${result.batches} batch(es), ${removed} row(s), complete=${result.complete}, timedOut=${result.timedOut}`);
+  scheduleRetention(RETENTION_INTERVAL_MS);
+}
+
+export function startRunFileRetention() {
+  stopRunFileRetention();
+  retentionStopped = false;
+  const policy = getDatabaseRetentionPolicy(db);
+  console.log(`[retention] Scheduled in ${RETENTION_START_DELAY_MS / 1000}s: run files ${policy.runFileDays}d, run history ${policy.runHistoryDays}d, peer audit ${policy.routineAuditDays}/${policy.securityAuditDays}d`);
+  return scheduleRetention(RETENTION_START_DELAY_MS);
+}
+
+export function stopRunFileRetention() {
+  retentionStopped = true;
+  if (retentionTimer) clearTimeout(retentionTimer);
+  retentionTimer = null;
 }

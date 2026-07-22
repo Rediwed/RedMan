@@ -48,12 +48,19 @@ NODE
 
 helper_consistency() {
   node --input-type=module <<'NODE'
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 const source = readFileSync('app/backend/src/services/upgradeReadiness.js', 'utf8');
+const release = source.match(/const HELPER_RELEASE = ['"]([^'"]+)['"]/)?.[1];
+if (release !== 'v1.1.7') {
+  console.error('Upgrade helper release must be pinned to v1.1.7 for FAT-safe Unraid boot replay');
+  process.exit(1);
+}
 const files = ['prepare-upgrade-host.sh', 'setup-backup-user.sh', 'setup-unraid-backup-user.sh'];
 for (const file of files) {
-  const actual = createHash('sha256').update(readFileSync(`scripts/${file}`)).digest('hex');
+  const pinnedSource = execFileSync('git', ['show', `${release}:scripts/${file}`]);
+  const actual = createHash('sha256').update(pinnedSource).digest('hex');
   const expression = new RegExp(`['"]${file.replaceAll('.', '\\.') }['"]:\\s*['"]([a-f0-9]{64})['"]`);
   const expected = source.match(expression)?.[1];
   if (!expected || expected !== actual) {
@@ -61,11 +68,7 @@ for (const file of files) {
     process.exit(1);
   }
 }
-if (!source.includes("const HELPER_RELEASE = 'v1.1.7'")) {
-  console.error('Upgrade helper release must be pinned to v1.1.7 for FAT-safe Unraid boot replay');
-  process.exit(1);
-}
-console.log('Host helper integrity: 3 embedded checksums match v1.1.7 sources');
+console.log(`Host helper integrity: ${files.length} embedded checksums match pinned ${release} sources`);
 NODE
 }
 

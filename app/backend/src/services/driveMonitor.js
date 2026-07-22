@@ -1,20 +1,21 @@
-// Drive monitor — polls /mnt/disks/ for USB/SD card mount changes
+// Drive monitor — polls the configured media root for USB/SD card mount changes
 // Detects attach/detach events and triggers auto-import when configured
 
 import { readdirSync, existsSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import db from '../db.js';
-import { sendNotification, notifyDriveAttached, notifyDriveEjected, notifyDriveLost } from './notify.js';
+import { notifyDriveAttached, notifyDriveEjected, notifyDriveLost } from './notify.js';
+import { storageConfig } from './storageConfig.js';
 
-const MOUNT_ROOT = '/mnt/disks';
+const MOUNT_ROOT = storageConfig.mediaRoot;
 
 let knownDrives = new Map(); // mountPath → driveInfo
 let pollTimer = null;
 let onDriveAttached = null; // callback for auto-import
 
 /**
- * Detect drives mounted under /mnt/disks/ with lsblk metadata.
+ * Detect drives mounted under REDMAN_MEDIA_ROOT with lsblk metadata.
  * Returns array of { name, mountPath, uuid, serial, label, size, filesystem }
  */
 export function detectDrives() {
@@ -77,7 +78,7 @@ export function detectDrives() {
       });
     }
   } catch {
-    // /mnt/disks not readable
+    // Configured media root not readable
   }
 
   return drives;

@@ -3,19 +3,30 @@
 
 import { spawn, execFileSync } from 'child_process';
 import { mkdir, access, constants } from 'fs/promises';
+import { readdir } from 'fs/promises';
 import { join } from 'path';
 import os from 'os';
 import db from '../db.js';
-import { notifyBackupResult } from './notify.js';
+import { createJobNotificationTracker, notifyBackupResult, shouldNotify } from './notify.js';
 import { pruneVersions } from './versionBrowser.js';
 import { withConfigLock, rebaseDeltasWithTimestamp, deltaifySnapshot, computeVersionStats } from './deltaVersion.js';
 import { backupDatabase } from './dbBackup.js';
+import { isCancelledRun } from './runStatus.js';
+import { claimBackupRun } from './runClaim.js';
+import { terminateChildProcesses } from './childProcessShutdown.js';
+import { listExcludePatterns } from './excludePolicy.js';
+import { createRsyncOutputProcessor, parseItemizeAction } from './rsyncOutput.js';
+import { localPathsOverlap, validateSsdBackupPaths } from '../middleware/validation.js';
+import { storageConfig } from './storageConfig.js';
+
+export { parseItemizeAction };
 
 // Active runs tracked for progress reporting
 const activeRuns = new Map();
+const activeRunControllers = new Map();
 
-// Active child processes tracked for graceful shutdown
-const activeProcesses = new Set();
+// Active child processes tracked for graceful shutdown and cancellation
+const activeProcesses = new Map(); // runId -> ChildProcess
 
 const IS_MAC = os.platform() === 'darwin';
 
@@ -33,13 +44,19 @@ function spawnRsync(args) {
   });
 }
 
-// Strip control chars injected by PTY wrapper (but NOT \r — we split on it)
-function cleanLine(line) {
-  return line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').trim();
-}
-
 export function getActiveRun(runId) {
   return activeRuns.get(runId);
+}
+
+export function cancelSsdRun(runId) {
+  const proc = activeProcesses.get(runId);
+  const controller = activeRunControllers.get(runId);
+  if (!proc && !controller) return false;
+  controller?.abort(new Error('Cancelled by user'));
+  if (proc) {
+    proc.kill('SIGTERM');
+  }
+  return true;
 }
 
 export async function executeSsdBackup(configId, existingRunId = null) {
@@ -50,21 +67,47 @@ export async function executeSsdBackup(configId, existingRunId = null) {
   if (runId) {
     db.prepare(`UPDATE backup_runs SET status = 'running' WHERE id = ?`).run(runId);
   } else {
-    const run = db.prepare(`
-      INSERT INTO backup_runs (feature, config_id, status) VALUES ('ssd-backup', ?, 'running')
-    `).run(configId);
-    runId = Number(run.lastInsertRowid);
+    const claim = claimBackupRun(db, 'ssd-backup', configId);
+    if (!claim.claimed) return { runId: claim.runId, status: 'running', skipped: true };
+    runId = claim.runId;
   }
 
   const startTime = Date.now();
+  const cancellation = new AbortController();
+  activeRunControllers.set(runId, cancellation);
   const progress = {
     filesTotal: 0, filesCopied: 0, filesFailed: 0, bytesTransferred: 0,
     currentFile: null, startedAt: startTime,
     speed: null, percent: null, filesRemaining: null, eta: null,
   };
   activeRuns.set(runId, progress);
+  const notifications = createJobNotificationTracker({
+    job: config, feature: 'SSD Backup', name: config.name, runId, startedAt: startTime,
+  });
+  const persistCancelledProgress = () => {
+    db.prepare(`
+      UPDATE backup_runs SET
+        files_total = ?, files_copied = ?, files_failed = ?, bytes_transferred = ?,
+        duration_seconds = ?, error_message = 'Cancelled by user'
+      WHERE id = ? AND status = 'cancelled'
+    `).run(
+      progress.filesTotal, progress.filesCopied, progress.filesFailed,
+      progress.bytesTransferred, (Date.now() - startTime) / 1000, runId,
+    );
+  };
 
   try {
+    const pathCheck = validateSsdBackupPaths(config.source_path, config.dest_path, [
+      ...storageConfig.roots,
+      storageConfig.mediaRoot,
+    ]);
+    if (!pathCheck.ok) throw new Error(pathCheck.error);
+    const overlappingConfig = db.prepare('SELECT id, name, dest_path FROM ssd_backup_configs WHERE id != ?').all(configId)
+      .find(other => localPathsOverlap(config.dest_path, other.dest_path));
+    if (overlappingConfig) {
+      throw new Error(`Destination overlaps backup "${overlappingConfig.name}" (${overlappingConfig.dest_path})`);
+    }
+
     // Pre-flight checks
     try {
       await access(config.source_path, constants.R_OK);
@@ -87,10 +130,12 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       const availableKB = parseInt(parts[3]);
       if (!isNaN(availableKB)) {
         const availableGB = availableKB / (1024 * 1024);
-        if (availableGB < 1) {
+        if (availableKB === 0) {
+          // Unraid's shfs reports 0 available inside containers — skip the check
+          console.warn(`[ssd-backup] df reports 0 available for "${config.dest_path}" (likely Unraid shfs) — skipping space check`);
+        } else if (availableGB < 1) {
           throw new Error(`Destination has less than 1 GB free (${availableGB.toFixed(2)} GB). Aborting to prevent disk full.`);
-        }
-        if (availableGB < 10) {
+        } else if (availableGB < 10) {
           console.warn(`[ssd-backup] Warning: destination "${config.dest_path}" has only ${availableGB.toFixed(1)} GB free`);
         }
       }
@@ -99,10 +144,40 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       // df failed (e.g. path doesn't support it) — continue anyway
     }
 
+    // Empty-source safeguard: if the source is empty but the destination still
+    // holds data, a lost/unmounted share would let --delete-after wipe the entire
+    // backup on the next run. This is the classic rsync footgun. Abort unless the
+    // user has explicitly opted in via the ssd_allow_empty_source setting.
+    const allowEmptySource = db.prepare("SELECT value FROM settings WHERE key = 'ssd_allow_empty_source'").get()?.value === '1';
+    if (!allowEmptySource) {
+      const CONTROL_DIRS = new Set(['.versions', '.rsync-partial', '.redman-db-backup']);
+      let sourceEntries = null;
+      try { sourceEntries = await readdir(config.source_path); } catch { sourceEntries = null; }
+      if (sourceEntries && sourceEntries.length === 0) {
+        let destEntries = [];
+        try { destEntries = await readdir(config.dest_path); } catch { destEntries = []; }
+        const destData = destEntries.filter(e => !CONTROL_DIRS.has(e));
+        if (destData.length > 0) {
+          throw new Error(
+            `Source "${config.source_path}" is empty but the destination still contains ${destData.length} item(s). ` +
+            `Aborting to prevent rsync --delete from wiping the backup — the source may be unmounted or unavailable. ` +
+            `If the source is intentionally empty, enable "ssd_allow_empty_source" in Settings.`
+          );
+        }
+      }
+    }
+    notifications.start();
+
     // Build rsync command arguments
     const args = [
       '-av',
-      '--delete',
+      '--no-owner',
+      '--no-group',
+      '--omit-dir-times',
+      '--delete-after',
+      '--exclude=.versions',
+      '--exclude=.rsync-partial',
+      '--exclude=.redman-db-backup',
       '--itemize-changes',
       '--stats',
       '--human-readable',
@@ -117,6 +192,15 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       '--out-format=%i %l %n',
     ];
 
+    // User-defined excludes (newline- or comma-separated). Applied to both the
+    // transfer and --delete scanning, so a nested backup destination can be
+    // protected from a parent job's --delete-after wiping it out.
+    if (config.exclude_patterns) {
+      for (const pattern of listExcludePatterns(config.exclude_patterns)) {
+        args.push(`--exclude=${pattern}`);
+      }
+    }
+
     // Add versioning if enabled
     let versionTimestamp = null;
     if (config.versioning_enabled) {
@@ -130,86 +214,138 @@ export async function executeSsdBackup(configId, existingRunId = null) {
     const source = config.source_path.endsWith('/') ? config.source_path : config.source_path + '/';
     args.push(source, config.dest_path + '/');
 
-    const result = await runRsync(args, runId, progress);
+    const result = await runRsync(args, runId, progress, update => notifications.progress(update));
 
-    // Update run record
+    // Determine status: exit code 23 = partial transfer (some attrs failed but data ok)
+    // If any files failed we downgrade a clean exit to 'partial' so the UI reflects reality.
+    const persistedStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
+    let status;
+    if (isCancelledRun(persistedStatus, result.exitCode)) {
+      status = 'cancelled';
+    } else if (result.exitCode === 0) {
+      status = progress.filesFailed > 0 ? 'partial' : 'completed';
+    } else if (result.exitCode === 23 && progress.filesCopied > 0) {
+      status = 'partial';
+    } else {
+      status = 'failed';
+    }
+
+    const postProcessingErrors = [];
+    const runPostProcessingStage = async (stage, operation) => {
+      cancellation.signal.throwIfAborted();
+      const stageStartedAt = Date.now();
+      progress.stage = stage;
+      console.log(`[ssd-backup] Post-processing ${stage} started for "${config.name}" (run ${runId})`);
+      try {
+        const value = await operation();
+        cancellation.signal.throwIfAborted();
+        console.log(`[ssd-backup] Post-processing ${stage} completed in ${((Date.now() - stageStartedAt) / 1000).toFixed(2)}s for "${config.name}" (run ${runId})`);
+        return value;
+      } catch (err) {
+        if (cancellation.signal.aborted) throw err;
+        const warning = `${stage}: ${err.message}`;
+        postProcessingErrors.push(warning);
+        console.error(`[ssd-backup] Post-processing ${stage} failed after ${((Date.now() - stageStartedAt) / 1000).toFixed(2)}s for "${config.name}" (run ${runId}):`, err.message);
+        return null;
+      }
+    };
+
+    // Prune old version snapshots after successful backup. The run remains
+    // active until post-processing finishes so terminal status is trustworthy.
+    if ((status === 'completed' || status === 'partial') && config.versioning_enabled) {
+      // Delta versioning: rebase existing deltas then deltaify the new snapshot
+      if (config.delta_versioning && versionTimestamp) {
+        await runPostProcessingStage('delta versioning', async () => {
+          // Get list of changed files from this run
+          const runFiles = db.prepare('SELECT file_path FROM backup_run_files WHERE run_id = ? AND action IN (?, ?, ?)').all(runId, 'transferred', 'created', 'updated');
+          const changedFiles = runFiles.map(f => f.file_path);
+
+          await withConfigLock(configId, async () => {
+            await rebaseDeltasWithTimestamp(configId, changedFiles, versionTimestamp, { signal: cancellation.signal });
+            await deltaifySnapshot(configId, versionTimestamp, { signal: cancellation.signal });
+          }, { signal: cancellation.signal });
+        });
+      }
+
+      await runPostProcessingStage('version pruning', () => pruneVersions(configId, {
+        signal: cancellation.signal,
+        updateStats: false,
+      }));
+
+      // Update cached version stats
+      await runPostProcessingStage('version statistics', () => computeVersionStats(configId, { signal: cancellation.signal }));
+
+      // Back up the RedMan database to this destination
+      await runPostProcessingStage('database backup', () => backupDatabase(config.dest_path, { signal: cancellation.signal }));
+    }
+
+    delete progress.stage;
+    if (postProcessingErrors.length > 0 && status === 'completed') status = 'partial';
     const duration = (Date.now() - startTime) / 1000;
-    db.prepare(`
+    const runError = [
+      status === 'cancelled' ? 'Cancelled by user' : result.errorOutput,
+      ...postProcessingErrors.map(error => `Post-processing warning: ${error}`),
+    ].filter(Boolean).join('\n') || null;
+    const transition = db.prepare(`
       UPDATE backup_runs SET
         status = ?, completed_at = datetime('now'),
         files_total = ?, files_copied = ?, files_failed = ?,
         bytes_transferred = ?, duration_seconds = ?, error_message = ?
-      WHERE id = ?
+      WHERE id = ? AND status = 'running'
     `).run(
-      result.exitCode === 0 ? 'completed' : 'failed',
+      status,
       progress.filesTotal, progress.filesCopied, progress.filesFailed,
-      progress.bytesTransferred, duration, result.errorOutput || null,
-      runId,
+      progress.bytesTransferred, duration, runError, runId,
     );
+    if (transition.changes !== 1) {
+      const currentStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
+      if (currentStatus === 'cancelled') {
+        persistCancelledProgress();
+        return { runId, status: 'cancelled' };
+      }
+      throw new Error(`Could not persist terminal SSD backup status from ${currentStatus || 'missing'} state`);
+    }
 
-    // Send notification
-    if (config.notify_on_success && result.exitCode === 0) {
-      await notifyBackupResult('SSD Backup', config.name, 'completed', {
+    // Send notification only after post-processing and terminal persistence.
+    if (status === 'completed' && shouldNotify(config, 'success')) {
+      await notifyBackupResult('SSD Backup', config.name, status, {
         filesCopied: progress.filesCopied, filesFailed: progress.filesFailed,
         bytesTransferred: progress.bytesTransferred, duration,
       });
-    } else if (config.notify_on_failure && result.exitCode !== 0) {
+    } else if (status === 'partial' && shouldNotify(config, 'partial')) {
+      await notifyBackupResult('SSD Backup', config.name, status, {
+        filesCopied: progress.filesCopied, filesFailed: progress.filesFailed,
+        bytesTransferred: progress.bytesTransferred, duration,
+        errorMessage: runError || undefined,
+      });
+    } else if (status === 'failed' && shouldNotify(config, 'failure')) {
       await notifyBackupResult('SSD Backup', config.name, 'failed', {
         filesCopied: progress.filesCopied, filesFailed: progress.filesFailed,
         bytesTransferred: progress.bytesTransferred, duration,
       });
     }
 
-    // Prune old version snapshots after successful backup
-    if (result.exitCode === 0 && config.versioning_enabled) {
-      // Delta versioning: rebase existing deltas then deltaify the new snapshot
-      if (config.delta_versioning && versionTimestamp) {
-        try {
-          // Get list of changed files from this run
-          const runFiles = db.prepare('SELECT file_path FROM backup_run_files WHERE run_id = ? AND action IN (?, ?, ?)').all(runId, 'transferred', 'created', 'updated');
-          const changedFiles = runFiles.map(f => f.file_path);
-
-          await withConfigLock(configId, async () => {
-            await rebaseDeltasWithTimestamp(configId, changedFiles, versionTimestamp);
-            await deltaifySnapshot(configId, versionTimestamp);
-          });
-        } catch (err) {
-          console.error(`[ssd-backup] Delta versioning failed for "${config.name}":`, err.message);
-        }
-      }
-
-      try {
-        await pruneVersions(configId);
-      } catch (err) {
-        console.error(`[ssd-backup] Version pruning failed for "${config.name}":`, err.message);
-      }
-
-      // Update cached version stats
-      try {
-        await computeVersionStats(configId);
-      } catch {}
-
-      // Back up the RedMan database to this destination
-      try {
-        await backupDatabase(config.dest_path);
-      } catch (err) {
-        console.error(`[ssd-backup] DB backup failed for "${config.name}":`, err.message);
-      }
+    return { runId, status };
+  } catch (err) {
+    const persistedStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
+    if (persistedStatus === 'cancelled') {
+      persistCancelledProgress();
+      return { runId, status: 'cancelled' };
     }
 
-    return { runId, status: result.exitCode === 0 ? 'completed' : 'failed' };
-  } catch (err) {
     db.prepare(`
       UPDATE backup_runs SET status = 'failed', completed_at = datetime('now'),
         error_message = ?, duration_seconds = ?
       WHERE id = ?
     `).run(err.message, (Date.now() - startTime) / 1000, runId);
 
-    if (config.notify_on_failure) {
+    if (shouldNotify(config, 'failure')) {
       await notifyBackupResult('SSD Backup', config.name, 'failed', {});
     }
     throw err;
   } finally {
+    notifications.close();
+    activeRunControllers.delete(runId);
     activeRuns.delete(runId);
   }
 }
@@ -218,10 +354,10 @@ export async function executeSsdBackup(configId, existingRunId = null) {
 const FILE_INSERT_BATCH_SIZE = 1000;
 
 // Run rsync and parse output
-function runRsync(args, runId, progress) {
+function runRsync(args, runId, progress, onProgress = null) {
   return new Promise((resolve, reject) => {
     const proc = spawnRsync(args);
-    activeProcesses.add(proc);
+    activeProcesses.set(runId, proc);
 
     const insertFile = db.prepare(`
       INSERT INTO backup_run_files (run_id, file_path, action, size) VALUES (?, ?, ?, ?)
@@ -230,86 +366,44 @@ function runRsync(args, runId, progress) {
       for (const entry of batch) insertFile.run(entry.runId, entry.path, entry.action, entry.size);
     });
     let fileBatch = [];
-
-    let errorOutput = '';
+    let persistenceError = '';
+    const processor = createRsyncOutputProcessor({
+      progress,
+      platform: IS_MAC ? 'darwin' : 'linux',
+      onProgress,
+      onFileEntry(entry) {
+        fileBatch.push({ runId, ...entry });
+        if (fileBatch.length >= FILE_INSERT_BATCH_SIZE) {
+          flushBatch(fileBatch);
+          fileBatch = [];
+        }
+      },
+    });
 
     proc.stdout.on('data', (data) => {
-      const lines = data.toString().split(/[\r\n]+/).map(cleanLine).filter(l => l);
-
-      for (const line of lines) {
-        // Parse --out-format=%i %l %n: itemize-changes flag, size, filename
-        // {7,9} handles both macOS openrsync (9 char flags) and GNU rsync 3.x (11 char flags)
-        const match = line.match(/^([<>.ch*][fdLDS][cstpoguax.+?]{7,9})\s+(\d+)\s+(.+)$/);
-        if (match) {
-          const [, flags, sizeStr, filename] = match;
-          const size = parseInt(sizeStr) || 0;
-          const action = parseItemizeAction(flags);
-
-          progress.filesTotal++;
-          progress.currentFile = filename;
-          if (action === 'transferred' || action === 'created') {
-            progress.filesCopied++;
-            progress.bytesTransferred += size;
-          }
-
-          fileBatch.push({ runId, path: filename, action, size });
-          if (fileBatch.length >= FILE_INSERT_BATCH_SIZE) {
-            flushBatch(fileBatch);
-            fileBatch = [];
-          }
-          continue;
-        }
-
-        // Parse progress output: --info=progress2 (GNU/Linux) or --progress (openrsync/macOS)
-        // Only try progress2 on Linux — on macOS --progress emits per-file bytes
-        // that look like progress2 output but would overwrite the accumulated total.
-        if (IS_MAC || !parseProgress2Line(line, progress)) {
-          parseProgressLine(line, progress);
-        }
-
-        // Handle *deleting lines (no size field): "*deleting   filename"
-        const delMatch = line.match(/^\*deleting\s+(.+)$/);
-        if (delMatch) {
-          progress.filesTotal++;
-          fileBatch.push({ runId, path: delMatch[1], action: 'deleted', size: 0 });
-          if (fileBatch.length >= FILE_INSERT_BATCH_SIZE) {
-            flushBatch(fileBatch);
-            fileBatch = [];
-          }
-          continue;
-        }
-
-        // Parse --stats output for any remaining aggregate data
-        const bytesMatch = line.match(/Total transferred file size:\s+([\d,]+)/);
-        if (bytesMatch) {
-          const bytes = parseInt(bytesMatch[1].replace(/,/g, ''));
-          if (bytes > progress.bytesTransferred) progress.bytesTransferred = bytes;
-        }
-      }
+      processor.writeStdout(data);
     });
 
     proc.stderr.on('data', (data) => {
-      const text = data.toString();
-      errorOutput += text;
-
-      // Count rsync errors (lines starting with "rsync:" or "rsync error:")
-      const errorLines = text.split('\n').filter(l => l.startsWith('rsync:') || l.startsWith('rsync error:'));
-      progress.filesFailed += errorLines.length;
+      processor.writeStderr(data);
     });
 
     proc.on('close', (exitCode) => {
-      activeProcesses.delete(proc);
-      // Flush remaining buffered file inserts
+      activeProcesses.delete(runId);
+      processor.flush();
       if (fileBatch.length > 0) {
-        flushBatch(fileBatch);
+        try { flushBatch(fileBatch); } catch (err) {
+          persistenceError = `Failed to persist file batch: ${err.message}`;
+        }
         fileBatch = [];
       }
-      resolve({ exitCode, errorOutput: errorOutput.trim() || null });
+      const { stderr } = processor.output();
+      const errorOutput = [stderr.trim(), persistenceError].filter(Boolean).join('\n');
+      resolve({ exitCode, errorOutput: errorOutput || null });
     });
 
     proc.on('error', (err) => {
-      activeProcesses.delete(proc);
-      // Flush any buffered inserts before rejecting
+      activeProcesses.delete(runId);
       if (fileBatch.length > 0) {
         try { flushBatch(fileBatch); } catch {}
         fileBatch = [];
@@ -318,149 +412,34 @@ function runRsync(args, runId, progress) {
     });
   });
 }
-
-// Translate rsync itemize flags to a human-readable action
-export function parseItemizeAction(flags) {
-  if (!flags || flags.length < 2) return 'unknown';
-  const type = flags[0];
-  const kind = flags[1];
-
-  if (type === '*' && flags.includes('deleting')) return 'deleted';
-  if (type === '>' || type === '<') {
-    if (flags.includes('+++++++')) return 'created';
-    return 'transferred';
-  }
-  if (type === 'c' && kind === 'd') return 'directory';
-  if (type === '.') return 'unchanged';
-  return 'updated';
-}
-
-// Parse rsync --progress output line for speed, percentage, and remaining files.
-// Format: "  51200 100%   48.79MB/s   00:00:00 (xfer#1, to-check=5/100)"
-// openrsync (macOS) uses "to-check=CHECKED/TOTAL" (ascending).
-// GNU rsync uses "to-chk=REMAINING/TOTAL" or "ir-chk=REMAINING/TOTAL" (descending).
-// Returns true if the line was a progress line.
-function parseProgressLine(line, progress) {
-  // Match: bytes percent% speed time (xfer#N, to-check|to-chk|ir-chk=N/T)
-  const m = line.match(/^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\S+)\s+\(xfe?r#(\d+),\s*(to-check|to-chk|ir-chk)=(\d+)\/(\d+)\)/);
-  if (m) {
-    progress.speed = m[3];
-    const variant = m[6];
-    const n = parseInt(m[7]);
-    const total = parseInt(m[8]);
-    if (total > 0) {
-      // openrsync "to-check" = checked count (ascending), GNU "to-chk"/"ir-chk" = remaining (descending)
-      const newPercent = variant === 'to-check'
-        ? Math.round((n / total) * 100)
-        : Math.round(((total - n) / total) * 100);
-      // Never decrease — rsync's total can grow as the file list is built incrementally
-      if (progress.percent == null || newPercent > progress.percent) {
-        progress.percent = newPercent;
-      }
-    }
-    return true;
-  }
-
-  // Simpler format without to-check (mid-file progress): "  51200 100%   48.79MB/s   00:00:00"
-  const simple = line.match(/^\s*[\d,]+\s+\d+%\s+([\d.]+\w+\/s)/);
-  if (simple) {
-    progress.speed = simple[1];
-    return true;
-  }
-
-  return false;
-}
-
-// Parse GNU rsync --info=progress2 overall progress line (Linux only).
-// Format: "  1,234,567,890  42%  234.56MB/s    0:00:05  (xfr#50, to-chk=950/1000)"
-// Also matches partial format without (xfr#) when rsync is still building the file list.
-// Returns true if the line was a progress2 line.
-function parseProgress2Line(line, progress) {
-  const m = line.match(/^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\S+)/);
-  if (!m) return false;
-
-  progress.bytesTransferred = parseInt(m[1].replace(/,/g, ''));
-  progress.speed = m[3];
-  progress.eta = m[4] === '0:00:00' ? null : m[4];
-
-  const pct = parseInt(m[2]);
-  // Never decrease — file list may still be growing
-  if (progress.percent == null || pct > progress.percent) {
-    progress.percent = pct;
-  }
-
-  // Also extract xfr#/to-chk if present
-  const xfr = line.match(/\(xfr#(\d+),\s*(?:to-chk|ir-chk)=(\d+)\/(\d+)\)/);
-  if (xfr) {
-    progress.filesCopied = parseInt(xfr[1]);
-    const remaining = parseInt(xfr[2]);
-    const total = parseInt(xfr[3]);
-    progress.filesTotal = total;
-    progress.filesRemaining = remaining;
-  }
-
-  return true;
-}
 // The local rsync binary may be openrsync (macOS) — use spawnRsync for line buffering.
-export function runRsyncWithSsh(args, onProgress = null) {
+export function runRsyncWithSsh(args, onProgress = null, runId = null, onFileEntry = null) {
   return new Promise((resolve, reject) => {
     const proc = spawnRsync(args);
-    activeProcesses.add(proc);
+    if (runId) activeProcesses.set(runId, proc);
 
-    let stdout = '';
-    let stderr = '';
-    const progress = {
-      filesTotal: 0, filesCopied: 0, filesFailed: 0, bytesTransferred: 0,
-      currentFile: null, speed: null, percent: null, filesRemaining: null, eta: null,
-    };
+    const processor = createRsyncOutputProcessor({
+      platform: IS_MAC ? 'darwin' : 'linux',
+      onProgress,
+      onFileEntry,
+    });
 
     proc.stdout.on('data', (data) => {
-      const text = data.toString();
-      stdout += text;
-
-      const lines = text.split(/[\r\n]+/).map(cleanLine).filter(l => l);
-      for (const line of lines) {
-        const match = line.match(/^([<>.ch*][fdLDS][cstpoguax.+?]{7,9})\s+(\d+)\s+(.+)$/);
-        if (match) {
-          const size = parseInt(match[2]) || 0;
-          const action = parseItemizeAction(match[1]);
-          progress.filesTotal++;
-          progress.currentFile = match[3];
-          if (action === 'transferred' || action === 'created') {
-            progress.filesCopied++;
-            progress.bytesTransferred += size;
-          }
-          if (onProgress) onProgress(progress);
-          continue;
-        }
-
-        // Parse progress output: --info=progress2 (GNU/Linux) or --progress (openrsync/macOS)
-        // Only try progress2 on Linux — on macOS --progress emits per-file bytes
-        // that look like progress2 output but would overwrite the accumulated total.
-        if ((!IS_MAC && parseProgress2Line(line, progress)) || parseProgressLine(line, progress)) {
-          if (onProgress) onProgress(progress);
-          continue;
-        }
-
-        // Handle *deleting lines (no size field)
-        if (line.startsWith('*deleting')) {
-          progress.filesTotal++;
-          if (onProgress) onProgress(progress);
-        }
-      }
+      processor.writeStdout(data);
     });
 
     proc.stderr.on('data', (data) => {
-      stderr += data.toString();
+      processor.writeStderr(data);
     });
 
     proc.on('close', (exitCode) => {
-      activeProcesses.delete(proc);
-      resolve({ exitCode, stdout, stderr, progress });
+      processor.flush();
+      if (runId) activeProcesses.delete(runId);
+      resolve({ exitCode, ...processor.output() });
     });
 
     proc.on('error', (err) => {
-      activeProcesses.delete(proc);
+      if (runId) activeProcesses.delete(runId);
       reject(new Error(`Failed to start rsync: ${err.message}`));
     });
   });
@@ -468,8 +447,18 @@ export function runRsyncWithSsh(args, onProgress = null) {
 
 // Kill all active rsync child processes (for graceful shutdown)
 export function killActiveRsyncProcesses() {
-  for (const proc of activeProcesses) {
+  for (const controller of activeRunControllers.values()) {
+    controller.abort(new Error('RedMan is shutting down'));
+  }
+  for (const proc of activeProcesses.values()) {
     try { proc.kill('SIGTERM'); } catch {}
   }
   activeProcesses.clear();
+}
+
+export async function stopActiveRsyncProcesses(timeoutMs = 10000) {
+  for (const controller of activeRunControllers.values()) {
+    controller.abort(new Error('RedMan is shutting down'));
+  }
+  return terminateChildProcesses(activeProcesses.values(), timeoutMs);
 }

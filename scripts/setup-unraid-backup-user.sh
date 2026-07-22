@@ -11,6 +11,7 @@ GO_FILE="/boot/config/go"
 DATA_DIR=""
 BACKUP_USER="redman-backup"
 RRSYNC_SOURCE=""
+RRSYNC_TEMP=""
 DRY_RUN=false
 NO_PERSIST=false
 CORE_ARGS=()
@@ -110,10 +111,27 @@ if ! $DRY_RUN; then
   if ! $NO_PERSIST; then
     [[ -f "$GO_FILE" ]] || { echo "Unraid boot file not found: $GO_FILE" >&2; exit 1; }
   fi
+  if [[ -z "$RRSYNC_SOURCE" && ! -f /usr/local/bin/rrsync && ! -f /usr/bin/rrsync ]]; then
+    command -v curl >/dev/null 2>&1 || { echo "curl is required to provision rrsync on Unraid" >&2; exit 1; }
+    command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify rrsync" >&2; exit 1; }
+    command -v perl >/dev/null 2>&1 || { echo "Perl is required by the official rrsync helper" >&2; exit 1; }
+    RRSYNC_TEMP="$(mktemp /tmp/redman-rrsync.XXXXXX)"
+    curl -fsSL --proto '=https' --tlsv1.2 \
+      https://raw.githubusercontent.com/WayneD/rsync/v3.2.1/support/rrsync \
+      -o "$RRSYNC_TEMP"
+    printf '%s  %s\n' \
+      34661573a4b773b07191fe4b6f583a348bb0ed70909ad84b1cc24ce58aaf27b0 \
+      "$RRSYNC_TEMP" | sha256sum -c - >/dev/null
+    RRSYNC_SOURCE="$RRSYNC_TEMP"
+    CORE_ARGS+=(--rrsync-source "$RRSYNC_SOURCE")
+  fi
 fi
 
 bash "$CORE_SCRIPT" "${CORE_ARGS[@]}"
-if $DRY_RUN || $NO_PERSIST; then exit 0; fi
+if $DRY_RUN || $NO_PERSIST; then
+  [[ -z "$RRSYNC_TEMP" ]] || rm -f "$RRSYNC_TEMP"
+  exit 0
+fi
 
 install -d -m 0700 "$PERSIST_DIR"
 if [[ "$CORE_SCRIPT" != "$PERSIST_CORE" ]]; then
@@ -134,6 +152,7 @@ fi
 if [[ -f "$PERSIST_RRSYNC" ]]; then
   PERSIST_ARGS+=(--rrsync-source "$PERSIST_RRSYNC")
 fi
+[[ -z "$RRSYNC_TEMP" ]] || rm -f "$RRSYNC_TEMP"
 
 printf -v quoted_wrapper '%q' "$PERSIST_WRAPPER"
 BOOT_COMMAND="bash $quoted_wrapper"

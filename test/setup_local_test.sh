@@ -58,7 +58,7 @@ stop_all() {
     for port in $PORT_A $PEER_PORT_A $VITE_PORT_A $PORT_B $PEER_PORT_B; do
         lsof -ti:"$port" 2>/dev/null | while read -r pid; do
             kill "$pid" 2>/dev/null && echo "  Killed process on port $port (PID $pid)"
-        done
+        done || true
     done
 
     ok "All test instances stopped."
@@ -84,6 +84,16 @@ seed_databases() {
     info "Seeding test configurations..."
     node test/seed_test_configs.js "$DB_A" "$DB_B" "$TEST_DATA"
     ok "Test configurations seeded."
+}
+
+refresh_test_configs() {
+    # Existing test databases may predate the current schema. Migrate first,
+    # then refresh deterministic peer keys, finite quotas, paths, and jobs.
+    for db_path in "$DB_A" "$DB_B"; do
+        DB_PATH="$db_path" NODE_ENV=test PEER_HOST=127.0.0.1 \
+          node --input-type=module -e "await import('./app/backend/src/db.js')" >/dev/null
+    done
+    node test/seed_test_configs.js "$DB_A" "$DB_B" "$TEST_DATA" >/dev/null
 }
 
 # ── Check prerequisites ─────────────────────────────────────────────
@@ -120,6 +130,9 @@ start_instances() {
     # Seed if databases don't exist
     if [[ ! -f "$DB_A" ]] || [[ ! -f "$DB_B" ]]; then
         seed_databases
+    else
+        cd "$PROJECT_DIR"
+        refresh_test_configs
     fi
 
     mkdir -p "$TEST_DATA"
@@ -129,8 +142,10 @@ start_instances() {
     cd "$PROJECT_DIR/app/backend"
     PORT=$PORT_A \
     PEER_API_PORT=$PEER_PORT_A \
+    PEER_HOST=127.0.0.1 \
     DB_PATH="$DB_A" \
     AUTH_DISABLED=true \
+    REDMAN_LOCAL_DEV=1 \
     node --watch src/index.js > "$TEST_DATA/instance_a.log" 2>&1 &
     echo $! >> "$PID_FILE"
     ok "Instance A backend: http://localhost:$PORT_A (PID $!)"
@@ -138,8 +153,10 @@ start_instances() {
     info "Starting Instance B (remote peer)..."
     PORT=$PORT_B \
     PEER_API_PORT=$PEER_PORT_B \
+    PEER_HOST=127.0.0.1 \
     DB_PATH="$DB_B" \
     AUTH_DISABLED=true \
+    REDMAN_LOCAL_DEV=1 \
     node --watch src/index.js > "$TEST_DATA/instance_b.log" 2>&1 &
     echo $! >> "$PID_FILE"
     ok "Instance B backend: http://localhost:$PORT_B (PID $!)"

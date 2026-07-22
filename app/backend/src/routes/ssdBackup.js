@@ -2,21 +2,77 @@
 
 import { Router } from 'express';
 import db from '../db.js';
-import { executeSsdBackup, getActiveRun } from '../services/rsync.js';
+import { executeSsdBackup, getActiveRun, cancelSsdRun } from '../services/rsync.js';
+import {
+  cancelFeatureRun,
+  getRunDetail,
+  getRunProgress,
+  listFeatureRuns,
+  normalizePagination,
+  startClaimedRun,
+} from '../services/runLifecycle.js';
 import { listSnapshots, browseSnapshot, resolveFilePath, restoreFile, pruneVersions, DEFAULT_RETENTION_POLICY } from '../services/versionBrowser.js';
-import { verifyDeltaChain, cleanupTempFile } from '../services/deltaVersion.js';
+import { cleanupTempFile } from '../services/deltaVersion.js';
+import {
+  cancelVersionVerification,
+  getActiveVersionVerification,
+  startVersionVerification,
+} from '../services/versionVerification.js';
 import { scheduleJob, removeJob, getJobSkipCount, isJobRunning } from '../services/scheduler.js';
 import { getShares, browsePath } from '../services/unraid.js';
+import { validateSsdBackupPaths, localPathsOverlap } from '../middleware/validation.js';
+import { validateCronExpression } from '../services/schedulePolicy.js';
+import { notifyJobCancelled, shouldNotify } from '../services/notify.js';
+import { getJobHealth } from '../services/jobHealth.js';
+import { normalizeExcludePatterns } from '../services/excludePolicy.js';
+import { storageConfig } from '../services/storageConfig.js';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import { basename } from 'path';
 
 const router = Router();
 
+// Validate an SSD backup config's paths before create/update.
+// Combines the single-config path checks with a cross-config destination
+// overlap check (prevents one job's --delete from wiping another's data).
+// Returns { ok: true } or { ok: false, error }.
+function validateConfigPaths(source_path, dest_path, excludeId = null) {
+  const single = validateSsdBackupPaths(source_path, dest_path, [
+    ...storageConfig.roots,
+    storageConfig.mediaRoot,
+  ]);
+  if (!single.ok) return single;
+
+  const others = db.prepare('SELECT id, name, dest_path FROM ssd_backup_configs').all();
+  for (const other of others) {
+    if (excludeId != null && other.id === Number(excludeId)) continue;
+    if (localPathsOverlap(dest_path, other.dest_path)) {
+      return {
+        ok: false,
+        error: `Destination overlaps backup "${other.name}" (${other.dest_path}). Overlapping destinations let one job's --delete wipe the other's data. Use separate, non-nested folders.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 // List auto-detected Unraid shares
 router.get('/shares', async (req, res) => {
   try {
-    const shares = await getShares();
+    let shares = await getShares();
+
+    // Filter out hidden drives
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'hidden_drives'").get();
+      const hidden = JSON.parse(row?.value || '[]');
+      if (hidden.length > 0) {
+        shares = shares.filter(s => {
+          const paths = [s.userPath, s.cachePath, s.path].filter(Boolean);
+          return !paths.some(p => hidden.some(h => p === h || p.startsWith(h + '/')));
+        });
+      }
+    } catch { /* ignore */ }
+
     res.json(shares);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -42,6 +98,10 @@ router.get('/configs', (req, res) => {
     ...c,
     consecutive_skips: getJobSkipCount('ssd-backup', c.id),
     scheduler_running: isJobRunning('ssd-backup', c.id),
+    health: getJobHealth(db, {
+      feature: 'ssd-backup', configId: c.id, cronExpression: c.cron_expression,
+      enabled: !!c.enabled, running: isJobRunning('ssd-backup', c.id), includeRestore: true,
+    }),
   }));
   res.json(enriched);
 });
@@ -55,18 +115,31 @@ router.get('/configs/:id', (req, res) => {
 
 // Create a new backup config
 router.post('/configs', (req, res) => {
-  const { name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, notify_on_success, notify_on_failure } = req.body;
+  const { name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, notify_mode, notify_on_start, notify_on_success, notify_on_failure, exclude_patterns } = req.body;
 
   if (!name || !source_path || !dest_path) {
     return res.status(400).json({ error: 'name, source_path, and dest_path are required' });
   }
+  const schedule = cron_expression || '0 * * * *';
+  if (!validateCronExpression(schedule)) return res.status(400).json({ error: 'cron_expression must be a valid 5-field cron expression' });
+
+  const pathCheck = validateConfigPaths(source_path, dest_path);
+  if (!pathCheck.ok) {
+    return res.status(400).json({ error: pathCheck.error });
+  }
+  let normalizedExcludes;
+  try {
+    normalizedExcludes = normalizeExcludePatterns(exclude_patterns);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const result = db.prepare(`
-    INSERT INTO ssd_backup_configs (name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, notify_on_success, notify_on_failure)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ssd_backup_configs (name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, notify_mode, notify_on_start, notify_on_success, notify_on_failure, exclude_patterns)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     name, source_path, dest_path,
-    cron_expression || '0 * * * *',
+    schedule,
     versioning_enabled !== undefined ? (versioning_enabled ? 1 : 0) : 1,
     retention_days !== undefined ? Math.max(0, parseInt(retention_days) || 30) : 30,
     delta_versioning ? 1 : 0,
@@ -74,8 +147,11 @@ router.post('/configs', (req, res) => {
     delta_max_chain !== undefined ? Math.min(50, Math.max(1, parseInt(delta_max_chain) || 10)) : 10,
     delta_keyframe_days !== undefined ? Math.min(30, Math.max(1, parseInt(delta_keyframe_days) || 7)) : 7,
     retention_policy ? JSON.stringify(retention_policy) : JSON.stringify(DEFAULT_RETENTION_POLICY),
+    notify_mode || 'global',
+    notify_on_start !== undefined ? (notify_on_start ? 1 : 0) : 1,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : 1,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : 1,
+    normalizedExcludes,
   );
 
   const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(result.lastInsertRowid);
@@ -93,7 +169,27 @@ router.put('/configs/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Config not found' });
 
-  const { name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, enabled, notify_on_success, notify_on_failure } = req.body;
+  const { name, source_path, dest_path, cron_expression, versioning_enabled, retention_days, delta_versioning, delta_threshold, delta_max_chain, delta_keyframe_days, retention_policy, enabled, notify_mode, notify_on_start, notify_on_success, notify_on_failure, exclude_patterns } = req.body;
+  if (cron_expression !== undefined && !validateCronExpression(cron_expression)) {
+    return res.status(400).json({ error: 'cron_expression must be a valid 5-field cron expression' });
+  }
+
+  const pathCheck = validateConfigPaths(
+    source_path ?? existing.source_path,
+    dest_path ?? existing.dest_path,
+    existing.id,
+  );
+  if (!pathCheck.ok) {
+    return res.status(400).json({ error: pathCheck.error });
+  }
+  let normalizedExcludes = existing.exclude_patterns;
+  if (exclude_patterns !== undefined) {
+    try {
+      normalizedExcludes = normalizeExcludePatterns(exclude_patterns);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+  }
 
   db.prepare(`
     UPDATE ssd_backup_configs SET
@@ -101,7 +197,8 @@ router.put('/configs/:id', (req, res) => {
       versioning_enabled = ?, retention_days = ?, delta_versioning = ?,
       delta_threshold = ?, delta_max_chain = ?, delta_keyframe_days = ?,
       retention_policy = ?, enabled = ?,
-      notify_on_success = ?, notify_on_failure = ?,
+      notify_mode = ?, notify_on_start = ?, notify_on_success = ?, notify_on_failure = ?,
+      exclude_patterns = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).run(
@@ -117,8 +214,11 @@ router.put('/configs/:id', (req, res) => {
     delta_keyframe_days !== undefined ? Math.min(30, Math.max(1, parseInt(delta_keyframe_days) || 7)) : existing.delta_keyframe_days,
     retention_policy ? JSON.stringify(retention_policy) : existing.retention_policy,
     enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
+    notify_mode || existing.notify_mode || 'global',
+    notify_on_start !== undefined ? (notify_on_start ? 1 : 0) : existing.notify_on_start,
     notify_on_success !== undefined ? (notify_on_success ? 1 : 0) : existing.notify_on_success,
     notify_on_failure !== undefined ? (notify_on_failure ? 1 : 0) : existing.notify_on_failure,
+    normalizedExcludes,
     req.params.id,
   );
 
@@ -150,65 +250,60 @@ router.post('/configs/:id/run', async (req, res) => {
   if (!config) return res.status(404).json({ error: 'Config not found' });
 
   try {
-    const run = db.prepare(`
-      INSERT INTO backup_runs (feature, config_id, status) VALUES ('ssd-backup', ?, 'running')
-    `).run(config.id);
-    const runId = Number(run.lastInsertRowid);
-
-    executeSsdBackup(config.id, runId).catch(err => {
-      console.error(`[ssd-backup] Run failed for config ${config.id}:`, err.message);
+    const claim = startClaimedRun({
+      db,
+      feature: 'ssd-backup',
+      configId: config.id,
+      execute: executeSsdBackup,
+      onError: err => console.error(`[ssd-backup] Run failed for config ${config.id}:`, err.message),
     });
-
-    res.json({ runId, status: 'started' });
+    if (!claim.claimed) {
+      return res.status(409).json({ error: 'Backup is already running', activeRunId: claim.runId });
+    }
+    res.json({ runId: claim.runId, status: 'started' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// List backup runs (paginated)
-router.get('/runs', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const offset = (page - 1) * limit;
-  const configId = req.query.config_id;
-
-  let query = 'SELECT * FROM backup_runs WHERE feature = \'ssd-backup\'';
-  let countQuery = 'SELECT COUNT(*) as total FROM backup_runs WHERE feature = \'ssd-backup\'';
-  const params = [];
-
-  if (configId) {
-    query += ' AND config_id = ?';
-    countQuery += ' AND config_id = ?';
-    params.push(configId);
-  }
-
-  const total = db.prepare(countQuery).get(...params).total;
-  const runs = db.prepare(query + ' ORDER BY started_at DESC LIMIT ? OFFSET ?').all(...params, limit, offset);
-
-  res.json({
-    runs,
-    page,
-    limit,
-    total,
-    totalPages: Math.ceil(total / limit),
-  });
+// Cancel a running backup
+router.post('/runs/:id/cancel', (req, res) => {
+  const runId = parseInt(req.params.id);
+  const result = cancelFeatureRun(db, { feature: 'ssd-backup', runId, cancelProcess: cancelSsdRun });
+  if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
+  const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(result.run.config_id);
+  if (config && shouldNotify(config, 'cancel')) notifyJobCancelled('SSD Backup', config.name);
+  res.json({ status: 'cancelled' });
 });
 
-// Get run detail with file list (paginated for scale — defaults to first 1000)
-router.get('/runs/:id', (req, res) => {
-  const run = db.prepare('SELECT * FROM backup_runs WHERE id = ? AND feature = \'ssd-backup\'').get(req.params.id);
+// List backup runs (paginated)
+router.get('/runs', (req, res) => {
+  const pagination = normalizePagination(req.query);
+  res.json(listFeatureRuns(db, {
+    feature: 'ssd-backup',
+    configId: req.query.config_id,
+    ...pagination,
+  }));
+});
+
+// Lightweight active progress without file queries or aggregations
+router.get('/runs/:id/progress', (req, res) => {
+  const run = getRunProgress(db, 'ssd-backup', req.params.id, getActiveRun);
   if (!run) return res.status(404).json({ error: 'Run not found' });
+  return res.json(run);
+});
 
-  const filePage = Math.max(1, parseInt(req.query.filePage) || 1);
-  const fileLimit = Math.min(5000, Math.max(1, parseInt(req.query.fileLimit) || 1000));
-  const fileOffset = (filePage - 1) * fileLimit;
-  const totalFiles = db.prepare('SELECT COUNT(*) as count FROM backup_run_files WHERE run_id = ?').get(run.id).count;
-  const files = db.prepare('SELECT * FROM backup_run_files WHERE run_id = ? ORDER BY file_path LIMIT ? OFFSET ?').all(run.id, fileLimit, fileOffset);
-
-  // Check if still running
-  const progress = getActiveRun(run.id);
-
-  res.json({ ...run, files, totalFiles, filePage, fileLimit, liveProgress: progress || null });
+// Get run detail with file list (paginated + filterable)
+router.get('/runs/:id', (req, res) => {
+  const run = getRunDetail(db, {
+    feature: 'ssd-backup',
+    runId: req.params.id,
+    query: req.query,
+    getActiveRun,
+    includeActionCounts: true,
+  });
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  res.json(run);
 });
 
 // ===== Version Browser =====
@@ -242,7 +337,7 @@ router.get('/configs/:id/browse', async (req, res) => {
     const entries = await browseSnapshot(parseInt(req.params.id), timestamp, subPath || '');
     res.json(entries);
   } catch (err) {
-    res.status(err.message === 'Config not found' ? 404 : 500).json({ error: err.message });
+    res.status(err.status || (err.message === 'Config not found' ? 404 : 500)).json({ error: err.message });
   }
 });
 
@@ -271,8 +366,6 @@ function getMimeType(fileName) {
 router.get('/configs/:id/download', async (req, res) => {
   const { timestamp, path: filePath, inline } = req.query;
   if (!timestamp || !filePath) return res.status(400).json({ error: 'timestamp and path query parameters required' });
-  if (filePath.includes('..')) return res.status(400).json({ error: 'Invalid path' });
-
   try {
     const resolved = await resolveFilePath(parseInt(req.params.id), timestamp, filePath);
     const info = await stat(resolved.path);
@@ -296,31 +389,44 @@ router.get('/configs/:id/download', async (req, res) => {
       res.on('error', () => cleanupTempFile(resolved.path));
     }
   } catch (err) {
-    res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
+    res.status(err.status || (err.message.includes('not found') ? 404 : 500)).json({ error: err.message });
   }
 });
 
 // Restore a file from a snapshot to the source location
 router.post('/configs/:id/restore', async (req, res) => {
-  const { timestamp, path: filePath } = req.body;
+  const { timestamp, path: filePath, verify = true } = req.body;
   if (!timestamp || !filePath) return res.status(400).json({ error: 'timestamp and path are required' });
 
   try {
-    const result = await restoreFile(parseInt(req.params.id), timestamp, filePath);
+    const result = await restoreFile(parseInt(req.params.id), timestamp, filePath, { verify: verify !== false });
     res.json(result);
   } catch (err) {
-    res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
+    res.status(err.status || (err.message.includes('not found') ? 404 : 500)).json({ error: err.message });
   }
 });
 
 // Verify delta chain integrity for a config
 router.post('/configs/:id/verify-versions', async (req, res) => {
   try {
-    const result = await verifyDeltaChain(parseInt(req.params.id));
-    res.json(result);
+    const result = startVersionVerification(parseInt(req.params.id));
+    res.status(result.existing ? 200 : 202).json(result);
   } catch (err) {
     res.status(err.message === 'Config not found' ? 404 : 500).json({ error: err.message });
   }
+});
+
+router.get('/verification-runs/:id', (req, res) => {
+  const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'version-verify'").get(req.params.id);
+  if (!run) return res.status(404).json({ error: 'Verification run not found' });
+  return res.json({ ...run, liveProgress: getActiveVersionVerification(run.id) });
+});
+
+router.post('/verification-runs/:id/cancel', (req, res) => {
+  if (!cancelVersionVerification(req.params.id)) {
+    return res.status(404).json({ error: 'Active verification not found' });
+  }
+  return res.json({ status: 'cancelling' });
 });
 
 export default router;

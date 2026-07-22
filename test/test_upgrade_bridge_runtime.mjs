@@ -27,6 +27,7 @@ const commonEnv = {
   PORT: String(mainPort),
   PEER_API_PORT: String(peerPort),
   PEER_HOST: '127.0.0.1',
+  TZ: 'Europe/Amsterdam',
 };
 
 const missingAdminAuthority = spawnSync(process.execPath, [
@@ -37,6 +38,7 @@ const missingAdminAuthority = spawnSync(process.execPath, [
   env: {
     ...commonEnv,
     NODE_ENV: 'production',
+    REDMAN_UPGRADE_BRIDGE: 'true',
     TRUSTED_PROXIES: '127.0.0.1/32',
     REDMAN_ADMIN_GROUP: '',
     REDMAN_ADMIN_ROLE: '',
@@ -57,6 +59,9 @@ const server = spawn(process.execPath, [resolve(root, 'app/backend/src/index.js'
     ...commonEnv,
     NODE_ENV: 'production',
     REDMAN_UPGRADE_BRIDGE: 'true',
+    AUTH_MODE: 'proxy',
+    REDMAN_PUBLIC_ORIGIN: 'https://redman.example.com',
+    PROXY_AUTO_PROVISION_ROLE: 'admin',
     TRUSTED_PROXIES: '127.0.0.1/32,::1/128',
     REDMAN_ADMIN_GROUP: 'upgrade-admins',
     REDMAN_ADMIN_ROLE: 'Admin',
@@ -71,11 +76,13 @@ server.stderr.on('data', chunk => { output += chunk; });
 const groupHeaders = {
   'Remote-User': 'bridge-admin',
   'Remote-Groups': 'upgrade-admins',
+  Origin: 'https://redman.example.com',
   'Content-Type': 'application/json',
 };
 const roleHeaders = {
   'Remote-User': 'badger-admin',
   'Remote-Role': 'Admin',
+  Origin: 'https://redman.example.com',
   'Content-Type': 'application/json',
 };
 
@@ -98,7 +105,7 @@ try {
   assert.equal(missingIdentity.status, 401);
 
   const assessment = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness`, { headers: roleHeaders });
-  assert.equal(assessment.status, 200);
+  assert.equal(assessment.status, 200, await assessment.clone().text());
   const assessmentBody = await assessment.json();
   assert.equal(assessmentBody.suggestedTimezone, 'Europe/Amsterdam');
   assert.equal(assessmentBody.checks.find(item => item.id === 'application-backup').resolution.action.step, 1);
@@ -113,7 +120,7 @@ try {
   const unsupportedRemediation = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/remediate`, {
     method: 'POST', headers: roleHeaders, body: JSON.stringify({ issueId: 'legacy-peers' }),
   });
-  assert.equal(unsupportedRemediation.status, 400);
+  assert.equal(unsupportedRemediation.status, 400, await unsupportedRemediation.clone().text());
 
   const adminRemediation = await fetch(`http://127.0.0.1:${mainPort}/api/upgrade-readiness/remediate`, {
     method: 'POST', headers: roleHeaders, body: JSON.stringify({ issueId: 'media-deletion' }),

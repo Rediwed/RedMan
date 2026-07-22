@@ -5,7 +5,11 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
-import { autheliaAuth } from './middleware/auth.js';
+import { createMainApiAuth } from './middleware/mainAuth.js';
+import { authConfig } from './services/authConfig.js';
+import { runtimeConfig } from './services/runtimeConfig.js';
+import { authorizeApiRoute } from './services/routePermissions.js';
+import createAuthRouter from './routes/auth.js';
 import ssdBackupRoutes from './routes/ssdBackup.js';
 import hyperBackupRoutes from './routes/hyperBackup.js';
 import rcloneRoutes from './routes/rclone.js';
@@ -16,26 +20,27 @@ import peersRoutes from './routes/peers.js';
 import mediaImportRoutes from './routes/mediaImport.js';
 import filesystemRoutes from './routes/filesystem.js';
 import upgradeReadinessRoutes from './routes/upgradeReadiness.js';
+import discoveryRoutes from './routes/discovery.js';
 import { createPeerApi } from './peerApi.js';
-import { startScheduler, registerExecutor, stopAllJobs } from './services/scheduler.js';
-import { executeSsdBackup, killActiveRsyncProcesses } from './services/rsync.js';
+import { startScheduler, registerExecutor, getActiveJobCount, getRunningJobCount, stopAllJobs, startRunFileRetention, stopRunFileRetention } from './services/scheduler.js';
+import { executeSsdBackup, stopActiveRsyncProcesses } from './services/rsync.js';
 import { executeHyperBackup, notifyPeersOfShutdown } from './services/hyperBackup.js';
-import { executeRcloneJob } from './services/rclone.js';
-import { startMetricsPoller } from './services/docker.js';
-import { startDriveMonitor } from './services/driveMonitor.js';
-import { startImport } from './services/immichImport.js';
-import { startTempCleanup } from './services/deltaVersion.js';
+import { executeRcloneJob, stopActiveRcloneProcesses } from './services/rclone.js';
+import { startMetricsPoller, stopMetricsPoller } from './services/docker.js';
+import { startDriveMonitor, stopDriveMonitor } from './services/driveMonitor.js';
+import { startImport, stopActiveImportProcesses } from './services/immichImport.js';
+import { startTempCleanup, stopTempCleanup } from './services/deltaVersion.js';
+import { stopActiveVersionVerifications } from './services/versionVerification.js';
+import { getRuntimeResourceBudget } from './services/resourceBudget.js';
 import db from './db.js';
 
-// ── Global error handlers — prevent silent crashes ──────────────
-process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught exception:', err);
-  // Don't exit — let the process continue if possible
-});
+import os from 'os';
 
-process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] Unhandled promise rejection:', reason);
-});
+// Apply timezone from settings at startup
+try {
+  const tzRow = db.prepare("SELECT value FROM settings WHERE key = 'timezone'").get();
+  if (tzRow?.value && tzRow.value !== 'system') process.env.TZ = tzRow.value;
+} catch { /* settings table may not exist yet */ }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -45,13 +50,22 @@ const dataDir = join(__dirname, '..', 'data');
 if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '8090');
-const PEER_PORT = parseInt(process.env.PEER_API_PORT || '8091');
-const UPGRADE_BRIDGE_MODE = process.env.NODE_ENV === 'production'
-  ? process.env.REDMAN_UPGRADE_BRIDGE !== 'false'
-  : process.env.REDMAN_UPGRADE_BRIDGE === 'true';
+const UPGRADE_BRIDGE_MODE = process.env.REDMAN_UPGRADE_BRIDGE === 'true';
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      'upgrade-insecure-requests': null,
+    },
+  },
+  // Explicitly set HSTS + nosniff so they're enforced even when not behind Traefik.
+  // Helmet 8 enables these by default; restated here so a future helmet config
+  // change doesn't silently drop them.
+  strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true, preload: false },
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
     ? [process.env.CORS_ORIGIN || 'http://localhost:8090']
@@ -73,19 +87,46 @@ app.get('/api/health', (req, res) => {
     platform: null,
     nodeVersion: null,
     activeJobs: null,
+    runningJobs: null,
     memory: null,
     pid: null,
     upgradeBridge: UPGRADE_BRIDGE_MODE,
   });
 });
 
-// Authelia forward auth for all API routes
-app.use('/api', autheliaAuth);
+const mainApiAuth = createMainApiAuth(db, authConfig);
+app.use('/api/auth', createAuthRouter({ db, config: authConfig, mainApiAuth }));
+app.use('/api', mainApiAuth, authorizeApiRoute);
 
 app.use('/api', (req, res, next) => {
   if (!UPGRADE_BRIDGE_MODE || ['GET', 'HEAD', 'OPTIONS'].includes(req.method)
       || req.path.startsWith('/upgrade-readiness')) return next();
   return res.status(503).json({ error: 'RedMan is in upgrade-bridge maintenance mode; backup and configuration mutations are paused' });
+});
+
+app.get('/api/health/details', (req, res) => {
+  const mem = process.memoryUsage();
+  const schedulerRunning = getRunningJobCount();
+  const dbRunning = db.prepare("SELECT COUNT(*) as count FROM backup_runs WHERE status = 'running'").get().count;
+  res.json({
+    status: 'ok',
+    version: '1.1.9',
+    timestamp: new Date().toISOString(),
+    uptime: Math.round((Date.now() - startedAt) / 1000),
+    hostname: os.hostname(),
+    platform: `${os.type()} ${os.release()}`,
+    nodeVersion: process.version,
+    activeJobs: getActiveJobCount(),
+    runningJobs: Math.max(schedulerRunning, dbRunning),
+    memory: {
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+    },
+    resourceBudget: getRuntimeResourceBudget(),
+    pid: process.pid,
+    upgradeBridge: UPGRADE_BRIDGE_MODE,
+  });
 });
 
 // Mount API routes
@@ -99,6 +140,7 @@ app.use('/api/peers', peersRoutes);
 app.use('/api/media-import', mediaImportRoutes);
 app.use('/api/filesystem', filesystemRoutes);
 app.use('/api/upgrade-readiness', upgradeReadinessRoutes);
+app.use('/api/discovery', discoveryRoutes);
 
 // In production, serve the built frontend
 const publicDir = join(__dirname, '..', 'public');
@@ -109,14 +151,21 @@ if (existsSync(publicDir)) {
   });
 }
 
+// Global JSON error handler — must be after all routes, before scheduled jobs
+// Catches any unhandled sync throws (e.g. from SQLite or crypto) so we return JSON not HTML
+app.use((err, req, res, next) => {
+  console.error('[app] Unhandled error:', err);
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+});
+
 // Register scheduled job executors
 registerExecutor('ssd-backup', executeSsdBackup);
 registerExecutor('hyper-backup', executeHyperBackup);
 registerExecutor('rclone', executeRcloneJob);
 
 // Start main server
-app.listen(PORT, () => {
-  console.log(`🖥️  RedMan running on http://localhost:${PORT}`);
+const mainServer = app.listen(runtimeConfig.mainPort, () => {
+  console.log(`🖥️  RedMan running on http://localhost:${runtimeConfig.mainPort}`);
 
   // Clean up orphaned "running" jobs from previous crashes
   const orphaned = db.prepare(`
@@ -137,6 +186,7 @@ app.listen(PORT, () => {
   startScheduler();
   startMetricsPoller();
   startTempCleanup();
+  startRunFileRetention();
 
   // Start drive monitor for media import — auto-import on attach if configured
   startDriveMonitor((driveRow) => {
@@ -150,12 +200,13 @@ app.listen(PORT, () => {
 });
 
 // Start peer API on separate port
+let peerServer = null;
 if (UPGRADE_BRIDGE_MODE) {
   console.log('[upgrade-bridge] Peer API paused during host preparation');
 } else {
   const peerApp = createPeerApi();
-  peerApp.listen(PEER_PORT, () => {
-    console.log(`🔗 Peer API running on http://localhost:${PEER_PORT}`);
+  peerServer = peerApp.listen(runtimeConfig.peerApiPort, () => {
+    console.log(`🔗 Peer API running on http://localhost:${runtimeConfig.peerApiPort}`);
   });
 }
 
@@ -165,26 +216,55 @@ process.on('SIGHUP', () => {
   // Ignore — keeps the process alive when the parent shell exits
 });
 
+function closeServer(server) {
+  return new Promise(resolve => {
+    if (!server?.listening) {
+      resolve();
+      return;
+    }
+    server.close(() => { resolve(); });
+  });
+}
+
 let shuttingDown = false;
-async function shutdown(signal) {
+async function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[shutdown] Received ${signal}, shutting down gracefully...`);
+  const hardExit = setTimeout(() => {
+    console.error('[shutdown] Grace period exceeded; forcing exit.');
+    process.exit(exitCode || 1);
+  }, 20000);
+  hardExit.unref?.();
 
-  // 1. Stop all scheduled cron jobs so no new work starts
+  // Stop accepting work and clear every background timer.
+  const serverClose = Promise.allSettled([closeServer(mainServer), closeServer(peerServer)]);
   stopAllJobs();
+  stopRunFileRetention();
+  stopMetricsPoller();
+  stopDriveMonitor();
+  stopTempCleanup();
 
-  // 2. Notify connected peers that we're going offline
+  // Notify peers before terminating transfer processes.
   try {
     await notifyPeersOfShutdown();
   } catch (err) {
     console.warn(`[shutdown] Peer notification error:`, err.message);
   }
 
-  // 3. Kill active rsync child processes
-  killActiveRsyncProcesses();
+  const processResults = await Promise.allSettled([
+    stopActiveRsyncProcesses(10000),
+    stopActiveRcloneProcesses(10000),
+    stopActiveImportProcesses(10000),
+    stopActiveVersionVerifications(),
+  ]);
+  for (const result of processResults) {
+    if (result.status === 'fulfilled' && result.value.forced > 0) {
+      console.warn(`[shutdown] Force-killed ${result.value.forced} child process(es)`);
+    }
+  }
 
-  // 4. Mark any still-running jobs as failed in DB
+  // Mark only rows that remain running after children had time to settle.
   try {
     const interrupted = db.prepare(`
       UPDATE backup_runs SET status = 'failed', completed_at = datetime('now'),
@@ -196,9 +276,20 @@ async function shutdown(signal) {
     }
   } catch {}
 
-  console.log('[shutdown] Cleanup complete, exiting.');
-  process.exit(0);
+  await serverClose;
+  try { db.close(); } catch {}
+  clearTimeout(hardExit);
+  console.log(`[shutdown] Cleanup complete, exiting with code ${exitCode}.`);
+  process.exit(exitCode);
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err);
+  shutdown('uncaughtException', 1).catch(() => process.exit(1));
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled promise rejection:', reason);
+  shutdown('unhandledRejection', 1).catch(() => process.exit(1));
+});

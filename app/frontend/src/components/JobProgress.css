@@ -29,6 +29,16 @@
   font-family: var(--font-mono);
 }
 
+.job-progress-cancel {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  gap: 0.25rem;
+}
+
+.job-progress-cancel:hover {
+  color: var(--color-danger);
+}
+
 .job-progress-bar-row {
   display: flex;
   align-items: center;
@@ -42,6 +52,7 @@
   background: var(--color-bg);
   border-radius: 3px;
   overflow: hidden;
+  position: relative;
 }
 
 .job-progress-pct {
@@ -58,6 +69,24 @@
   background: var(--color-primary);
   border-radius: 3px;
   transition: width 0.5s ease;
+}
+
+.job-progress-fill.scan-phase {
+  position: absolute;
+  left: 0;
+  background: var(--color-primary);
+  transition: width 0.5s ease;
+}
+
+.job-progress-fill.upload-phase {
+  position: absolute;
+  left: 0;
+  background: var(--color-success, #22c55e);
+  transition: width 0.5s ease;
+}
+
+.job-progress-pct.upload-color {
+  color: var(--color-success, #22c55e);
 }
 
 .job-progress-fill.indeterminate {

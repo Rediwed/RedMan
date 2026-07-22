@@ -1,29 +1,41 @@
 // Docker service — container management + metrics collection
 // Connects to Docker Engine API via socket
 
-import Docker from 'dockerode';
 import db from '../db.js';
+import { createDockerClient, executeDockerControlAction } from './dockerClient.js';
 
 let docker = null;
+let dockerControl = null;
 let pollInterval = null;
+let initialPollTimer = null;
 
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row?.value || '';
 }
 
-function getDocker() {
+export function getDockerClient() {
   if (!docker) {
-    const socketPath = getSetting('docker_socket') || '/var/run/docker.sock';
-    docker = new Docker({ socketPath });
+    const endpoint = getSetting('docker_socket') || process.env.DOCKER_HOST || '';
+    if (!endpoint) throw new Error('Docker monitoring is not configured');
+    docker = createDockerClient(endpoint);
   }
   return docker;
+}
+
+function getDockerControlClient() {
+  if (!dockerControl) {
+    const endpoint = process.env.DOCKER_CONTROL_HOST || '';
+    if (!endpoint) throw new Error('Docker container control is not configured');
+    dockerControl = createDockerClient(endpoint);
+  }
+  return dockerControl;
 }
 
 // List all containers with basic info
 export async function listContainers() {
   try {
-    const containers = await getDocker().listContainers({ all: true });
+    const containers = await getDockerClient().listContainers({ all: true });
     return containers.map(c => ({
       id: c.Id.slice(0, 12),
       name: c.Names[0]?.replace(/^\//, '') || c.Id.slice(0, 12),
@@ -43,22 +55,18 @@ export async function listContainers() {
   }
 }
 
-// Execute container action (start/stop/restart)
-const ALLOWED_ACTIONS = ['start', 'stop', 'restart'];
-
 export async function containerAction(containerId, action) {
-  if (!ALLOWED_ACTIONS.includes(action)) {
-    throw new Error(`Action '${action}' not allowed. Allowed: ${ALLOWED_ACTIONS.join(', ')}`);
-  }
-
-  const container = getDocker().getContainer(containerId);
-  await container[action]();
-  return { success: true, action, containerId };
+  return executeDockerControlAction(
+    getDockerClient(),
+    getDockerControlClient(),
+    containerId,
+    action,
+  );
 }
 
 // Get real-time stats for a container (single snapshot)
 export async function getContainerStats(containerId) {
-  const container = getDocker().getContainer(containerId);
+  const container = getDockerClient().getContainer(containerId);
   const stats = await container.stats({ stream: false });
   return parseStats(stats, containerId);
 }
@@ -86,22 +94,17 @@ function parseStats(stats, containerId) {
 // Background metrics poller
 export function startMetricsPoller() {
   const intervalSec = parseInt(getSetting('metrics_poll_interval') || '30');
-  const retentionHours = parseInt(getSetting('metrics_retention_hours') || '24');
 
-  console.log(`[docker] Starting metrics poller (${intervalSec}s interval, ${retentionHours}h retention)`);
+  console.log(`[docker] Starting metrics poller (${intervalSec}s interval)`);
 
   const insertMetric = db.prepare(`
     INSERT INTO container_metrics (container_id, container_name, cpu_percent, memory_usage, memory_limit)
     VALUES (?, ?, ?, ?, ?)
   `);
 
-  const purgeOld = db.prepare(`
-    DELETE FROM container_metrics WHERE recorded_at < datetime('now', ? || ' hours')
-  `);
-
   async function poll() {
     try {
-      const containers = await getDocker().listContainers({ filters: { status: ['running'] } });
+      const containers = await getDockerClient().listContainers({ filters: { status: ['running'] } });
 
       for (const c of containers) {
         try {
@@ -113,19 +116,21 @@ export function startMetricsPoller() {
         }
       }
 
-      // Purge old metrics
-      purgeOld.run(`-${retentionHours}`);
     } catch (err) {
       // Docker not available — silently skip (common in dev)
     }
   }
 
   // Initial poll after a short delay
-  setTimeout(poll, 5000);
+  initialPollTimer = setTimeout(poll, 5000);
   pollInterval = setInterval(poll, intervalSec * 1000);
 }
 
 export function stopMetricsPoller() {
+  if (initialPollTimer) {
+    clearTimeout(initialPollTimer);
+    initialPollTimer = null;
+  }
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;
@@ -145,7 +150,7 @@ export function getMetrics(containerId, hours = 24) {
 // Check if Docker is reachable
 export async function isDockerAvailable() {
   try {
-    await getDocker().ping();
+    await getDockerClient().ping();
     return true;
   } catch {
     return false;

@@ -11,10 +11,20 @@ import {
   backupDatabase, scanForRecoverableConfigs, recoverConfigFromFilesystem,
   getAvailableDbBackups, restoreDbFromBackup,
 } from '../services/dbBackup.js';
+import { validateSettingsUpdates } from '../services/settingsPolicy.js';
+import { validateSshConnectionTarget } from '../services/sshConnectionPolicy.js';
 
 const router = Router();
 
-const SENSITIVE_KEYS = ['ntfy_token', 'ntfy_auth_token', 'ntfy_password', 'peer_api_key', 'immich_api_key'];
+const SENSITIVE_KEYS = ['ntfy_auth_token', 'ntfy_password', 'peer_api_key', 'immich_api_key'];
+
+const PUBLIC_SETTING_KEYS = ['instance_name', 'user_name', 'timezone', 'date_format', 'time_format'];
+
+router.get('/public', (req, res) => {
+  const placeholders = PUBLIC_SETTING_KEYS.map(() => '?').join(', ');
+  const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`).all(...PUBLIC_SETTING_KEYS);
+  res.json(Object.fromEntries(rows.map(row => [row.key, row.value])));
+});
 
 // Get all settings
 router.get('/', (req, res) => {
@@ -32,9 +42,15 @@ router.get('/', (req, res) => {
 
 // Update one or more settings
 router.put('/', (req, res) => {
-  const updates = req.body;
-  if (!updates || typeof updates !== 'object') {
-    return res.status(400).json({ error: 'Request body must be an object of key-value pairs' });
+  const requested = { ...req.body };
+  for (const key of SENSITIVE_KEYS) {
+    if (requested[key] === '••••••••') delete requested[key];
+  }
+  let updates;
+  try {
+    updates = validateSettingsUpdates(requested);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 
   const upsert = db.prepare(`
@@ -44,13 +60,17 @@ router.put('/', (req, res) => {
 
   const updateAll = db.transaction(() => {
     for (const [key, value] of Object.entries(updates)) {
-      // Don't overwrite sensitive values with masked placeholders
-      if (SENSITIVE_KEYS.includes(key) && value === '••••••••') continue;
-      upsert.run(key, String(value));
+      upsert.run(key, value);
     }
   });
 
   updateAll();
+
+  // Update process timezone if changed
+  if (updates.timezone && updates.timezone !== 'system') {
+    process.env.TZ = updates.timezone;
+  }
+
   res.json({ success: true });
 });
 
@@ -97,8 +117,13 @@ router.post('/ssh/authorize-localhost', (req, res) => {
 router.post('/ssh/test', async (req, res) => {
   const { host, user, port } = req.body;
   if (!host) return res.status(400).json({ error: 'host is required' });
-  const result = await testSshConnection(host, user || 'root', port || 22);
-  res.json(result);
+  try {
+    const target = validateSshConnectionTarget(host, user || 'redman-backup', port || 22);
+    const result = await testSshConnection(target.host, target.user, target.port);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ===== Database Backup & Recovery =====
@@ -110,7 +135,7 @@ router.post('/db/backup', async (req, res) => {
     return res.status(400).json({ error: 'dest_path is required' });
   }
   try {
-    const path = await backupDatabase(dest_path);
+    const path = await backupDatabase(dest_path, { force: true });
     res.json({ success: true, path });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -127,7 +152,7 @@ router.post('/db/backup-all', async (req, res) => {
     const results = [];
     for (const config of configs) {
       try {
-        const path = await backupDatabase(config.dest_path);
+        const path = await backupDatabase(config.dest_path, { force: true });
         results.push({ dest: config.dest_path, name: config.name, path, success: true });
       } catch (err) {
         results.push({ dest: config.dest_path, name: config.name, error: err.message, success: false });

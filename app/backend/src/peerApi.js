@@ -3,12 +3,23 @@
 // Authenticated via per-peer Bearer API keys (not Authelia)
 
 import express from 'express';
-import { execFileSync } from 'child_process';
+import { readdirSync, statSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
 import rateLimit from 'express-rate-limit';
 import { peerAuth } from './middleware/auth.js';
 import { normalizePath, isWithinPrefix, validateDirection } from './middleware/validation.js';
+import { safeIp } from './utils/logRedact.js';
 import db from './db.js';
-import { notifyJobError } from './services/notify.js';
+import { notifyJobError, sendBrowser } from './services/notify.js';
+import { receiveRequest, handlePairingCallback } from './services/pairing.js';
+import { getShares } from './services/unraid.js';
+import { HANDSHAKE_VERSION, validatePairingCallbackEnvelope } from './services/handshake.js';
+import { validateSignedCallbackUrl } from './services/peerUrlPolicy.js';
+import { failRunningHyperRunsForPeer, getPeerOwnedHyperRun } from './services/peerRunIsolation.js';
+import { assertLocalSourceHasEntries } from './services/sourceHealth.js';
+import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './services/pathConfinement.js';
+import { getQuotaUsage, invalidateQuotaUsage } from './services/quotaUsage.js';
+import { requirePeerHost, runtimeConfig } from './services/runtimeConfig.js';
 
 const logAudit = db.prepare(`
   INSERT INTO peer_audit_log (peer_id, peer_name, action, details, ip_address)
@@ -17,7 +28,6 @@ const logAudit = db.prepare(`
 
 export function createPeerApi() {
   const app = express();
-  app.use(express.json());
 
   // Rate limiting — 120 req/min for all peer requests
   app.use(rateLimit({
@@ -28,7 +38,96 @@ export function createPeerApi() {
     message: { error: 'Too many requests, try again later' },
   }));
 
-  // All peer routes require API key auth
+  const pairingLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many pairing attempts, try again later' },
+  });
+  app.use(['/peer/pair/request', '/peer/pair/callback'], pairingLimiter);
+  app.use(express.json({ limit: '32kb', strict: true }));
+
+  // Discovery endpoint — unauthenticated, returns minimal instance info for network scanning
+  app.get('/peer/discover', (req, res) => {
+    const instanceName = db.prepare('SELECT value FROM settings WHERE key = ?').get('instance_name');
+    res.json({
+      service: 'redman',
+      instance: instanceName?.value || 'RedMan',
+      version: '1.1.9',
+    });
+  });
+
+  // ── Pairing endpoints — unauthenticated (before peerAuth middleware) ──
+
+  // Receive an incoming pairing request from another RedMan instance
+  // V2: Requires Noise XX handshake fields (ephemeral_pubkey, static_pubkey, signature)
+  app.post('/peer/pair/request', (req, res) => {
+    const body = req.body;
+    // Prefer the socket peer address — X-Forwarded-For is attacker-controlled unless behind a trusted proxy
+    const ip = safeIp(req.socket?.remoteAddress || req.headers['x-forwarded-for']);
+
+    if (!body.version || body.version < HANDSHAKE_VERSION) {
+      return res.status(426).json({
+        error: `Upgrade Required — this instance requires handshake version ${HANDSHAKE_VERSION}. Update RedMan on the sending peer.`,
+        required_version: HANDSHAKE_VERSION,
+      });
+    }
+
+    if (!body.instance || !body.token) {
+      return res.status(400).json({ error: 'instance and token are required' });
+    }
+
+    const cleanIp = ip.replace(/^::ffff:/, '');
+    let actualCallbackUrl;
+    try {
+      actualCallbackUrl = validateSignedCallbackUrl(body.callback_url);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const result = receiveRequest(body, actualCallbackUrl, cleanIp);
+    if (result.error) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    // Send SSE notification to browser
+    sendBrowser('pairing_request', `🔗 Pairing Request`, `${body.instance} wants to connect`);
+
+    res.json(result);
+  });
+
+  // Receive a pairing callback (initiator gets this when remote accepts)
+  // V2: Contains encrypted payload — no cleartext API key
+  app.post('/peer/pair/callback', (req, res) => {
+    const body = req.body;
+
+    if (!body.version || body.version < HANDSHAKE_VERSION) {
+      return res.status(426).json({
+        error: `Upgrade Required — handshake version ${HANDSHAKE_VERSION} required`,
+        required_version: HANDSHAKE_VERSION,
+      });
+    }
+
+    if (!body.token || !body.encrypted_payload) {
+      return res.status(400).json({ error: 'token and encrypted_payload are required' });
+    }
+    const envelopeError = validatePairingCallbackEnvelope(body);
+    if (envelopeError) return res.status(400).json({ error: envelopeError });
+
+    try {
+      const result = handlePairingCallback(body);
+      if (result.error) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (err) {
+      console.error('[peerApi] handlePairingCallback threw:', err);
+      res.status(500).json({ error: err.message || 'Callback processing failed' });
+    }
+  });
+
+  // All peer routes below require API key auth
   app.use(peerAuth(db));
 
   // Health check — returns instance info
@@ -44,7 +143,7 @@ export function createPeerApi() {
   });
 
   // Prepare for incoming backup (remote wants to push/pull)
-  app.post('/peer/backup/prepare', (req, res) => {
+  app.post('/peer/backup/prepare', async (req, res) => {
     const { direction, remotePath, runId } = req.body;
 
     if (!direction || !remotePath) {
@@ -53,6 +152,13 @@ export function createPeerApi() {
 
     if (!validateDirection(direction)) {
       return res.status(400).json({ error: 'direction must be "push" or "pull"' });
+    }
+
+    let advertisedPeerHost;
+    try {
+      advertisedPeerHost = requirePeerHost();
+    } catch (err) {
+      return res.status(err.status || 500).json({ error: err.message });
     }
 
     // Normalize and validate path against peer's allowed prefix
@@ -72,19 +178,43 @@ export function createPeerApi() {
       });
     }
 
+    let confinedPath;
+    if (direction === 'pull') {
+      try {
+        confinedPath = resolveExistingPathWithinPrefix(normalizedPath, req.peer.allowed_path_prefix).path;
+        await assertLocalSourceHasEntries(confinedPath, 'Hyper Backup remote source');
+      } catch (err) {
+        return res.status(409).json({ error: err.message });
+      }
+    } else {
+      try {
+        confinedPath = ensureDirectoryWithinPrefix(normalizedPath, req.peer.allowed_path_prefix).path;
+      } catch (err) {
+        return res.status(409).json({ error: err.message });
+      }
+    }
+
+    let quotaUsage = null;
     // Check storage quota if the peer is pushing data to us
     if (direction === 'push' && req.peer.storage_limit_bytes > 0) {
-      const usage = getDiskUsage(normalizedPath);
-      if (usage >= 0 && usage >= req.peer.storage_limit_bytes) {
-        const usedGB = (usage / (1024 ** 3)).toFixed(2);
+      const quotaRoot = resolveExistingPathWithinPrefix(req.peer.allowed_path_prefix, req.peer.allowed_path_prefix).path;
+      quotaUsage = await getQuotaUsage(quotaRoot);
+      if (quotaUsage.usedBytes === null) {
+        return res.status(503).json({
+          error: `Storage usage unavailable: ${quotaUsage.unavailableReason}`,
+          limitBytes: req.peer.storage_limit_bytes,
+        });
+      }
+      if (quotaUsage.usedBytes >= req.peer.storage_limit_bytes) {
+        const usedGB = (quotaUsage.usedBytes / (1024 ** 3)).toFixed(2);
         const limitGB = (req.peer.storage_limit_bytes / (1024 ** 3)).toFixed(2);
         logAudit.run(req.peer.id, req.peer.name, 'quota_exceeded', JSON.stringify({
-          remotePath: normalizedPath, usedBytes: usage,
+          remotePath: normalizedPath, usedBytes: quotaUsage.usedBytes,
           limitBytes: req.peer.storage_limit_bytes, runId,
         }), req.peerIp);
         return res.status(507).json({
           error: `Storage quota exceeded: using ${usedGB} GB of ${limitGB} GB allowed`,
-          usedBytes: usage,
+          usedBytes: quotaUsage.usedBytes,
           limitBytes: req.peer.storage_limit_bytes,
         });
       }
@@ -96,8 +226,11 @@ export function createPeerApi() {
 
     const storageInfo = {};
     if (req.peer.storage_limit_bytes > 0) {
-      const usage = getDiskUsage(normalizedPath);
-      storageInfo.usedBytes = usage >= 0 ? usage : null;
+      if (!quotaUsage) {
+        const quotaRoot = resolveExistingPathWithinPrefix(req.peer.allowed_path_prefix, req.peer.allowed_path_prefix).path;
+        quotaUsage = await getQuotaUsage(quotaRoot);
+      }
+      storageInfo.usedBytes = quotaUsage.usedBytes;
       storageInfo.limitBytes = req.peer.storage_limit_bytes;
     }
 
@@ -105,9 +238,9 @@ export function createPeerApi() {
       ok: true,
       message: 'Ready for backup',
       runId,
-      sshHost: getLocalIp(),
-      sshUser: process.env.SSH_USER || 'root',
-      sshPort: parseInt(process.env.SSH_PORT || '22'),
+      sshHost: advertisedPeerHost,
+      sshUser: runtimeConfig.sshUser,
+      sshPort: runtimeConfig.sshPort,
       storage: Object.keys(storageInfo).length > 0 ? storageInfo : undefined,
     });
   });
@@ -119,12 +252,18 @@ export function createPeerApi() {
       runId, status, stats: stats || null,
     }), req.peerIp);
     console.log(`[peer] Backup run ${runId} from ${req.peer.name} completed: ${status}`);
+    try {
+      const quotaRoot = resolveExistingPathWithinPrefix(req.peer.allowed_path_prefix, req.peer.allowed_path_prefix).path;
+      invalidateQuotaUsage(quotaRoot);
+    } catch {
+      invalidateQuotaUsage();
+    }
     res.json({ ok: true, acknowledged: true });
   });
 
   // Check status of an active transfer
   app.get('/peer/backup/status/:runId', (req, res) => {
-    const run = db.prepare('SELECT * FROM backup_runs WHERE id = ?').get(req.params.runId);
+    const run = getPeerOwnedHyperRun(db, req.params.runId, req.peer.static_pubkey);
     if (!run) return res.status(404).json({ error: 'Run not found' });
     logAudit.run(req.peer.id, req.peer.name, 'status_check', JSON.stringify({
       runId: req.params.runId,
@@ -142,30 +281,10 @@ export function createPeerApi() {
       reason: reason || 'graceful shutdown',
     }), req.peerIp);
 
-    // Update last_seen_at
-    db.prepare('UPDATE authorized_peers SET last_seen_at = datetime(\'now\') WHERE id = ?').run(req.peer.id);
+    // Update last_seen_at and last_seen_ip
+    db.prepare('UPDATE authorized_peers SET last_seen_at = datetime(\'now\'), last_seen_ip = ? WHERE id = ?').run(req.peerIp, req.peer.id);
 
-    // Fail any running hyper backup jobs targeting this peer
-    const jobs = db.prepare(`
-      SELECT hj.id, hj.name, hj.remote_url FROM hyper_backup_jobs hj
-      INNER JOIN backup_runs br ON br.config_id = hj.id AND br.feature = 'hyper-backup'
-      WHERE br.status = 'running'
-    `).all();
-
-    let affectedCount = 0;
-    for (const job of jobs) {
-      try {
-        const jobUrl = new URL(job.remote_url);
-        const peerHost = req.ip || req.peerIp;
-        // Match by peer identity — the peer that sent the shutdown is the one we care about
-        db.prepare(`
-          UPDATE backup_runs SET status = 'failed', completed_at = datetime('now'),
-            error_message = 'Remote peer "' || ? || '" is shutting down'
-          WHERE config_id = ? AND feature = 'hyper-backup' AND status = 'running'
-        `).run(peerName, job.id);
-        affectedCount++;
-      } catch {}
-    }
+    const affectedCount = failRunningHyperRunsForPeer(db, req.peer.static_pubkey, peerName);
 
     if (affectedCount > 0) {
       console.log(`[peer] Marked ${affectedCount} active job(s) as failed due to peer "${peerName}" shutting down`);
@@ -178,10 +297,17 @@ export function createPeerApi() {
   });
 
   // Get storage usage and quota for this peer
-  app.get('/peer/storage', (req, res) => {
+  app.get('/peer/storage', async (req, res) => {
     const prefix = req.peer.allowed_path_prefix;
     const limitBytes = req.peer.storage_limit_bytes || 0;
-    const usedBytes = getDiskUsage(prefix);
+    let confinedPrefix;
+    try {
+      confinedPrefix = resolveExistingPathWithinPrefix(prefix, prefix).path;
+    } catch (err) {
+      return res.status(409).json({ error: err.message });
+    }
+    const usage = await getQuotaUsage(confinedPrefix);
+    const usedBytes = usage.usedBytes;
 
     logAudit.run(req.peer.id, req.peer.name, 'storage_check', JSON.stringify({
       prefix, usedBytes, limitBytes,
@@ -190,33 +316,135 @@ export function createPeerApi() {
     res.json({
       ok: true,
       prefix,
-      usedBytes: usedBytes >= 0 ? usedBytes : null,
+      usedBytes,
       limitBytes,
       unlimited: limitBytes === 0,
-      usedPercent: limitBytes > 0 && usedBytes >= 0
+      usedPercent: limitBytes > 0 && usedBytes !== null
         ? Math.round((usedBytes / limitBytes) * 100)
         : null,
+      cached: usage.cached,
+      usageUnavailable: usage.unavailableReason,
     });
   });
 
+  // Browse directories on this peer — scoped to allowed_path_prefix
+  app.get('/peer/browse', (req, res) => {
+    const prefix = req.peer.allowed_path_prefix;
+    const dir = req.query.dir || prefix;
+
+    // Normalize and validate path
+    const normalizedDir = normalizePath(dir);
+    if (!normalizedDir) {
+      return res.status(400).json({ error: 'Invalid directory path' });
+    }
+
+    // Enforce path prefix — peer can only browse within their allowed prefix
+    if (!isWithinPrefix(normalizedDir, prefix)) {
+      logAudit.run(req.peer.id, req.peer.name, 'browse_rejected', JSON.stringify({
+        dir: normalizedDir, allowedPrefix: prefix,
+      }), req.peerIp);
+      return res.status(403).json({
+        error: `Path "${normalizedDir}" is outside allowed prefix "${prefix}"`,
+      });
+    }
+
+    try {
+      if (!existsSync(normalizedDir)) {
+        return res.status(404).json({ error: 'Directory not found' });
+      }
+
+      const confined = resolveExistingPathWithinPrefix(normalizedDir, prefix);
+      const confinedDir = confined.path;
+      const stat = statSync(confinedDir);
+      if (!stat.isDirectory()) {
+        return res.status(400).json({ error: 'Path is not a directory' });
+      }
+
+      const rawEntries = readdirSync(confinedDir, { withFileTypes: true });
+      const entries = [];
+
+      for (const entry of rawEntries) {
+        if (entry.name.startsWith('.')) continue;
+        if (!entry.isDirectory()) continue;
+
+        const fullPath = join(confinedDir, entry.name);
+
+        try {
+          const confinedEntry = resolveExistingPathWithinPrefix(fullPath, confined.prefix);
+          entries.push({ name: entry.name, path: confinedEntry.path, type: 'directory' });
+        } catch { /* permission denied — skip */ }
+      }
+
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+
+      // Clamp parent to the allowed prefix (don't let them navigate above it)
+      const rawParent = dirname(confinedDir);
+      const parent = isWithinPrefix(rawParent, confined.prefix) ? rawParent : confined.prefix;
+
+      logAudit.run(req.peer.id, req.peer.name, 'browse', JSON.stringify({
+        dir: normalizedDir,
+      }), req.peerIp);
+
+      res.json({
+        current: confinedDir,
+        parent,
+        prefix: confined.prefix,
+        entries,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get filesystem roots on this peer — scoped to allowed_path_prefix
+  app.get('/peer/roots', (req, res) => {
+    const prefix = req.peer.allowed_path_prefix;
+    let confinedPrefix;
+    try {
+      confinedPrefix = resolveExistingPathWithinPrefix(prefix, prefix).path;
+    } catch (err) {
+      return res.status(409).json({ error: err.message });
+    }
+    const roots = [{ name: confinedPrefix.split('/').pop() || confinedPrefix, path: confinedPrefix, icon: 'folder' }];
+
+    logAudit.run(req.peer.id, req.peer.name, 'roots', null, req.peerIp);
+    res.json(roots);
+  });
+
+  // Get Unraid shares on this peer — scoped to allowed_path_prefix
+  app.get('/peer/shares', async (req, res) => {
+    const prefix = req.peer.allowed_path_prefix;
+
+    try {
+      const allShares = await getShares();
+
+      // Filter shares to those within the allowed prefix
+      const filtered = allShares.filter(s => {
+        const sharePath = s.userPath || s.cachePath || s.path;
+        if (!sharePath) return false;
+        try {
+          resolveExistingPathWithinPrefix(sharePath, prefix);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+
+      logAudit.run(req.peer.id, req.peer.name, 'shares', JSON.stringify({
+        total: allShares.length, visible: filtered.length,
+      }), req.peerIp);
+
+      res.json(filtered);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Global JSON error handler for peer API — catches any unhandled throws (crypto, SQLite, etc.)
+  app.use((err, req, res, next) => {
+    if (!err.status || err.status >= 500) console.error('[peerApi] Unhandled error:', err);
+    res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  });
+
   return app;
-}
-
-// Get disk usage of a path in bytes using du
-function getDiskUsage(dirPath) {
-  try {
-    const output = execFileSync('du', ['-sk', dirPath], {
-      encoding: 'utf-8', timeout: 30000,
-    });
-    const kb = parseInt(output.split('\t')[0]);
-    return isNaN(kb) ? -1 : kb * 1024;
-  } catch {
-    return -1;
-  }
-}
-
-function getLocalIp() {
-  // In production, advertise the numeric private/VPN address reachable by peers.
-  // Fallback to hostname for dev
-  return process.env.PEER_HOST || '0.0.0.0';
 }

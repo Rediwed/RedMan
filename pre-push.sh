@@ -10,6 +10,8 @@
 #   ./pre-push.sh --quick         # Compat only + small integration test
 #   ./pre-push.sh --compat-only   # Backward compatibility checks only (no integration)
 #   ./pre-push.sh --skip-build    # Skip Docker build verification
+#   ./pre-push.sh --deploy --custom       # Deploy generic env target
+#   ./pre-push.sh --deploy --profile NAME # Deploy a local named profile
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -21,29 +23,48 @@ SCALE="medium"
 RUN_INTEGRATION=true
 RUN_BUILD=true
 KEEP_DATA=false
+RUN_DEPLOY=false
+DEPLOY_TARGET_MODE=""
+DEPLOY_PROFILE=""
 
 # ── Parse args ──
-for arg in "$@"; do
-  case "$arg" in
-    --quick)        SCALE="small" ;;
-    --compat-only)  RUN_INTEGRATION=false ;;
-    --skip-build)   RUN_BUILD=false ;;
-    --keep-data)    KEEP_DATA=true ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick)        SCALE="small"; shift ;;
+    --compat-only)  RUN_INTEGRATION=false; shift ;;
+    --skip-build)   RUN_BUILD=false; shift ;;
+    --deploy)       RUN_DEPLOY=true; shift ;;
+    --custom)       DEPLOY_TARGET_MODE="custom"; shift ;;
+    --profile)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "--profile requires a name" >&2; exit 2; }
+      DEPLOY_TARGET_MODE="profile"
+      DEPLOY_PROFILE="$2"
+      shift 2
+      ;;
+    --keep-data)    KEEP_DATA=true; shift ;;
     --help|-h)
-      echo "Usage: ./pre-push.sh [--quick|--compat-only|--skip-build|--keep-data]"
+      echo "Usage: ./pre-push.sh [--quick|--compat-only|--skip-build|--deploy (--custom|--profile NAME)|--keep-data]"
       echo ""
       echo "  --quick         Use small scale instead of medium for faster runs"
       echo "  --compat-only   Only run backward compatibility checks (no integration)"
       echo "  --skip-build    Skip frontend build verification"
+      echo "  --deploy        After all tests pass, deploy the explicitly selected target"
+      echo "  --custom        Use the generic REDMAN_DEPLOY_* target"
+      echo "  --profile NAME  Use a local .redman-deploy-profiles.sh target"
       echo "  --keep-data     Don't clean up test data after integration tests"
       exit 0
       ;;
     *)
-      echo "Unknown option: $arg (use --help for usage)"
+      echo "Unknown option: $1 (use --help for usage)"
       exit 1
       ;;
   esac
 done
+
+if $RUN_DEPLOY && [[ -z "$DEPLOY_TARGET_MODE" ]]; then
+  echo "--deploy requires --custom or --profile NAME" >&2
+  exit 2
+fi
 
 # ── Colors ──
 RED='\033[0;31m'
@@ -100,6 +121,13 @@ if $SYNTAX_OK; then
   step_pass "Backend syntax check"
 else
   step_fail "Backend syntax check"
+fi
+
+echo -e "\n${YELLOW}▶ Step 1b: Mitigation regressions${NC}"
+if (cd app && npm run test:mitigations); then
+  step_pass "Mitigation regressions"
+else
+  step_fail "Mitigation regressions"
 fi
 
 # ──────────────────────────────────────────────────
@@ -232,5 +260,19 @@ if [ $FAIL -gt 0 ]; then
 fi
 
 echo -e "${GREEN}${BOLD}✅ All checks passed${NC}"
+
+# ──────────────────────────────────────────────────
+# Step 8: Deploy (if requested)
+# ──────────────────────────────────────────────────
+if $RUN_DEPLOY; then
+  echo ""
+  if [[ "$DEPLOY_TARGET_MODE" == "custom" ]]; then
+    echo -e "${YELLOW}▶ Deploying generic custom target...${NC}"
+    ./deploy.sh --custom
+  else
+    echo -e "${YELLOW}▶ Deploying local profile ${DEPLOY_PROFILE}...${NC}"
+    ./deploy.sh --profile "$DEPLOY_PROFILE"
+  fi
+fi
 
 echo ""

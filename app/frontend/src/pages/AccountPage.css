@@ -1,0 +1,25 @@
+.account-page {
+  min-width: 0;
+}
+
+.self-account-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-sm) var(--space-lg);
+}
+
+.self-account-details dt {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.self-account-details dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .self-account-details { grid-template-columns: 1fr; gap: 2px; }
+  .self-account-details dd { margin-bottom: var(--space-sm); }
+}

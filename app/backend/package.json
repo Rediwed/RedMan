@@ -6,19 +6,25 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "auth:recovery": "node scripts/create-recovery-token.js",
+    "auth:promote-admin": "node scripts/promote-local-admin.js",
+    "auth:provision-proxy": "node scripts/provision-proxy-account.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "1.14.4",
     "@protobufjs/utf8": "1.1.2",
+    "argon2": "^0.44.0",
     "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
+    "cron-parser": "^5.4.0",
     "dockerode": "5.0.1",
     "express": "4.22.2",
     "express-rate-limit": "8.6.0",
     "helmet": "8.3.0",
     "node-cron": "4.6.0",
     "path-to-regexp": "0.1.13",
-    "protobufjs": "7.6.5"
+    "protobufjs": "7.6.5",
+    "tweetnacl": "^1.0.3"
   }
 }

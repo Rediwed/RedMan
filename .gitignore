@@ -10,8 +10,8 @@ dist/
 .env.*
 !.env.example
 .redman-release.env
-.DS_Store
-test/data/
+.redman-deploy-profiles.sh
+ai-*.md
 *.pem
 *.key
 *.p12
@@ -20,17 +20,37 @@ test/data/
 *.keystore
 *.crt
 *.cer
-*.pub
-*.log
-*.bak
-*.tmp
-*.swp
 .npmrc
 .netrc
-.bash_history
-.zsh_history
+.*_history
 desktop.ini
 Thumbs.db
+.idea/
+*.pub
+*~
+*.orig
+id_rsa*
+id_ed25519*
+.DS_Store
+test/data/
+test-results/
+playwright-report/
+blob-report/
+
+# Runtime data (SSH keys, rclone.conf, SQLite, logs)
 app/backend/data/
+
+# Editor/OS junk
+**/.DS_Store
+*.log
+*.bak
+*.swp
+*.tmp
+
+# Test output
+test/data/
+test-results/
+playwright-report/
+blob-report/
 app/test-results/
 app/playwright-report/

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const frontend = resolve(import.meta.dirname, '../app/frontend/src');
+const app = readFileSync(resolve(frontend, 'App.jsx'), 'utf8');
+const navbar = readFileSync(resolve(frontend, 'components/Navbar.jsx'), 'utf8');
+const login = readFileSync(resolve(frontend, 'pages/LoginPage.jsx'), 'utf8');
+const api = readFileSync(resolve(frontend, 'api/index.js'), 'utf8');
+const settingsContext = readFileSync(resolve(frontend, 'contexts/SettingsContext.jsx'), 'utf8');
+const account = readFileSync(resolve(frontend, 'pages/AccountPage.jsx'), 'utf8');
+
+assert.match(app, /<AuthProvider>/);
+assert.match(app, /if \(!auth\.user\) return <LoginPage/);
+assert.match(app, /auth\.isAdmin && <PairingToast/);
+assert.match(navbar, /getPublicSettings\(\)/);
+assert.equal(navbar.match(/getPublicSettings\(\)/g)?.length, 1);
+assert.doesNotMatch(navbar, /getSettings/);
+assert.equal(settingsContext.match(/getPublicSettings\(\)/g)?.length, 1);
+assert.doesNotMatch(settingsContext, /getSettings/);
+assert.match(navbar, /auth\.mode === 'local'/);
+assert.match(login, /Create the first administrator/);
+assert.match(login, /Use a recovery token/);
+assert.match(login, /Proxy authentication required/);
+assert.match(api, /X-CSRF-Token/);
+assert.match(api, /redman:auth-required/);
+assert.match(api, /!\['\/auth\/login', '\/auth\/bootstrap', '\/auth\/recover'\]\.includes\(path\)/);
+assert.match(app, /path="\/account"/);
+assert.match(navbar, /to="\/account"/);
+assert.match(navbar, /Account\s*<\/NavLink>/);
+assert.match(account, /changeAuthPassword/);
+console.log('Authentication frontend: gated shell, bootstrap/login/recovery, CSRF, viewer navigation, and logout passed');

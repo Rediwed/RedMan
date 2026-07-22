@@ -1,0 +1,254 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>redman</Name>
+  <Repository>redman:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>
+    RedMan — Homelab management tool for Unraid. SSD backups with versioning,
+    cross-site Hyper Backup (rsync over SSH), Rclone cloud sync, and Docker
+    container monitoring with 24h metrics. React + Express + SQLite.
+  </Overview>
+  <Category>Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams>--security-opt=no-new-privileges:true --cap-drop=ALL --cap-add=DAC_READ_SEARCH --memory=1536m --memory-swap=2048m --cpus=2 --pids-limit=256</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Before first start, run the RedMan Unraid backup-user bootstrap for this App Data path. The default template does not publish the unauthenticated pairing/peer port; add a trusted LAN/VPN-only mapping with firewall restrictions when inbound peers are required. Docker monitoring additionally requires the RedMan exact-path read and control proxy sidecars on the same Docker network.</Requires>
+
+  <!-- Web UI port -->
+  <Config
+    Name="WebUI Port"
+    Target="8090"
+    Default="8090"
+    Mode="tcp"
+    Description="Port for the RedMan web interface"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8090</Config>
+
+  <!-- SQLite database persistence -->
+  <Config
+    Name="App Data"
+    Target="/app/backend/data"
+    Default="/mnt/user/appdata/redman"
+    Mode="rw"
+    Description="Path to store the RedMan database"
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/redman</Config>
+
+  <Config
+    Name="Backup User Authorized Keys"
+    Target="/host-ssh/authorized_keys"
+    Default="/mnt/user/appdata/redman/ssh-keys/authorized_keys"
+    Mode="rw"
+    Description="Host authorized_keys file for the restricted redman-backup user"
+    Type="Path"
+    Display="advanced"
+    Required="true"
+    Mask="false">/mnt/user/appdata/redman/ssh-keys/authorized_keys</Config>
+
+  <Config
+    Name="REDMAN_STORAGE_ROOTS"
+    Target="REDMAN_STORAGE_ROOTS"
+    Default="/mnt/user,/mnt/cache,/mnt/disks"
+    Mode=""
+    Description="Comma-separated container paths exposed in path pickers"
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">/mnt/user,/mnt/cache,/mnt/disks</Config>
+
+  <Config
+    Name="REDMAN_MEDIA_ROOT"
+    Target="REDMAN_MEDIA_ROOT"
+    Default="/mnt/disks"
+    Mode=""
+    Description="Container directory monitored for removable media"
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">/mnt/disks</Config>
+
+  <Config
+    Name="REDMAN_SHARE_CONFIG_DIR"
+    Target="REDMAN_SHARE_CONFIG_DIR"
+    Default="/boot/config/shares"
+    Mode=""
+    Description="Unraid share configuration directory"
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">/boot/config/shares</Config>
+
+  <!-- Unraid share config (read-only) -->
+  <Config
+    Name="Share Config"
+    Target="/boot/config/shares"
+    Default="/boot/config/shares"
+    Mode="ro"
+    Description="Unraid share configuration files (auto-detect shares)"
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false">/boot/config/shares</Config>
+
+  <!-- User shares (read/write for restore, pull, and download destinations) -->
+  <Config
+    Name="User Shares"
+    Target="/mnt/user"
+    Default="/mnt/user"
+    Mode="rw"
+    Description="Unraid user shares (read/write for backup sources, restores, pulls, and downloads)"
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false">/mnt/user</Config>
+
+  <!-- Cache (read-only for SSD backup sources) -->
+  <Config
+    Name="Cache"
+    Target="/mnt/cache"
+    Default="/mnt/cache"
+    Mode="ro"
+    Description="Unraid cache drive (SSD backup sources)"
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false">/mnt/cache</Config>
+
+  <!-- Environment -->
+  <Config
+    Name="AUTH_MODE"
+    Target="AUTH_MODE"
+    Default="proxy"
+    Mode=""
+    Description="Main API authentication mode: proxy (Pangolin/forward-auth) or local (RedMan login)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">proxy</Config>
+
+  <Config
+    Name="PROXY_AUTO_PROVISION_ROLE"
+    Target="PROXY_AUTO_PROVISION_ROLE"
+    Default=""
+    Mode=""
+    Description="Role assigned to new trusted proxy identities; clear after expected users are provisioned"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="REDMAN_PUBLIC_ORIGIN"
+    Target="REDMAN_PUBLIC_ORIGIN"
+    Default=""
+    Mode=""
+    Description="Exact public HTTPS origin, e.g. https://redman.example.com"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="TRUSTED_PROXIES"
+    Target="TRUSTED_PROXIES"
+    Default=""
+    Mode=""
+    Description="Exact Pangolin/Newt proxy source IP/CIDR seen by RedMan; broad RFC1918 ranges are rejected"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="REDMAN_BOOTSTRAP_TOKEN"
+    Target="REDMAN_BOOTSTRAP_TOKEN"
+    Default=""
+    Mode=""
+    Description="Required one-time token for first admin creation in local mode"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="true"></Config>
+
+  <Config
+    Name="NODE_ENV"
+    Target="NODE_ENV"
+    Default="production"
+    Mode=""
+    Description="Node environment (leave as production)"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">production</Config>
+
+  <Config
+    Name="PORT"
+    Target="PORT"
+    Default="8090"
+    Mode=""
+    Description="Internal web UI port"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">8090</Config>
+
+  <Config
+    Name="PEER_API_PORT"
+    Target="PEER_API_PORT"
+    Default="8091"
+    Mode=""
+    Description="Internal peer API port"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">8091</Config>
+
+  <Config
+    Name="PEER_HOST"
+    Target="PEER_HOST"
+    Default=""
+    Mode=""
+    Description="Numeric private SSH IP reachable by the other RedMan peer"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="DOCKER_HOST"
+    Target="DOCKER_HOST"
+    Default=""
+    Mode=""
+    Description="Optional Docker socket-proxy origin; leave empty to disable Docker monitoring"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="DOCKER_CONTROL_HOST"
+    Target="DOCKER_CONTROL_HOST"
+    Default=""
+    Mode=""
+    Description="Optional lifecycle-only Docker proxy origin; leave empty to disable container controls"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+</Container>

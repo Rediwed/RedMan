@@ -9,11 +9,6 @@ let subscriberIdCounter = 0;
 
 // ── Settings helpers ──────────────────────────────────────────────
 
-function getSetting(key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  return row?.value || '';
-}
-
 function getAllSettings() {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
@@ -36,7 +31,7 @@ function anyEnabled(settings, eventKey) {
 // ── Core send functions ───────────────────────────────────────────
 
 async function sendNtfy(settings, message, { title, priority = '3', tags } = {}) {
-  const server = settings.ntfy_server || settings.ntfy_url;
+  const server = settings.ntfy_server;
   const topic = settings.ntfy_topic;
   if (!server || !topic) return false;
 
@@ -55,8 +50,6 @@ async function sendNtfy(settings, message, { title, priority = '3', tags } = {})
   } else if (authType === 'basic' && settings.ntfy_username && settings.ntfy_password) {
     const b64 = Buffer.from(`${settings.ntfy_username}:${settings.ntfy_password}`).toString('base64');
     headers['Authorization'] = `Basic ${b64}`;
-  } else if (settings.ntfy_token) {
-    headers['Authorization'] = `Bearer ${settings.ntfy_token}`;
   }
 
   try {
@@ -77,7 +70,7 @@ async function sendNtfy(settings, message, { title, priority = '3', tags } = {})
   }
 }
 
-function sendBrowser(type, title, body) {
+export function sendBrowser(type, title, body) {
   const event = JSON.stringify({ type, title, body });
   for (const [, cb] of browserSubscribers) {
     try { cb(event); } catch { /* subscriber gone */ }
@@ -95,17 +88,38 @@ function sendQuiet(settings, eventKey, type, title, body, { priority, tags } = {
 
 // ── Public notification methods ───────────────────────────────────
 
-export async function sendNotification(message, { title, priority = '3', tags } = {}) {
-  const settings = getAllSettings();
-  if (settings.ntfy_enabled !== 'true') {
-    // Legacy fallback: send if server + topic exist (pre-refactor configs)
-    const server = settings.ntfy_server || settings.ntfy_url;
-    const topic = settings.ntfy_topic;
-    if (server && topic) {
-      return sendNtfy(settings, message, { title, priority, tags });
-    }
+/**
+ * Determine whether a notification should be sent for a job event.
+ * @param {object} job - Job/config row from DB (has notify_mode, notify_on_start, notify_on_success, notify_on_failure)
+ * @param {'start'|'success'|'partial'|'failure'|'cancel'} event - The event type
+ * @returns {boolean}
+ */
+export function shouldNotify(job, event) {
+  const mode = job.notify_mode || 'global';
+
+  if (mode === 'silent') return false;
+
+  if (mode === 'custom') {
+    if (event === 'start') return !!job.notify_on_start;
+    if (event === 'success') return !!job.notify_on_success;
+    if (event === 'partial' || event === 'cancel') return !!job.notify_on_failure;
+    if (event === 'failure') return !!job.notify_on_failure;
     return false;
   }
+
+  // mode === 'global' — defer to global settings
+  const settings = getAllSettings();
+  if (event === 'start') return anyEnabled(settings, 'ntfy_on_job_start');
+  if (event === 'success') return anyEnabled(settings, 'ntfy_on_job_complete');
+  if (event === 'partial') return anyEnabled(settings, 'ntfy_on_job_error');
+  if (event === 'cancel') return anyEnabled(settings, 'ntfy_on_job_complete');
+  if (event === 'failure') return anyEnabled(settings, 'ntfy_on_job_error');
+  return false;
+}
+
+export async function sendNotification(message, { title, priority = '3', tags } = {}) {
+  const settings = getAllSettings();
+  if (settings.ntfy_enabled !== 'true') return false;
   return sendNtfy(settings, message, { title, priority, tags });
 }
 
@@ -124,6 +138,18 @@ export function notifyJobCompleted(feature, name, stats = {}) {
   if (stats.bytesTransferred !== undefined) lines.push(`Transferred: ${formatBytes(stats.bytesTransferred)}`);
   if (stats.duration !== undefined) lines.push(`Duration: ${formatDuration(stats.duration)}`);
   sendQuiet(settings, 'ntfy_on_job_complete', 'job_completed', title, lines.join('\n'), { tags: 'white_check_mark' });
+}
+
+export function notifyJobPartial(feature, name, stats = {}) {
+  const settings = getAllSettings();
+  const title = `${feature}: ${name} — Partially Completed`;
+  const lines = ['Status: partial'];
+  if (stats.filesCopied !== undefined) lines.push(`Files transferred: ${stats.filesCopied}`);
+  if (stats.filesFailed !== undefined) lines.push(`Files failed: ${stats.filesFailed}`);
+  if (stats.bytesTransferred !== undefined) lines.push(`Transferred: ${formatBytes(stats.bytesTransferred)}`);
+  if (stats.duration !== undefined) lines.push(`Duration: ${formatDuration(stats.duration)}`);
+  if (stats.errorMessage) lines.push(`Warning: ${stats.errorMessage}`);
+  sendQuiet(settings, 'ntfy_on_job_error', 'job_partial', title, lines.join('\n'), { priority: '4', tags: 'warning' });
 }
 
 export function notifyJobError(feature, name, errorMsg) {
@@ -159,6 +185,32 @@ export function notifyJobProgress(feature, name, progress) {
   if (progress.filesCopied !== undefined) lines.push(`Files: ${progress.filesCopied}`);
   if (progress.bytesTransferred !== undefined) lines.push(`Transferred: ${formatBytes(progress.bytesTransferred)}`);
   sendQuiet(settings, 'ntfy_on_progress', 'job_progress', title, lines.join('\n'), { priority: '2', tags: 'hourglass' });
+}
+
+export function createJobNotificationTracker({ job = {}, feature, name, runId, startedAt = Date.now() }) {
+  const settings = getAllSettings();
+  const intervalSeconds = Math.min(86400, Math.max(10, Number.parseInt(settings.ntfy_progress_interval || '60', 10) || 60));
+  const progressEnabled = (job.notify_mode || 'global') !== 'silent' && anyEnabled(settings, 'ntfy_on_progress');
+  let lastProgressAt = startedAt;
+  let closed = false;
+
+  return {
+    start(customStart = null) {
+      if (closed || !shouldNotify(job, 'start')) return false;
+      if (customStart) customStart();
+      else notifyJobStarted(feature, name);
+      return true;
+    },
+    progress(progress, now = Date.now()) {
+      if (closed || !progressEnabled || now - lastProgressAt < intervalSeconds * 1000) return false;
+      lastProgressAt = now;
+      notifyJobProgress(feature, name, { ...progress, runId });
+      return true;
+    },
+    close() {
+      closed = true;
+    },
+  };
 }
 
 export function notifyDriveAttached(drive) {
@@ -228,6 +280,10 @@ export function notifyImportError(driveName, errorMsg) {
 export async function notifyBackupResult(feature, configName, status, stats = {}) {
   if (status === 'completed') {
     notifyJobCompleted(feature, configName, stats);
+  } else if (status === 'partial') {
+    notifyJobPartial(feature, configName, stats);
+  } else if (status === 'cancelled') {
+    notifyJobCancelled(feature, configName);
   } else {
     notifyJobError(feature, configName, stats.errorMessage || 'Job failed');
   }
