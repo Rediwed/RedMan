@@ -70,6 +70,7 @@ const tests = [
   'test_drive_scanner_completion.mjs',
   'test_eject_policy.mjs',
   'test_immich_command.mjs',
+  'test_immich_failure_summary.mjs',
   'test_source_health.mjs',
   'test_forward_auth_trust.mjs',
   'test_peer_url_policy.mjs',

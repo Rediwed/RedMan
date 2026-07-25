@@ -20,10 +20,15 @@ import { buildImmichUploadInvocation } from './immichCommand.js';
 import { terminateChildProcesses } from './childProcessShutdown.js';
 import { resolveMediaImportStatus } from './runStatus.js';
 import { createImmichRetryDirectory, removeImmichRetryDirectory } from './immichRetry.js';
+import { summarizeImmichGoFailure } from './immichFailureSummary.js';
 
 // Active imports tracked for progress polling
 const activeImports = new Map();
 const activeImportProcesses = new Map(); // runId -> ChildProcess
+
+// Only the tail of immich-go's stderr is ever diagnosed, so the buffer is
+// bounded to keep a failing import from growing the backend heap.
+const MAX_STDERR_BUFFER_BYTES = 64 * 1024;
 
 export function getActiveImport(runId) {
   return activeImports.get(runId);
@@ -211,6 +216,8 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     const persistedStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
     const status = resolveMediaImportStatus(persistedStatus, result.exitCode, progress);
 
+    const failureSummary = status === 'failed' ? summarizeImmichGoFailure(result.errorOutput) : null;
+
     db.prepare(`
       UPDATE backup_runs SET
         status = ?, completed_at = datetime('now'),
@@ -220,7 +227,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     `).run(
       status, progress.assetsFound, progress.uploaded,
       progress.errors, duration,
-      status === 'cancelled' ? 'Cancelled by user' : result.errorOutput || null,
+      status === 'cancelled' ? 'Cancelled by user' : failureSummary,
       runId
     );
 
@@ -249,7 +256,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
         errors: progress.errors, duration,
       });
     } else if (status === 'failed') {
-      notifyImportError(drive.name || drive.label, result.errorOutput);
+      notifyImportError(drive.name || drive.label, failureSummary);
     }
 
     if ((status === 'completed' || status === 'partial') && drive.delete_after_import) {
@@ -335,7 +342,9 @@ function spawnImmichGo(args, runId, progress, envOverrides = {}, onProgress = nu
     });
 
     proc.stderr.on('data', (data) => {
-      errorOutput += data.toString();
+      // A looping or chatty immich-go failure must not grow the backend heap:
+      // only the tail is ever useful, and the summariser copies this buffer.
+      errorOutput = `${errorOutput}${data.toString()}`.slice(-MAX_STDERR_BUFFER_BYTES);
     });
 
     proc.on('close', (exitCode) => {

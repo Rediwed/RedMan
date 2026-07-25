@@ -487,6 +487,7 @@
     "driveScanner": ["startScan", "getScanProgress", "clearScan"],
     "immichImport": ["getActiveImport", "testImmichConnection", "isImmichGoAvailable", "startImport", "stopActiveImportProcesses", "isEjectSupported", "ejectDrive"],
     "immichRetry": ["createImmichRetryDirectory", "removeImmichRetryDirectory"],
+    "immichFailureSummary": ["summarizeImmichGoFailure"],
     "versionBrowser": ["listSnapshots", "browseSnapshot", "resolveFilePath", "restoreFile", "pruneVersions"],
     "deltaVersion": ["withConfigLock", "registerTempFile", "cleanupTempFile", "cleanupOrphanedTempFiles", "startTempCleanup", "stopTempCleanup", "readManifest", "deltaifySnapshot", "rebaseDeltas", "rebaseDeltasWithTimestamp", "reconstructFile", "getChainLength", "verifyDeltaChain", "promoteDeltaToFull", "computeVersionStats", "getCachedVersionStats", "getAllCachedVersionStats"],
     "versionVerification": ["getActiveVersionVerification", "startVersionVerification", "cancelVersionVerification", "stopActiveVersionVerifications"],
