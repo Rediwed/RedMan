@@ -412,8 +412,8 @@ capture_rollback_metadata() {
       timestamp=\$(date -u +%Y%m%dT%H%M%SZ); \
       rollback_dir='$T_DATA/deploy-rollback'; \
       ${docker_prefix} install -d -m 0700 \"\$rollback_dir\"; \
-      temporary=\$(mktemp \"\$rollback_dir/.container-\$timestamp.XXXXXX\"); \
-      ${docker_prefix} docker inspect $CONTAINER > \"\$temporary\"; \
+      temporary=\$(${docker_prefix} mktemp \"\$rollback_dir/.container-\$timestamp.XXXXXX\"); \
+      ${docker_prefix} docker inspect $CONTAINER | ${docker_prefix} tee \"\$temporary\" >/dev/null; \
       ${docker_prefix} chmod 0600 \"\$temporary\"; \
       ${docker_prefix} mv -f \"\$temporary\" \"\$rollback_dir/container-\$timestamp.json\"; \
       image_id=\$(${docker_prefix} docker inspect -f '{{.Image}}' $CONTAINER); \
@@ -430,12 +430,12 @@ capture_current_runtime_receipt() {
   ssh -o ConnectTimeout=8 "$ssh_host" "set -e; umask 077; \
     receipt_dir='$T_DATA/deploy-current'; \
     ${docker_prefix} install -d -m 0700 \"\$receipt_dir\"; \
-    temporary=\$(mktemp \"\$receipt_dir/.container-runtime.XXXXXX\"); \
+    temporary=\$(${docker_prefix} mktemp \"\$receipt_dir/.container-runtime.XXXXXX\"); \
     image_ref=\$(${docker_prefix} docker inspect -f '{{.Config.Image}}' $CONTAINER); \
     image_id=\$(${docker_prefix} docker inspect -f '{{.Image}}' $CONTAINER); \
     runtime=\$(${docker_prefix} docker inspect -f '{\"memory\":{{json .HostConfig.Memory}},\"memorySwap\":{{json .HostConfig.MemorySwap}},\"nanoCpus\":{{json .HostConfig.NanoCpus}},\"pidsLimit\":{{json .HostConfig.PidsLimit}},\"cpusetCpus\":{{json .HostConfig.CpusetCpus}},\"cpuShares\":{{json .HostConfig.CpuShares}},\"restartPolicy\":{{json .HostConfig.RestartPolicy}},\"readonlyRootfs\":{{json .HostConfig.ReadonlyRootfs}},\"securityOpt\":{{json .HostConfig.SecurityOpt}},\"capAdd\":{{json .HostConfig.CapAdd}},\"capDrop\":{{json .HostConfig.CapDrop}},\"networkMode\":{{json .HostConfig.NetworkMode}},\"binds\":{{json .HostConfig.Binds}},\"portBindings\":{{json .HostConfig.PortBindings}}}' $CONTAINER); \
     printf '{\"version\":1,\"capturedAt\":\"%s\",\"container\":\"$CONTAINER\",\"imageRef\":\"%s\",\"imageId\":\"%s\",\"runtime\":%s}\n' \
-      \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"\$image_ref\" \"\$image_id\" \"\$runtime\" > \"\$temporary\"; \
+      \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"\$image_ref\" \"\$image_id\" \"\$runtime\" | ${docker_prefix} tee \"\$temporary\" >/dev/null; \
     ${docker_prefix} chmod 0600 \"\$temporary\"; \
     ${docker_prefix} mv -f \"\$temporary\" \"\$receipt_dir/container-runtime.json\""
 }
@@ -510,12 +510,20 @@ observe_deployment() {
   local docker_prefix="$T_DOCKER"
   local unraid_canary=""
   local elapsed=0
+  local stable=0
+  # Adaptive early-exit: promote once we have observed a minimum floor AND seen
+  # enough consecutive clean samples, so a healthy deploy clears in ~20-25s
+  # instead of always burning the full window. Any single failed sample aborts,
+  # so failure detection is unchanged — only the happy path gets shorter.
+  local min_seconds=20
+  local stable_samples=3
+  if (( min_seconds > OBSERVATION_SECONDS )); then min_seconds=$OBSERVATION_SECONDS; fi
 
   if [[ "$T_SETUP_SCRIPT" == "setup-unraid-backup-user.sh" ]]; then
     unraid_canary="curl -fsS --connect-timeout 2 --max-time 3 http://127.0.0.1:80 >/dev/null;"
   fi
 
-  echo -e "🔭 ${CYAN}Host observation window (${OBSERVATION_SECONDS}s)...${NC}"
+  echo -e "🔭 ${CYAN}Host observation (early-exit after ≥${min_seconds}s + ${stable_samples} stable samples, cap ${OBSERVATION_SECONDS}s)...${NC}"
   while (( elapsed < OBSERVATION_SECONDS )); do
     if ! ssh -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=3 -o ServerAliveCountMax=2 "$ssh_host" "set -e; \
       timeout -k 1 5 curl -fsS --connect-timeout 2 --max-time 3 http://$T_WEB_BIND:$T_PORT/api/health >/dev/null; \
@@ -526,6 +534,11 @@ observe_deployment() {
       [[ \"\$(timeout -k 1 5 ${docker_prefix} docker inspect -f '{{.State.OOMKilled}}' $CONTAINER)\" == false ]]" >/dev/null 2>&1; then
       echo -e "${RED}Host or application canary failed during observation.${NC}"
       return 1
+    fi
+    stable=$((stable + 1))
+    if (( elapsed >= min_seconds && stable >= stable_samples )); then
+      echo -e "${GREEN}Stable (${stable} clean samples over ${elapsed}s) — promoting early.${NC}"
+      return 0
     fi
     sleep 5
     elapsed=$((elapsed + 5))
@@ -617,7 +630,7 @@ deploy_target() {
     state=$(ssh -o ConnectTimeout=5 "$ssh_host" "timeout -k 1 5 $docker_cmd inspect --format '{{.HostConfig.Memory}}|{{.HostConfig.MemorySwap}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.PidsLimit}}|{{.HostConfig.CpusetCpus}}|{{.HostConfig.CpuShares}}|{{.HostConfig.RestartPolicy.Name}}|{{.HostConfig.RestartPolicy.MaximumRetryCount}}' $CONTAINER" 2>/dev/null) || return 1
     IFS='|' read -r memory memory_swap nano_cpus pids cpuset cpu_shares restart_name restart_max <<< "$state"
     [[ "$memory" =~ ^[0-9]{1,18}$ && "$memory_swap" =~ ^(-1|[0-9]{1,18})$ && "$nano_cpus" =~ ^[0-9]{1,18}$ ]] || return 1
-    [[ "$pids" =~ ^(<nil>|-1|[0-9]{1,9})$ && "$cpu_shares" =~ ^[0-9]{1,7}$ ]] || return 1
+    [[ "$pids" =~ ^(<nil>|<no value>|-1|[0-9]{1,9})$ && "$cpu_shares" =~ ^[0-9]{1,7}$ ]] || return 1
     [[ "$restart_name" =~ ^(no|always|unless-stopped|on-failure)$ && "$restart_max" =~ ^[0-9]{1,9}$ ]] || return 1
     [[ -z "$cpuset" || "$cpuset" =~ ^[0-9,-]+$ ]] || return 1
     (( memory > 0 )) && runtime_resource_args+=" --memory $memory"
@@ -626,12 +639,24 @@ deploy_target() {
       cpu_limit=$(awk -v value="$nano_cpus" 'BEGIN { printf "%.9g", value / 1000000000 }')
       runtime_resource_args+=" --cpus $cpu_limit"
     fi
-    [[ "$pids" != "<nil>" ]] && (( pids > 0 )) && runtime_resource_args+=" --pids-limit $pids"
+    [[ "$pids" != "<nil>" && "$pids" != "<no value>" ]] && (( pids > 0 )) && runtime_resource_args+=" --pids-limit $pids"
     [[ -n "$cpuset" ]] && runtime_resource_args+=" --cpuset-cpus $cpuset"
     (( cpu_shares > 0 && cpu_shares != 1024 )) && runtime_resource_args+=" --cpu-shares $cpu_shares"
-    runtime_restart_policy="$restart_name"
-    if [[ "$restart_name" == "on-failure" ]] && (( restart_max > 0 )); then
-      runtime_restart_policy+="${runtime_restart_policy:+:}$restart_max"
+    # A promoted, production RedMan container is never legitimately left with
+    # --restart no — that value only exists transiently on a restart-disabled
+    # canary during the health/observation window. If we see it here, the
+    # "existing" container is almost certainly an abandoned canary from a
+    # prior deploy attempt that failed before promotion (e.g. this same host
+    # after an earlier interrupted run) — preserving it would silently leave
+    # the newly-deployed container without auto-restart. Fall back to the
+    # sane default instead of blindly copying it forward.
+    if [[ "$restart_name" == "no" ]]; then
+      echo -e "${YELLOW}  Existing container has --restart no (looks like an abandoned canary from an interrupted deploy) — using unless-stopped instead of preserving it.${NC}" >&2
+    else
+      runtime_restart_policy="$restart_name"
+      if [[ "$restart_name" == "on-failure" ]] && (( restart_max > 0 )); then
+        runtime_restart_policy+="${runtime_restart_policy:+:}$restart_max"
+      fi
     fi
   }
 

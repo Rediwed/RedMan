@@ -92,6 +92,11 @@ assert.match(deploy, /grep -Fxq "\$CONTAINER"/);
 assert.match(deploy, /\[0-9\]\{1,18\}/);
 assert.match(deploy, /runtime_resource_args/);
 assert.match(deploy, /runtime_restart_policy/);
+// Restart-policy preservation must not copy forward --restart no from an
+// abandoned canary left by a prior interrupted deploy — it should fall back
+// to unless-stopped instead of leaving the promoted container without auto-restart.
+assert.match(deploy, /if \[\[ "\$restart_name" == "no" \]\]/);
+assert.match(deploy, /abandoned canary/);
 assert.match(deploy, /capture_current_runtime_receipt/);
 assert.match(deploy, /container-runtime\.json/);
 assert.doesNotMatch(deploy, /runtime=\$\([^\n]*json \.HostConfig\}\}/);
@@ -109,7 +114,8 @@ assert.match(deploy, /timeout -k 1 5 .*docker inspect/);
 assert.match(deploy, /ServerAliveCountMax=2/);
 assert.match(deploy, /action=arm| arm \$CONTAINER/);
 assert.match(deploy, /action=disarm| disarm \$CONTAINER/);
-assert.match(deploy, /Host observation window/);
+assert.match(deploy, /Host observation/);
+assert.match(deploy, /early-exit/);
 assert.match(deploy, /MemAvailable/);
 assert.match(deploy, /rollback-/);
 assert.doesNotMatch(deploy, /deploy_target "\$target"[^\n]*&/);
