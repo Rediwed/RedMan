@@ -152,23 +152,49 @@ export async function createOnlineDatabaseBackup(sourceDb, backupPath, options =
   mkdirSync(dirname(backupPath), { recursive: true, mode: 0o700 });
   chmodSync(dirname(backupPath), 0o700);
   removeIfExists(backupPath);
-  await sourceDb.backup(backupPath, {
-    progress: () => {
-      signal?.throwIfAborted();
-      return 4_096;
-    },
-  });
-  chmodSync(backupPath, 0o600);
+
+  // Stage the copy beside the live database first. Backup destinations are
+  // routinely slow, high-latency volumes (FUSE shares, spinning arrays), and a
+  // full integrity check reads every page back — doing that on the destination
+  // blows the validation budget and discards an otherwise good backup.
+  const stagingDirectory = sourceDb.name && existsSync(sourceDb.name)
+    ? dirname(sourceDb.name)
+    : dirname(backupPath);
+  const stagingPath = join(stagingDirectory, `.db-backup-${process.pid}-${Date.now()}.tmp`);
+  const destinationTemporaryPath = `${backupPath}.${process.pid}.tmp`;
+  removeIfExists(stagingPath);
+  removeIfExists(destinationTemporaryPath);
+
   try {
-    await validateSqliteDatabaseAsync(backupPath, {
+    await sourceDb.backup(stagingPath, {
+      progress: () => {
+        signal?.throwIfAborted();
+        return 4_096;
+      },
+    });
+    chmodSync(stagingPath, 0o600);
+    await validateSqliteDatabaseAsync(stagingPath, {
       signal,
       timeoutMs: options.validationTimeoutMs,
     });
+    await copyDatabaseFile(stagingPath, destinationTemporaryPath, {
+      signal,
+      timeoutMs: options.copyTimeoutMs,
+    });
+    chmodSync(destinationTemporaryPath, 0o600);
+    renameSync(destinationTemporaryPath, backupPath);
+    // Defensive: a stale sidecar left beside the destination by an older
+    // mechanism must not be mistaken for part of this consolidated copy.
     removeDatabaseSidecars(backupPath);
   } catch (err) {
+    removeDatabaseSidecars(destinationTemporaryPath);
+    removeIfExists(destinationTemporaryPath);
     removeDatabaseSidecars(backupPath);
     removeIfExists(backupPath);
     throw err;
+  } finally {
+    removeDatabaseSidecars(stagingPath);
+    removeIfExists(stagingPath);
   }
   return backupPath;
 }

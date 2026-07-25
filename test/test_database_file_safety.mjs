@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   applyPendingDatabaseRestore,
@@ -120,6 +120,30 @@ try {
   assert.equal(existsSync(resolve(fixture, 'redman-pre-restore-3.db')), false);
   assert.equal(existsSync(resolve(fixture, 'redman-pre-restore-4.db')), true);
   assert.equal(statSync(resolve(fixture, 'redman-pre-restore-4.db')).mode & 0o777, 0o600);
+
+  // Backups are staged beside the live database and only copied to the (slow)
+  // destination once validated, so neither directory keeps temporary residue.
+  const liveDirectory = resolve(fixture, 'staged-live');
+  const remoteDirectory = resolve(fixture, 'staged-remote');
+  mkdirSync(liveDirectory, { recursive: true });
+  const stagedLive = createDatabase(resolve(liveDirectory, 'redman.db'), 'staged', 200);
+  const stagedBackupPath = resolve(remoteDirectory, 'redman-staged.db');
+  await createOnlineDatabaseBackup(stagedLive, stagedBackupPath);
+  assert.deepEqual(readdirSync(remoteDirectory), ['redman-staged.db']);
+  assert.equal(readdirSync(liveDirectory).some(entry => entry.endsWith('.tmp')), false);
+  assert.equal(statSync(stagedBackupPath).mode & 0o777, 0o600);
+  assert.equal(await validateSqliteDatabaseAsync(stagedBackupPath), true);
+
+  const cancelledBackup = new AbortController();
+  cancelledBackup.abort(new Error('backup cancelled'));
+  await assert.rejects(
+    createOnlineDatabaseBackup(stagedLive, resolve(remoteDirectory, 'redman-cancelled.db'), { signal: cancelledBackup.signal }),
+    /backup cancelled/,
+  );
+  assert.equal(existsSync(resolve(remoteDirectory, 'redman-cancelled.db')), false);
+  assert.equal(readdirSync(remoteDirectory).some(entry => entry.endsWith('.tmp')), false);
+  assert.equal(readdirSync(liveDirectory).some(entry => entry.endsWith('.tmp')), false);
+  stagedLive.close();
 
   console.log('WAL-safe database backup and staged restore: passed');
 } finally {

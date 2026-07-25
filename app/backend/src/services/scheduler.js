@@ -206,8 +206,12 @@ export function isJobRunning(feature, configId) {
 
 const RETENTION_START_DELAY_MS = 60_000;
 const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// A cycle that stops on its batch cap or time budget still has a backlog waiting.
+// Re-running sooner keeps the queue draining without changing how much work a
+// single cycle may do, so the duty cycle stays at roughly 30s per 15 minutes.
+const RETENTION_BACKLOG_INTERVAL_MS = 15 * 60 * 1000;
 const RETENTION_BATCH_SIZE = 1_000;
-const RETENTION_RUN_FILE_BATCH_SIZE = 100;
+const RETENTION_RUN_FILE_BATCH_SIZE = 1_000;
 const RETENTION_MAX_BATCHES = 25;
 const RETENTION_YIELD_MS = 250;
 const RETENTION_MAX_DURATION_MS = 30_000;
@@ -257,7 +261,9 @@ async function runRetentionCycle() {
 
   const removed = Object.values(result.totals).reduce((sum, count) => sum + count, 0);
   console.log(`[retention] Cycle: ${result.batches} batch(es), ${removed} row(s), complete=${result.complete}, timedOut=${result.timedOut}`);
-  scheduleRetention(RETENTION_INTERVAL_MS);
+  // Failed cycles are rescheduled at the full interval by scheduleRetention's
+  // error path, so a broken cycle can never turn into a retry storm.
+  scheduleRetention(result.complete ? RETENTION_INTERVAL_MS : RETENTION_BACKLOG_INTERVAL_MS);
 }
 
 export function startRunFileRetention() {

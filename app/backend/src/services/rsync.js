@@ -231,6 +231,8 @@ export async function executeSsdBackup(configId, existingRunId = null) {
     }
 
     const postProcessingErrors = [];
+    // 'verified' | 'skipped' | 'failed', or null when this run never reached the database backup stage.
+    let databaseBackupStatus = null;
     const runPostProcessingStage = async (stage, operation) => {
       cancellation.signal.throwIfAborted();
       const stageStartedAt = Date.now();
@@ -276,7 +278,10 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       await runPostProcessingStage('version statistics', () => computeVersionStats(configId, { signal: cancellation.signal }));
 
       // Back up the RedMan database to this destination
-      await runPostProcessingStage('database backup', () => backupDatabase(config.dest_path, { signal: cancellation.signal }));
+      const warningsBeforeDatabaseBackup = postProcessingErrors.length;
+      const databaseBackupPath = await runPostProcessingStage('database backup', () => backupDatabase(config.dest_path, { signal: cancellation.signal }));
+      if (postProcessingErrors.length > warningsBeforeDatabaseBackup) databaseBackupStatus = 'failed';
+      else databaseBackupStatus = databaseBackupPath ? 'verified' : 'skipped';
     }
 
     delete progress.stage;
@@ -290,12 +295,13 @@ export async function executeSsdBackup(configId, existingRunId = null) {
       UPDATE backup_runs SET
         status = ?, completed_at = datetime('now'),
         files_total = ?, files_copied = ?, files_failed = ?,
-        bytes_transferred = ?, duration_seconds = ?, error_message = ?
+        bytes_transferred = ?, duration_seconds = ?, error_message = ?,
+        db_backup_status = ?
       WHERE id = ? AND status = 'running'
     `).run(
       status,
       progress.filesTotal, progress.filesCopied, progress.filesFailed,
-      progress.bytesTransferred, duration, runError, runId,
+      progress.bytesTransferred, duration, runError, databaseBackupStatus, runId,
     );
     if (transition.changes !== 1) {
       const currentStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;

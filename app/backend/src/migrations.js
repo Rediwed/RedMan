@@ -879,6 +879,20 @@ const migrations = [
       console.log('[migration-26] Added bounded-retention indexes');
     }
   },
+
+  {
+    version: 27,
+    description: 'Record the per-run database backup integrity verification outcome',
+    up(db) {
+      // ALTER TABLE ADD COLUMN is a metadata-only change in SQLite, so this
+      // stays bounded regardless of how much run history is retained.
+      const columns = db.prepare('PRAGMA table_info(backup_runs)').all().map(column => column.name);
+      if (!columns.includes('db_backup_status')) {
+        db.exec('ALTER TABLE backup_runs ADD COLUMN db_backup_status TEXT');
+      }
+      console.log('[migration-27] Added database backup integrity verification column');
+    }
+  },
 ];
 
 /**

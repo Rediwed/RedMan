@@ -39,11 +39,13 @@ db.exec(`
 `);
 
 runMigrations(db);
-assert.equal(getSchemaVersion(db), 26);
+assert.equal(getSchemaVersion(db), 27);
 const ssdColumns = new Set(db.prepare('PRAGMA table_info(ssd_backup_configs)').all().map(column => column.name));
 for (const column of ['retention_days', 'delta_versioning', 'delta_threshold', 'delta_max_chain', 'delta_keyframe_days', 'retention_policy']) {
   assert.ok(ssdColumns.has(column), `Missing legacy SSD column ${column}`);
 }
+const runColumns = new Set(db.prepare('PRAGMA table_info(backup_runs)').all().map(column => column.name));
+assert.ok(runColumns.has('db_backup_status'), 'Missing database backup verification column');
 assert.equal(db.prepare("SELECT storage_limit_bytes FROM authorized_peers WHERE api_key = 'legacy-peer-key'").get().storage_limit_bytes, 0);
 assert.equal(db.prepare("SELECT enabled FROM authorized_peers WHERE api_key = 'legacy-peer-key'").get().enabled, 0);
 assert.equal(db.prepare("SELECT enabled FROM authorized_peers WHERE api_key = 'paired-without-ssh'").get().enabled, 0);

@@ -92,7 +92,7 @@ docker compose -p "$PROJECT" exec -T redman node --input-type=module -e "
   const db = new Database('/app/backend/data/redman.db', { readonly: true });
   const version = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version;
   const expected = process.env.REDMAN_STORAGE_ROOTS.split(',');
-  if (version !== 26 || JSON.stringify(storageConfig.roots) !== JSON.stringify(expected)) process.exit(1);
+  if (version !== 27 || JSON.stringify(storageConfig.roots) !== JSON.stringify(expected)) process.exit(1);
   db.close();
 "
 
@@ -118,4 +118,4 @@ docker compose -p "$PROJECT" --env-file "$MONITOR_ENV" --profile docker-monitori
 "
 test "$(docker inspect -f '{{.State.Running}}' "$CONTROL_TARGET")" = false
 
-echo "Greenfield Compose: empty paths, managed host keys, redacted public health, authenticated details, local bootstrap/login, schema 26, generic roots, and optional exact-path Docker monitoring/control passed"
+echo "Greenfield Compose: empty paths, managed host keys, redacted public health, authenticated details, local bootstrap/login, schema 27, generic roots, and optional exact-path Docker monitoring/control passed"

@@ -14,6 +14,11 @@ assert.match(component, /Expected backup is overdue/);
 assert.match(ssd, /restoreSupported/);
 assert.match(ssd, /Verify restored bytes with SHA-256/);
 assert.match(ssd, /onOpenRestore/);
+assert.match(ssd, /<IntegrityBadge status=\{r\.db_backup_status\} \/>/);
+assert.match(ssd, /<IntegrityBadge status=\{selectedRun\.db_backup_status\} \/>/);
+for (const outcome of ['verified', 'skipped', 'failed']) {
+  assert.match(ssd, new RegExp(`^  ${outcome}: \\{$`, 'm'));
+}
 assert.match(hyper, /<BackupHealth health=\{j\.health\}/);
 assert.match(rclone, /<BackupHealth health=\{j\.health\}/);
-console.log('Backup health UI: success, issue, staleness, next run, and verified restore passed');
+console.log('Backup health UI: success, issue, staleness, next run, verified restore, and database integrity outcomes passed');

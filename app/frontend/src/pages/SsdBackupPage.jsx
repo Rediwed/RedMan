@@ -7,6 +7,7 @@ import {
 import {
   HardDrive, Play, Pencil, Trash2, ClipboardList, Check, X, AlertTriangle,
   FolderOpen, FileText, Download, RotateCcw, ChevronRight, ArrowUp, Clock, FolderClosed, Search, Eye,
+  ShieldCheck, ShieldAlert, ShieldOff,
 } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
@@ -24,6 +25,41 @@ import { formatDateTime } from '../utils/dateFormat.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import './SsdBackupPage.css';
+
+// Outcome of the SQLite integrity check on the database copy written to the
+// destination during post-processing. Runs from before this was recorded, and
+// runs that never reached that stage, have no value at all.
+const DB_BACKUP_VERIFICATION = {
+  verified: {
+    Icon: ShieldCheck,
+    label: 'Verified',
+    title: 'Database copy written to this destination and its SQLite integrity check passed',
+  },
+  skipped: {
+    Icon: ShieldOff,
+    label: 'Not due',
+    title: 'No database copy this run — the existing copy at this destination is still recent',
+  },
+  failed: {
+    Icon: ShieldAlert,
+    label: 'Failed',
+    title: 'The database copy could not be integrity-verified — open the run report for details',
+  },
+};
+
+function IntegrityBadge({ status }) {
+  const descriptor = DB_BACKUP_VERIFICATION[status];
+  if (!descriptor) {
+    return <span className="integrity-badge integrity-unknown" title="No database backup stage ran for this backup">—</span>;
+  }
+  const { Icon, label, title } = descriptor;
+  return (
+    <span className={`integrity-badge integrity-${status}`} title={title} aria-label={`Database integrity: ${label}`}>
+      <Icon size={14} aria-hidden="true" />
+      <span>{label}</span>
+    </span>
+  );
+}
 
 export default function SsdBackupPage() {
   const auth = useAuth();
@@ -590,6 +626,7 @@ export default function SsdBackupPage() {
                     <th>Duration</th>
                     <th>Files</th>
                     <th>Transferred</th>
+                    <th>DB Integrity</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -602,6 +639,7 @@ export default function SsdBackupPage() {
                       <td>{r.duration_seconds ? `${Math.round(r.duration_seconds)}s` : '—'}</td>
                       <td>{r.files_copied || 0}{r.files_failed ? ` (${r.files_failed} failed)` : ''}</td>
                       <td>{formatBytes(r.bytes_transferred || 0)}</td>
+                      <td><IntegrityBadge status={r.db_backup_status} /></td>
                       <td>
                         <button className="btn btn-ghost btn-sm" onClick={() => viewRun(r.id)}>View</button>
                       </td>
@@ -638,6 +676,7 @@ export default function SsdBackupPage() {
                 <div className="run-stat"><span className="run-stat-label">Files Copied</span><span>{selectedRun.files_copied || 0}</span></div>
                 <div className="run-stat"><span className="run-stat-label">Files Failed</span><span className={selectedRun.files_failed ? 'danger-text' : ''}>{selectedRun.files_failed || 0}</span></div>
                 <div className="run-stat"><span className="run-stat-label">Transferred</span><span>{formatBytes(selectedRun.bytes_transferred || 0)}</span></div>
+                <div className="run-stat"><span className="run-stat-label">DB Integrity</span><IntegrityBadge status={selectedRun.db_backup_status} /></div>
               </div>
 
               {selectedRun.status === 'failed' && (

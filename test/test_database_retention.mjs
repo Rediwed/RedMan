@@ -137,7 +137,12 @@ assert.match(schedulerSource, /retentionTimer = setTimeout/);
 assert.match(startRetention, /scheduleRetention\(RETENTION_START_DELAY_MS\)/);
 assert.doesNotMatch(startRetention, /pruneDatabaseTelemetry\(db\)/);
 assert.doesNotMatch(schedulerSource, /RETENTION_RETRY_MS/);
-assert.match(schedulerSource, /RETENTION_RUN_FILE_BATCH_SIZE = 100/);
+assert.match(schedulerSource, /RETENTION_RUN_FILE_BATCH_SIZE = 1_000/);
+// A backlog re-runs sooner, but never faster than a 30s budget per 15 minutes,
+// and a failed cycle still falls back to the full interval.
+assert.match(schedulerSource, /RETENTION_BACKLOG_INTERVAL_MS = 15 \* 60 \* 1000/);
+assert.match(schedulerSource, /scheduleRetention\(result\.complete \? RETENTION_INTERVAL_MS : RETENTION_BACKLOG_INTERVAL_MS\)/);
+assert.match(schedulerSource, /scheduleRetention\(RETENTION_INTERVAL_MS\);\s*\}\);/);
 assert.match(schedulerSource, /RETENTION_MAX_BATCHES = 25/);
 assert.match(schedulerSource, /scheduleRetention\(RETENTION_INTERVAL_MS\)/);
 const dockerSource = readFileSync(resolve(import.meta.dirname, '../app/backend/src/services/docker.js'), 'utf8');

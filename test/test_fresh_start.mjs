@@ -59,7 +59,7 @@ try {
   ];
 
   for (const table of requiredTables) assert(tables.includes(table), `Missing table: ${table}`);
-    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 26);
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 27);
   db.close();
 
   console.log('Fresh database startup: 2 idempotent starts passed');
