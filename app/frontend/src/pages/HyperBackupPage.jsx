@@ -23,6 +23,12 @@ import { formatBytes } from '../utils/formatBytes.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import './HyperBackupPage.css';
 
+// A peer is identified by its stable static key; the address is only a fallback
+// for legacy jobs and manually entered destinations.
+const destinationKey = destination => destination.remote_static_pubkey || destination.remote_url;
+const jobPeerKey = job => job.peer_static_pubkey || job.remote_url;
+const findDestination = (destinations, key) => destinations.find(d => destinationKey(d) === key);
+
 export default function HyperBackupPage() {
   const auth = useAuth();
   const { settings } = useSettings();
@@ -57,7 +63,7 @@ export default function HyperBackupPage() {
   function defaultForm() {
     return {
       name: '', direction: 'push',
-      remote_url: '', remote_api_key: '',
+      peer_static_pubkey: '', remote_url: '', remote_api_key: '',
       local_path: '', remote_path: '',
       remote_path_manual: false,
       ssh_user: 'redman-backup', ssh_host: '', ssh_port: 22,
@@ -133,6 +139,7 @@ export default function HyperBackupPage() {
   function startEdit(job) {
     setForm({
       name: job.name, direction: job.direction,
+      peer_static_pubkey: job.peer_static_pubkey || '',
       remote_url: job.remote_url, remote_api_key: '',
       local_path: job.local_path, remote_path: job.remote_path,
       remote_path_manual: true,
@@ -145,7 +152,7 @@ export default function HyperBackupPage() {
       notify_on_failure: !!job.notify_on_failure,
     });
     setEditId(job.id);
-    setManualDestination(!destinations.some(destination => destination.remote_url === job.remote_url));
+    setManualDestination(!findDestination(destinations, jobPeerKey(job)));
     setFormError(null);
     setShowForm(true);
     setNameManual(true);
@@ -278,10 +285,10 @@ export default function HyperBackupPage() {
   // Auto-generate SSH key silently if missing (rsync needs it)
   const [nameManual, setNameManual] = useState(false);
 
-  function suggestName(localPath, remoteUrl) {
+  function suggestName(localPath, peerKey) {
     const seg = p => p?.replace(/\/+$/, '').split('/').pop() || '';
     const local = seg(localPath);
-    const dest = destinations.find(d => d.remote_url === remoteUrl);
+    const dest = findDestination(destinations, peerKey);
     const remote = dest?.name || '';
     return local && remote ? `${local} → ${remote}` : local || '';
   }
@@ -493,8 +500,8 @@ export default function HyperBackupPage() {
                 <div className="config-detail"><span className="detail-label">Local Path</span><code>{j.local_path}</code></div>
                 <div className="config-detail"><span className="detail-label">Remote Path</span><code>{j.remote_path}</code></div>
                 <div className="config-detail"><span className="detail-label">Remote Instance</span>
-                  <code>{destinations.find(d => d.remote_url === j.remote_url)?.name || j.remote_url}
-                    {' '}{(() => { const d = destinations.find(d => d.remote_url === j.remote_url); return d?.handshake_version >= 2
+                  <code>{j.peer_name || findDestination(destinations, jobPeerKey(j))?.name || j.remote_url}
+                    {' '}{(() => { const d = findDestination(destinations, jobPeerKey(j)); return d?.handshake_version >= 2
                       ? <ShieldCheck size={12} style={{ color: 'var(--color-success)', verticalAlign: 'middle' }} title="Secure — Noise XX handshake" />
                       : <ShieldAlert size={12} style={{ color: 'var(--color-warning)', verticalAlign: 'middle' }} title="Legacy pairing — re-pair to upgrade" />;
                     })()}
@@ -535,13 +542,14 @@ export default function HyperBackupPage() {
                   <label>Destination</label>
                   {!manualDestination && destinations.length > 0 ? (
                     <select
-                      value={form.remote_url}
+                      value={form.peer_static_pubkey || form.remote_url}
                       onChange={e => {
-                        const dest = destinations.find(d => d.remote_url === e.target.value);
+                        const dest = findDestination(destinations, e.target.value);
                         setForm(f => {
                           const update = {
                             ...f,
-                            remote_url: e.target.value,
+                            peer_static_pubkey: dest?.remote_static_pubkey || '',
+                            remote_url: dest?.remote_url || '',
                           };
                           if (!editId && !nameManual) update.name = suggestName(f.local_path, e.target.value);
                           return update;
@@ -552,7 +560,7 @@ export default function HyperBackupPage() {
                     >
                       <option value="">Select a paired peer...</option>
                       {destinations.map(d => (
-                        <option key={d.id} value={d.remote_url}>{d.name} ({d.remote_url})</option>
+                        <option key={d.id} value={destinationKey(d)}>{d.name} ({d.remote_url})</option>
                       ))}
                     </select>
                   ) : (
@@ -579,7 +587,7 @@ export default function HyperBackupPage() {
                   {destinations.length > 0 && (
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
                       setManualDestination(value => !value);
-                      setForm(current => ({ ...current, remote_url: '', remote_api_key: '' }));
+                      setForm(current => ({ ...current, peer_static_pubkey: '', remote_url: '', remote_api_key: '' }));
                     }}>
                       {manualDestination ? 'Choose paired peer' : 'Enter URL manually'}
                     </button>
@@ -612,13 +620,13 @@ export default function HyperBackupPage() {
                         update.remote_path = base + suffix;
                       }
                     }
-                    if (!editId && !nameManual) update.name = suggestName(v, form.remote_url);
+                    if (!editId && !nameManual) update.name = suggestName(v, form.peer_static_pubkey || form.remote_url);
                     setForm(update);
                   }} placeholder="/mnt/user/Documents" />
                 </div>
 
                 <div className="form-group">
-                  <label>Remote Path {(() => { const d = destinations.find(d => d.remote_url === form.remote_url); return d?.name ? <span className="label-instance">({d.name})</span> : null; })()}</label>
+                  <label>Remote Path {(() => { const d = findDestination(destinations, form.peer_static_pubkey || form.remote_url); return d?.name ? <span className="label-instance">({d.name})</span> : null; })()}</label>
                   {manualDestination ? (
                     <input
                       value={form.remote_path}

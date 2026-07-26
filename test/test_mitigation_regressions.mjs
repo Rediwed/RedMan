@@ -55,6 +55,7 @@ const tests = [
   'test_frontend_run_status.mjs',
   'test_frontend_schedule.mjs',
   'test_peer_run_isolation.mjs',
+  'test_peer_binding.mjs',
   'test_run_claim.mjs',
   'test_run_lifecycle.mjs',
   'test_rsync_output.mjs',
