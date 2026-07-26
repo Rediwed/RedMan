@@ -83,6 +83,7 @@ const tests = [
   'test_pairing_state.mjs',
   'test_pairing_ingress.mjs',
   'test_pairing_http_limits.mjs',
+  'test_callback_address.mjs',
   'test_path_confinement.mjs',
   'test_filesystem_access.mjs',
 ];

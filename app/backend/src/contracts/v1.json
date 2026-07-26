@@ -501,6 +501,7 @@
     "unraid": ["getShares", "browsePath"],
     "discovery": ["discoverPeers", "discoverImmich", "clearDiscoveryCache", "getDetectedSubnets"],
     "pairing": ["initiatePairing", "getOutgoingPairingStatus", "handlePairingCallback", "receiveRequest", "getPendingIncoming", "getAllPairingRequests", "acceptPairing", "declinePairing"],
+    "callbackAddress": ["resolveCallbackUrl", "detectInterfaceCallbackIp"],
     "pairingIngress": ["MAX_ACTIVE_INCOMING_PAIRINGS", "MAX_INCOMING_PAIRING_ROWS", "storeIncomingPairingRequest"],
     "upgradeReadiness": ["assessUpgradeReadiness", "createUpgradeBackup", "remediateUpgradeIssue", "createHostPreparationPlan", "createFinalConfiguration", "UPGRADE_BRIDGE_VERSION"]
   },

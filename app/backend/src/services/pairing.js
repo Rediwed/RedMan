@@ -17,11 +17,11 @@
 //   - Replay prevention: ephemeral keys + token nonce ensure uniqueness
 
 import { randomBytes } from 'crypto';
-import os from 'os';
 import db from '../db.js';
 import { hasKey, getPublicKey, generateKey, replaceKeyAuthorization } from './sshManager.js';
 import { assertFingerprintConfirmed, findExistingPeer, isPairingExpired } from './pairingState.js';
 import { validatePrivatePeerBaseUrl } from './peerUrlPolicy.js';
+import { resolveCallbackUrl } from './callbackAddress.js';
 import { fetchWithoutRedirect } from './httpPolicy.js';
 import { storeIncomingPairingRequest } from './pairingIngress.js';
 import {
@@ -55,32 +55,12 @@ export async function initiatePairing(remoteUrl) {
   const instanceName = getSetting('instance_name') || 'RedMan';
   const sshPubKey = getPublicKey();
 
-  // Determine our callback URL — use explicit setting if configured, otherwise auto-detect
-  const peerPort = parseInt(getSetting('peer_api_port') || '8091');
-  const explicitUrl = getSetting('peer_api_url');
-  let callbackUrl;
-  if (explicitUrl) {
-    callbackUrl = explicitUrl.replace(/\/$/, '');
-  } else {
-    // Auto-detect: pick the first non-loopback, non-Docker IPv4 from the host's interfaces
-    const selfIp = (() => {
-      for (const addrs of Object.values(os.networkInterfaces())) {
-        for (const a of addrs) {
-          if (a.family !== 'IPv4' || a.internal) continue;
-          const parts = a.address.split('.').map(Number);
-          // Skip Docker bridge ranges (172.17-31.x) and link-local
-          if (parts[0] === 172 && parts[1] >= 17 && parts[1] <= 31) continue;
-          if (parts[0] === 169 && parts[1] === 254) continue;
-          return a.address;
-        }
-      }
-      return null;
-    })();
-    if (!selfIp) {
-      throw new Error('Could not determine a private callback IP; configure peer_api_url explicitly');
-    }
-    callbackUrl = `http://${selfIp}:${peerPort}`;
-  }
+  // Determine our callback URL — explicit setting, the declared PEER_HOST, then
+  // the host's own interfaces.
+  const callbackUrl = resolveCallbackUrl({
+    peerPort: getSetting('peer_api_port') || '8091',
+    explicitUrl: getSetting('peer_api_url'),
+  });
 
   const { requestBody, ephemeralSecret } = prepareRequest(
     instanceName,

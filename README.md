@@ -527,7 +527,7 @@ npm --prefix app run test:greenfield
 | `REDMAN_UPGRADE_BRIDGE` | `false` | Opt-in maintenance mode that pauses non-wizard mutations, schedulers, monitoring, and the peer API |
 | `REDMAN_ADMIN_GROUP` | unset | Exact forward-auth group permitted to perform upgrade preparation while bridge mode is enabled; set this and/or `REDMAN_ADMIN_ROLE` |
 | `REDMAN_ADMIN_ROLE` | unset | Exact forward-auth role permitted to perform upgrade preparation; Pangolin Badger sends this as `Remote-Role` |
-| `PEER_HOST` | required in production | Numeric private SSH IP advertised to peers; wildcard, public, and DNS values are rejected |
+| `PEER_HOST` | required in production | Numeric private SSH IP advertised to peers; also the preferred pairing callback address; wildcard, public, and DNS values are rejected |
 | `REDMAN_MEMORY_LIMIT` | `1536m` | Compose memory limit for the RedMan container |
 | `REDMAN_MEMORY_SWAP_LIMIT` | `2048m` | Compose combined memory and swap limit |
 | `REDMAN_CPU_LIMIT` | `2` | Compose CPU limit |
@@ -619,6 +619,16 @@ To set up cross-site backup between two NAS units:
 6. Create a Hyper Backup job using the paired destination
 
 The connection badge (top-left) shows a green shield (🛡️) for secure v2-paired peers or an amber shield for legacy pairings.
+
+#### Callback Address Resolution
+
+A pairing request carries the URL the remote peer must call back on. RedMan resolves it in this order and uses the first result:
+
+1. **Settings → Infrastructure → Peer API URL** (`peer_api_url`) — explicit operator override, validated as a private base URL before it is signed
+2. **`PEER_HOST`** — the private IP already declared as peer-reachable (required in production)
+3. **Host network interfaces** — bare metal, host networking, and macvlan containers
+
+Containers on a Docker bridge network only see their own `172.x` address, which no peer can reach, so step 3 deliberately ignores those ranges. If nothing resolves, pairing fails with an error naming both fixes instead of guessing.
 
 ### Manual Setup (Legacy)
 
