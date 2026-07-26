@@ -25,8 +25,9 @@ export function storeIncomingPairingRequest(database, request) {
 
     const result = database.prepare(`
       INSERT INTO pairing_requests (direction, token, remote_instance, remote_url, remote_ssh_pubkey,
-        status, handshake_version, remote_ephemeral_pubkey, remote_static_pubkey, remote_fingerprint)
-      VALUES ('incoming', ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+        status, handshake_version, remote_ephemeral_pubkey, remote_static_pubkey, remote_fingerprint,
+        reciprocal_path, reciprocal_limit_bytes)
+      VALUES ('incoming', ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
     `).run(
       request.token,
       request.instance,
@@ -36,6 +37,8 @@ export function storeIncomingPairingRequest(database, request) {
       request.ephemeralPublicKey,
       request.staticPublicKey,
       request.fingerprint,
+      request.reciprocalPath || null,
+      request.reciprocalLimitBytes || null,
     );
     return { ok: true, id: Number(result.lastInsertRowid) };
   });

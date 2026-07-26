@@ -16,6 +16,7 @@ import {
   validatePairingCallbackEnvelope,
   validatePairingRequestEnvelope,
   validateRequest,
+  validateReciprocalOffer,
   verifyPairingTranscript,
 } from '../app/backend/src/services/handshake.js';
 
@@ -141,4 +142,74 @@ const sharedByInitiator = computeSharedSecret(initiatorEphemeral.secretKey, call
 assert.deepEqual(Buffer.from(sharedByInitiator), Buffer.from(sharedByReceiver));
 assert.notEqual(deriveKeys(sharedByInitiator, '45'.repeat(32)).apiKey, receiverApiKey);
 
-console.log('Handshake v3 production transcript: full flow and 16 tamper checks passed');
+// ── Reciprocal offer (v4) ────────────────────────────────────────
+
+const offer = { allowed_path_prefix: '/mnt/user/backups/site-b', storage_limit_bytes: 1024 ** 4 };
+
+function signedRequest(fields) {
+  const body = {
+    version: HANDSHAKE_VERSION,
+    role: 'initiator',
+    instance: 'Site A',
+    token,
+    callback_url: 'http://10.0.0.10:8091',
+    ssh_public_key: `ssh-ed25519 ${Buffer.from('initiator-key').toString('base64')} redman@site-a`,
+    ephemeral_pubkey: toBase64(initiatorEphemeral.publicKey),
+    static_pubkey: toBase64(initiator.publicKey),
+    ...fields,
+  };
+  body.signature = toBase64(signPairingTranscript(buildRequestTranscript(body), initiator.secretKey));
+  return body;
+}
+
+assert.equal(validateRequest(signedRequest({ reciprocal_offer: offer })).valid, true);
+assert.equal(validateRequest(signedRequest({})).valid, true, 'a request without an offer stays valid');
+
+// The offer is inside the signed transcript, so neither adding nor editing it survives
+const withoutOffer = signedRequest({});
+assert.equal(
+  validateRequest({ ...withoutOffer, reciprocal_offer: offer }).valid, false,
+  'an offer injected after signing must be rejected',
+);
+const withOffer = signedRequest({ reciprocal_offer: offer });
+for (const mutation of [
+  { allowed_path_prefix: '/mnt/user/backups/attacker', storage_limit_bytes: offer.storage_limit_bytes },
+  { allowed_path_prefix: offer.allowed_path_prefix, storage_limit_bytes: 1024 ** 5 },
+]) {
+  assert.equal(
+    validateRequest({ ...withOffer, reciprocal_offer: mutation }).valid, false,
+    `Mutated reciprocal offer accepted: ${JSON.stringify(mutation)}`,
+  );
+}
+assert.equal(validateRequest({ ...withOffer, reciprocal_offer: undefined }).valid, false, 'stripping the offer must be rejected');
+
+assert.equal(validateReciprocalOffer(undefined), null);
+assert.equal(validateReciprocalOffer(null), null);
+assert.equal(validateReciprocalOffer(offer), null);
+for (const bad of [
+  {},
+  { allowed_path_prefix: '/mnt/user/b' },
+  { storage_limit_bytes: 1 },
+  { allowed_path_prefix: '/mnt/user/b', storage_limit_bytes: 1, extra: true },
+  { allowed_path_prefix: 'mnt/user/b', storage_limit_bytes: 1 },
+  { allowed_path_prefix: '/mnt/user/b', storage_limit_bytes: 0 },
+  { allowed_path_prefix: '/mnt/user/b', storage_limit_bytes: -1 },
+  { allowed_path_prefix: '/mnt/user/b', storage_limit_bytes: 1.5 },
+  { allowed_path_prefix: '/mnt/user/b', storage_limit_bytes: Number.MAX_SAFE_INTEGER + 2 },
+  { allowed_path_prefix: '/'.padEnd(600, 'x'), storage_limit_bytes: 1 },
+  [],
+  'nope',
+]) {
+  assert.notEqual(validateReciprocalOffer(bad), null, `Invalid reciprocal offer accepted: ${JSON.stringify(bad)}`);
+}
+
+// The reverse-direction key is derived from the same secret under a distinct label
+const forward = deriveKeys(sharedByInitiator, token);
+const mirrored = deriveKeys(sharedByReceiver, token);
+assert.equal(forward.apiKey, mirrored.apiKey, 'both sides derive the same forward key');
+assert.equal(forward.reverseApiKey, mirrored.reverseApiKey, 'both sides derive the same reverse key');
+assert.notEqual(forward.apiKey, forward.reverseApiKey, 'the reverse key must differ from the forward key');
+assert.equal(forward.reverseApiKey.length, 64);
+assert.notEqual(deriveKeys(sharedByInitiator, '45'.repeat(32)).reverseApiKey, forward.reverseApiKey);
+
+console.log('Handshake v4 production transcript: full flow, reciprocal offer binding, and tamper checks passed');

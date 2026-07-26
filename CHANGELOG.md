@@ -10,10 +10,13 @@ Versioning scheme:
 ## [Unreleased]
 
 ### Added
+- [x] Added optional bi-directional pairing. When connecting to a peer you can now offer it backup space on your own instance in the same request, so a single accept sets up both directions instead of repeating the entire pairing from the other side. The offer travels inside the signed handshake transcript, the receiver decides whether to take it up, and the reverse API key is derived from the same shared secret under a separate label so it is never transmitted.
+- [x] Added a copy button to the pairing identity fingerprint, so both operators can compare the exact string instead of retyping it from a screen. It falls back to a selection-based copy when the browser blocks the clipboard API, which is common on plain-HTTP LAN addresses.
 - [x] Added the hardened full runtime with explicit local/proxy authentication, protected peer credentials, restricted backup accounts, exact-path Docker proxies, and schema 27 migrations.
 - [x] Added a **DB Integrity** column to the SSD Backup run history and run report, so every run shows at a glance whether the database copy written to that destination passed its SQLite integrity check, was not due yet, or failed verification.
 
 ### Changed
+- [x] Reworked accepting an incoming connection request. The slide-in notification now only asks whether you want to handle the request; the backup location, storage quota, and fingerprint confirmation moved to a centred dialog that opens when you accept. The dialog uses the standard form styling, browses for the backup location through the regular directory and share picker instead of a bare text field, and shows an example quota (1024 GB = 1 TB) plus a live readback of what the peer will get.
 - [x] Ported the hardened application onto the clean v1.1.9 bridge baseline while retaining opt-in upgrade-readiness mode, its rollback workflow, and release checks.
 - [x] Made Docker and Unraid the runtime resource-policy owners: deployment preserves existing UI-managed limits, writes reconstruction metadata, and RedMan adapts delta concurrency to effective cgroup memory, CPU, and PID ceilings.
 - [x] Made the deployment host-observation window adaptive: it now early-exits once the container is stably healthy (a minimum floor plus consecutive clean samples) instead of always waiting the full fixed window, so healthy deploys promote in seconds while immediate failure detection is unchanged.

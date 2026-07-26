@@ -21,33 +21,6 @@
   animation: toast-slide-in 0.3s ease-out;
 }
 
-.pairing-toast-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 90px;
-  gap: var(--space-xs);
-  margin-top: var(--space-xs);
-}
-
-.pairing-toast-fields input {
-  min-width: 0;
-  width: 100%;
-}
-
-.pairing-toast-fingerprint {
-  margin-top: var(--space-xs);
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-}
-
-.pairing-toast-fingerprint code,
-.pairing-toast-fingerprint-input {
-  letter-spacing: 0;
-}
-
-.pairing-toast-fingerprint-input {
-  grid-column: 1 / -1;
-}
-
 @keyframes toast-slide-in {
   from {
     opacity: 0;

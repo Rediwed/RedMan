@@ -39,7 +39,7 @@ db.exec(`
 `);
 
 runMigrations(db);
-assert.equal(getSchemaVersion(db), 27);
+assert.equal(getSchemaVersion(db), 28);
 const ssdColumns = new Set(db.prepare('PRAGMA table_info(ssd_backup_configs)').all().map(column => column.name));
 for (const column of ['retention_days', 'delta_versioning', 'delta_threshold', 'delta_max_chain', 'delta_keyframe_days', 'retention_policy']) {
   assert.ok(ssdColumns.has(column), `Missing legacy SSD column ${column}`);

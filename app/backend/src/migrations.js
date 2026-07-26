@@ -893,6 +893,25 @@ const migrations = [
       console.log('[migration-27] Added database backup integrity verification column');
     }
   },
+  {
+    version: 28,
+    description: 'Record the reciprocal backup offer exchanged during pairing',
+    up(db) {
+      // ALTER TABLE ADD COLUMN is metadata-only in SQLite, so this stays bounded
+      // regardless of how much pairing history is retained.
+      const columns = db.prepare('PRAGMA table_info(pairing_requests)').all().map(column => column.name);
+      if (!columns.includes('reciprocal_path')) {
+        db.exec('ALTER TABLE pairing_requests ADD COLUMN reciprocal_path TEXT');
+      }
+      if (!columns.includes('reciprocal_limit_bytes')) {
+        db.exec('ALTER TABLE pairing_requests ADD COLUMN reciprocal_limit_bytes INTEGER');
+      }
+      if (!columns.includes('reciprocal_accepted')) {
+        db.exec('ALTER TABLE pairing_requests ADD COLUMN reciprocal_accepted INTEGER NOT NULL DEFAULT 0');
+      }
+      console.log('[migration-28] Added reciprocal pairing offer columns');
+    }
+  },
 ];
 
 /**

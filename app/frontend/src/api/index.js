@@ -157,7 +157,8 @@ export const getPeerAuditLog = (id, page = 1) => fetchJSON(`/peers/${id}/audit-l
 export const getAllPeerAuditLog = (page = 1) => fetchJSON(`/peers/audit-log/all?page=${page}`);
 
 // ===== Pairing =====
-export const initiatePairing = (remoteUrl) => postJSON('/peers/pair', { remote_url: remoteUrl });
+export const initiatePairing = (remoteUrl, reciprocalOffer = null) =>
+  postJSON('/peers/pair', { remote_url: remoteUrl, reciprocal_offer: reciprocalOffer });
 export const getPairingIncoming = () => fetchJSON('/peers/pair/incoming');
 export const getPairingStatus = (id) => fetchJSON(`/peers/pair/status/${id}`);
 export const getPairingHistory = () => fetchJSON('/peers/pair/history');

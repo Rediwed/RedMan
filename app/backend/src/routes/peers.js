@@ -63,10 +63,10 @@ router.get('/', (req, res) => {
 
 // Initiate pairing with a discovered peer
 router.post('/pair', async (req, res) => {
-  const { remote_url } = req.body;
+  const { remote_url, reciprocal_offer } = req.body;
   if (!remote_url) return res.status(400).json({ error: 'remote_url is required' });
   try {
-    const result = await initiatePairing(remote_url);
+    const result = await initiatePairing(remote_url, reciprocal_offer || null);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -98,6 +98,7 @@ router.post('/pair/:id/accept', async (req, res) => {
       parseInt(req.params.id),
       access,
       req.body.confirmed_fingerprint,
+      req.body.accept_reciprocal === true,
     );
     if (result.error) return res.status(400).json(result);
     res.json(result);

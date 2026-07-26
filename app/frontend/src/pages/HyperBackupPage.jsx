@@ -14,6 +14,8 @@ import SchedulePicker, { describeCron } from '../components/SchedulePicker.jsx';
 import useJobProgress from '../hooks/useJobProgress.js';
 import useReconnect from '../hooks/useReconnect.js';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import CopyButton from '../components/CopyButton.jsx';
+import PairingConnectDialog from '../components/PairingConnectDialog.jsx';
 import Dialog, { DialogSurface } from '../components/Dialog.jsx';
 import BackupHealth from '../components/BackupHealth.jsx';
 import NotificationPolicyField from '../components/NotificationPolicyField.jsx';
@@ -49,8 +51,10 @@ export default function HyperBackupPage() {
   const [discoveryDismissed, setDiscoveryDismissed] = useState(false);
   const [pairing, setPairing] = useState(null);
   const [pairingPeer, setPairingPeer] = useState(null);
+  const [connectTarget, setConnectTarget] = useState(null);
   const pairingCancelled = useRef(false);
   const pairingAttempt = useRef(0);
+  const pairingOffer = useRef(null);
 
   const { trackRun, detectRunning, getProgressForConfig, getRunIdForConfig } = useJobProgress(getHyperRunProgress, () => loadAll());
 
@@ -217,16 +221,23 @@ export default function HyperBackupPage() {
   function selectDiscoveredPeer(peer) {
     setShowPeerPicker(false);
     setDiscoveryDismissed(true);
-    setPairingPeer(peer);
-    startPairing(peer);
+    setConnectTarget(peer);
   }
 
-  async function startPairing(peer) {
+  function confirmConnect(reciprocalOffer) {
+    const peer = connectTarget;
+    setConnectTarget(null);
+    setPairingPeer(peer);
+    startPairing(peer, reciprocalOffer);
+  }
+
+  async function startPairing(peer, reciprocalOffer = pairingOffer.current) {
     const attempt = ++pairingAttempt.current;
+    pairingOffer.current = reciprocalOffer;
     setPairing({ status: 'sending' });
     pairingCancelled.current = false;
     try {
-      const result = await initiatePairing(peer.url);
+      const result = await initiatePairing(peer.url, reciprocalOffer);
       if (pairingAttempt.current !== attempt) return;
       if (result.status === 'failed') {
         setPairing({ status: 'failed', error: result.error });
@@ -367,6 +378,15 @@ export default function HyperBackupPage() {
         </div>
       )}
 
+      {/* Connect dialog — optionally offers the peer space here in the same request */}
+      {connectTarget && (
+        <PairingConnectDialog
+          peer={connectTarget}
+          onConnect={confirmConnect}
+          onCancel={() => setConnectTarget(null)}
+        />
+      )}
+
       {/* Pairing status modal — shown while waiting for remote to accept */}
       {pairing && !showForm && (
         <Dialog
@@ -398,7 +418,10 @@ export default function HyperBackupPage() {
                     Open RedMan on <strong>{pairingPeer?.instance}</strong> and accept the connection request.
                   </p>
                   {pairing.local_fingerprint && (
-                    <p className="form-hint">Compare this fingerprint on the receiver: <code>{pairing.local_fingerprint}</code></p>
+                    <p className="form-hint pairing-dialog-fingerprint">
+                      Compare this fingerprint on the receiver: <code>{pairing.local_fingerprint}</code>
+                      <CopyButton value={pairing.local_fingerprint} />
+                    </p>
                   )}
                 </>
               )}

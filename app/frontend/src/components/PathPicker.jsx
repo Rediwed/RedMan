@@ -61,6 +61,7 @@ export default function PathPicker({ value, onChange, label, placeholder }) {
       <div className="path-input-group">
         <input
           type="text"
+          aria-label={label}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder || '/mnt/user/share'}

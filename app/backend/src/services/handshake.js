@@ -21,11 +21,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 
 const IDENTITY_FILENAME = 'identity.json';
-const HANDSHAKE_VERSION = 3;
+const HANDSHAKE_VERSION = 4;
 const MAX_INSTANCE_LENGTH = 128;
 const MAX_CALLBACK_URL_LENGTH = 512;
 const MAX_SSH_PUBLIC_KEY_LENGTH = 2_048;
 const MAX_ENCRYPTED_PAYLOAD_BYTES = 8_192;
+const MAX_RECIPROCAL_PATH_LENGTH = 512;
 
 function boundedText(value, maximum, { minimum = 1, trim = true } = {}) {
   if (typeof value !== 'string' || value.length < minimum || value.length > maximum) return false;
@@ -45,6 +46,25 @@ function canonicalBase64(value, { exactBytes, maximumBytes = exactBytes } = {}) 
   return maximumBytes === undefined || decoded.length <= maximumBytes;
 }
 
+// A reciprocal offer lets the initiator grant the receiver backup space on itself
+// in the same handshake, so the pair does not have to repeat the whole flow in the
+// other direction. It is part of the signed transcript, so the receiver can trust it.
+export function validateReciprocalOffer(offer) {
+  if (offer === undefined || offer === null) return null;
+  if (typeof offer !== 'object' || Array.isArray(offer)) return 'Invalid reciprocal offer';
+  const keys = Object.keys(offer);
+  if (keys.length !== 2 || !keys.includes('allowed_path_prefix') || !keys.includes('storage_limit_bytes')) {
+    return 'Invalid reciprocal offer';
+  }
+  if (!boundedText(offer.allowed_path_prefix, MAX_RECIPROCAL_PATH_LENGTH) || !offer.allowed_path_prefix.startsWith('/')) {
+    return 'Invalid reciprocal offer path';
+  }
+  if (!Number.isSafeInteger(offer.storage_limit_bytes) || offer.storage_limit_bytes <= 0) {
+    return 'Invalid reciprocal offer storage limit';
+  }
+  return null;
+}
+
 export function validatePairingRequestEnvelope(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'Pairing request must be a JSON object';
   if (!Number.isInteger(body.version) || body.version !== HANDSHAKE_VERSION || body.role !== 'initiator') {
@@ -57,7 +77,7 @@ export function validatePairingRequestEnvelope(body) {
   if (!canonicalBase64(body.ephemeral_pubkey, { exactBytes: 32 })) return 'Invalid ephemeral public key';
   if (!canonicalBase64(body.static_pubkey, { exactBytes: 32 })) return 'Invalid static public key';
   if (!canonicalBase64(body.signature, { exactBytes: 64 })) return 'Invalid pairing signature';
-  return null;
+  return validateReciprocalOffer(body.reciprocal_offer);
 }
 
 export function validatePairingCallbackEnvelope(body) {
@@ -151,7 +171,7 @@ function encodeTranscript(fields) {
 
 export function buildRequestTranscript(body) {
   return encodeTranscript([
-    'redman-pairing-v3',
+    'redman-pairing-v4',
     'request',
     body.version,
     body.token,
@@ -160,12 +180,15 @@ export function buildRequestTranscript(body) {
     body.ssh_public_key || '',
     body.ephemeral_pubkey,
     body.static_pubkey,
+    // An absent offer is an empty path; a present offer always carries a non-empty one.
+    body.reciprocal_offer?.allowed_path_prefix || '',
+    body.reciprocal_offer?.storage_limit_bytes ?? 0,
   ]);
 }
 
 export function buildCallbackTranscript(body) {
   return encodeTranscript([
-    'redman-pairing-v3',
+    'redman-pairing-v4',
     'callback',
     body.version,
     body.token,
@@ -207,11 +230,15 @@ export function computeSharedSecret(ourEphemeralSecretKey, remoteEphemeralPubKey
 
 /**
  * Derive keys from the ECDH shared secret using HKDF-SHA256.
- * Returns { apiKey, encryptionKey } — both as hex/Uint8Array.
+ * Returns { apiKey, reverseApiKey, encryptionKey }.
+ *
+ * `apiKey` authenticates the initiator against the receiver. `reverseApiKey` covers
+ * the opposite direction when a reciprocal offer is accepted — derived from the same
+ * secret under a distinct label, so neither key ever crosses the wire.
  *
  * @param {Uint8Array} sharedSecret — raw X25519 output (32 bytes)
  * @param {string} token — pairing token (hex string, used as salt)
- * @returns {{ apiKey: string, encryptionKey: Uint8Array }}
+ * @returns {{ apiKey: string, reverseApiKey: string, encryptionKey: Uint8Array }}
  */
 export function deriveKeys(sharedSecret, token) {
   const salt = Buffer.from(token, 'hex');
@@ -220,11 +247,15 @@ export function deriveKeys(sharedSecret, token) {
   const apiKeyBuf = hkdfSync('sha256', sharedSecret, salt, 'redman-api-key-v2', 32);
   const apiKey = Buffer.from(apiKeyBuf).toString('hex');
 
+  // Derive the reverse-direction API key under a distinct label
+  const reverseKeyBuf = hkdfSync('sha256', sharedSecret, salt, 'redman-api-key-reverse-v1', 32);
+  const reverseApiKey = Buffer.from(reverseKeyBuf).toString('hex');
+
   // Derive encryption key for secretbox (32 bytes)
   const encKeyBuf = hkdfSync('sha256', sharedSecret, salt, 'redman-payload-key-v2', 32);
   const encryptionKey = new Uint8Array(encKeyBuf);
 
-  return { apiKey, encryptionKey };
+  return { apiKey, reverseApiKey, encryptionKey };
 }
 
 // ── Secretbox encryption ─────────────────────────────────────────
@@ -267,9 +298,12 @@ export function decryptPayload(ciphertextB64, nonceB64, encryptionKey) {
  * @param {string} instanceName — our instance name
  * @param {string} token — random hex pairing token
  * @param {string|null} sshPubKey — our SSH public key (sent plaintext, it's public)
+ * @param {string} callbackUrl — where the receiver should send its callback
+ * @param {{ allowed_path_prefix: string, storage_limit_bytes: number }|null} reciprocalOffer
+ *        — optional backup space we grant the receiver on ourselves
  * @returns {{ requestBody: object, ephemeralSecret: Uint8Array }}
  */
-export function prepareRequest(instanceName, token, sshPubKey, callbackUrl) {
+export function prepareRequest(instanceName, token, sshPubKey, callbackUrl, reciprocalOffer = null) {
   const identity = getIdentity();
   const ephemeral = generateEphemeral();
 
@@ -283,6 +317,12 @@ export function prepareRequest(instanceName, token, sshPubKey, callbackUrl) {
     static_pubkey: Buffer.from(identity.publicKey).toString('base64'),
     ssh_public_key: sshPubKey,
   };
+  if (reciprocalOffer) {
+    requestBody.reciprocal_offer = {
+      allowed_path_prefix: reciprocalOffer.allowed_path_prefix,
+      storage_limit_bytes: reciprocalOffer.storage_limit_bytes,
+    };
+  }
   requestBody.signature = Buffer.from(
     signPairingTranscript(buildRequestTranscript(requestBody), identity.secretKey),
   ).toString('base64');
@@ -335,7 +375,7 @@ export function prepareCallback(pairingRequest, callbackPayload) {
   );
 
   // Derive API key + encryption key from shared secret
-  const { apiKey, encryptionKey } = deriveKeys(sharedSecret, pairingRequest.token);
+  const { apiKey, reverseApiKey, encryptionKey } = deriveKeys(sharedSecret, pairingRequest.token);
 
   // Encrypt the callback payload
   const { ciphertext, nonce } = encryptPayload(callbackPayload, encryptionKey);
@@ -354,7 +394,7 @@ export function prepareCallback(pairingRequest, callbackPayload) {
     signPairingTranscript(buildCallbackTranscript(callbackBody), identity.secretKey),
   ).toString('base64');
 
-  return { callbackBody, derivedApiKey: apiKey };
+  return { callbackBody, derivedApiKey: apiKey, derivedReverseApiKey: reverseApiKey };
 }
 
 /**
@@ -392,7 +432,7 @@ export function processCallback(callbackBody, ourEphemeralSecret, expectedToken,
   const sharedSecret = computeSharedSecret(ourEphemeralSecret, callbackBody.ephemeral_pubkey);
 
   // Derive the same keys
-  const { apiKey, encryptionKey } = deriveKeys(sharedSecret, expectedToken);
+  const { apiKey, reverseApiKey, encryptionKey } = deriveKeys(sharedSecret, expectedToken);
 
   // Decrypt the payload
   let payload = null;
@@ -404,7 +444,7 @@ export function processCallback(callbackBody, ourEphemeralSecret, expectedToken,
   }
 
   const fingerprint = getFingerprint(callbackBody.static_pubkey);
-  return { valid: true, apiKey, payload, fingerprint, remoteStaticPubKey: callbackBody.static_pubkey };
+  return { valid: true, apiKey, reverseApiKey, payload, fingerprint, remoteStaticPubKey: callbackBody.static_pubkey };
 }
 
 export { HANDSHAKE_VERSION };

@@ -330,3 +330,16 @@
   margin-top: var(--space-sm);
   padding: var(--space-sm) 0;
 }
+
+.pairing-dialog-fingerprint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+}
+
+.pairing-dialog-fingerprint code {
+  user-select: text;
+  word-break: break-all;
+}

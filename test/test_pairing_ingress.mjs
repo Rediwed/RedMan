@@ -24,6 +24,9 @@ db.exec(`
     remote_ephemeral_pubkey TEXT,
     remote_static_pubkey TEXT,
     remote_fingerprint TEXT,
+    reciprocal_path TEXT,
+    reciprocal_limit_bytes INTEGER,
+    reciprocal_accepted INTEGER NOT NULL DEFAULT 0,
     expires_at TEXT DEFAULT (datetime('now', '+10 minutes'))
   );
 `);
@@ -33,7 +36,7 @@ const request = index => ({
   instance: `Peer ${index}`,
   callbackUrl: 'http://192.168.1.20:8091',
   sshPublicKey: 'ssh-ed25519 dGVzdA== redman@test',
-  handshakeVersion: 3,
+  handshakeVersion: 4,
   ephemeralPublicKey: 'A'.repeat(44),
   staticPublicKey: 'B'.repeat(44),
   fingerprint: 'AAAA:BBBB:CCCC:DDDD',

@@ -131,11 +131,11 @@
       "POST /api/peers/:id/regenerate-key": { "auth": true },
       "GET /api/peers/:id/audit-log": { "auth": true, "query": ["page", "limit"] },
       "GET /api/peers/audit-log/all": { "auth": true, "query": ["page", "limit"] },
-      "POST /api/peers/pair": { "auth": true },
+      "POST /api/peers/pair": { "auth": true, "body": ["remote_url", "reciprocal_offer"] },
       "GET /api/peers/pair/incoming": { "auth": true },
       "GET /api/peers/pair/history": { "auth": true },
       "GET /api/peers/pair/status/:id": { "auth": true },
-      "POST /api/peers/pair/:id/accept": { "auth": true, "body": ["allowed_path_prefix", "storage_limit_bytes", "confirmed_fingerprint"] },
+      "POST /api/peers/pair/:id/accept": { "auth": true, "body": ["allowed_path_prefix", "storage_limit_bytes", "confirmed_fingerprint", "accept_reciprocal"] },
       "POST /api/peers/pair/:id/decline": { "auth": true }
       ,"DELETE /api/peers/pair/:id": { "auth": true }
       ,"POST /api/peers/pair/sync": { "auth": true }
@@ -164,7 +164,7 @@
 
   "peerApi": {
     "GET /peer/discover": { "auth": false, "returns": ["service", "instance", "version", "hostname"] },
-    "POST /peer/pair/request": { "auth": false, "body": ["version", "role", "instance", "token", "ephemeral_pubkey", "static_pubkey", "signature", "ssh_public_key", "callback_url"] },
+    "POST /peer/pair/request": { "auth": false, "body": ["version", "role", "instance", "token", "ephemeral_pubkey", "static_pubkey", "signature", "ssh_public_key", "callback_url", "reciprocal_offer"] },
     "POST /peer/pair/callback": { "auth": false, "body": ["version", "role", "token", "request_static_pubkey", "ephemeral_pubkey", "static_pubkey", "signature", "encrypted_payload", "nonce"] },
     "GET /peer/health": { "returns": ["ok", "instance", "version", "timestamp"] },
     "POST /peer/backup/prepare": { "body": ["direction", "remotePath", "runId"] },
@@ -454,6 +454,9 @@
         "remote_static_pubkey": "TEXT",
         "ephemeral_secret": "TEXT",
         "remote_fingerprint": "TEXT",
+        "reciprocal_path": "TEXT",
+        "reciprocal_limit_bytes": "INTEGER",
+        "reciprocal_accepted": "INTEGER NOT NULL",
         "created_at": "TEXT",
         "updated_at": "TEXT",
         "expires_at": "TEXT"

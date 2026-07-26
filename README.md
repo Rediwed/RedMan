@@ -14,7 +14,8 @@ Push or pull data between two RedMan instances over rsync/SSH. Designed for mult
 
 - **Auto-discovery** — scans LAN subnets (detected from Docker networks, zero config) for other RedMan instances
 - **Bluetooth-style pairing** — click Connect on a discovered peer, accept on the other side; SSH keys + API keys exchanged automatically
-- **Pairing toast notifications** — incoming connection requests pop up on every page
+- **Pairing toast notifications** — incoming connection requests pop up on every page; accepting opens a centred dialog with the fingerprint, a browsable backup location, and a storage quota
+- **Optional bi-directional pairing** — offer the peer space on your instance in the same request, so one accept sets up both directions instead of repeating the whole flow
 - **Complete setup paths** — select a paired destination or enter a private peer URL/API key manually, with push/pull direction and validated SSH overrides
 - **Rsync over SSH** with `--partial` for resumable transfers
 - **SSH keepalive** (`ServerAliveInterval=60`) prevents silent drops on long transfers
@@ -608,8 +609,8 @@ To set up cross-site backup between two NAS units:
 ### Auto-Discovery Pairing (Recommended)
 
 1. Go to **Hyper Backup** and click **Discover Peers** — RedMan scans the local network
-2. Click **Connect** on the discovered peer
-3. The remote peer's UI shows a pairing request with the sender's identity fingerprint
+2. Click **Connect** on the discovered peer, and optionally tick **Also let … back up to me** to offer space in return
+3. The remote peer's UI shows a pairing request with the sender's identity fingerprint (with a copy button, so both operators can compare the exact string)
 4. Click **Accept** — both sides perform a Noise XX handshake:
    - Ephemeral X25519 keypairs generated on both sides
    - Each signs their ephemeral key with their static Ed25519 identity
@@ -619,6 +620,17 @@ To set up cross-site backup between two NAS units:
 6. Create a Hyper Backup job using the paired destination
 
 The connection badge (top-left) shows a green shield (🛡️) for secure v2-paired peers or an amber shield for legacy pairings.
+
+#### Bi-Directional Pairing (Optional)
+
+By default a pairing sets up one direction: the initiator gets to back up to the receiver. Ticking **Also let … back up to me** adds a *reciprocal offer* — a backup path and quota on the initiator's own instance — to the pairing request:
+
+- The offer is part of the **signed handshake transcript**, so the receiver knows it really came from the peer it verified, and tampering invalidates the signature
+- The receiver sees the offered path and quota in its accept dialog and can take it up or decline just that part; declining the offer still completes the normal one-way pairing
+- The reverse API key is derived from the same ECDH secret under a separate HKDF label, so like the forward key it is **never transmitted**
+- On acceptance the initiator authorises the peer against its own offered path, and the receiver stores the offered space as a destination — both directions are usable immediately
+
+The receiver always keeps control: it decides its own path and quota for the inbound direction, and can only accept an offer the peer actually signed.
 
 #### Callback Address Resolution
 

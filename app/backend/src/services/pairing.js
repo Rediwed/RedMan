@@ -20,6 +20,7 @@ import { randomBytes } from 'crypto';
 import db from '../db.js';
 import { hasKey, getPublicKey, generateKey, replaceKeyAuthorization } from './sshManager.js';
 import { assertFingerprintConfirmed, findExistingPeer, isPairingExpired } from './pairingState.js';
+import { validatePairingAccess } from './peerAccessPolicy.js';
 import { validatePrivatePeerBaseUrl } from './peerUrlPolicy.js';
 import { resolveCallbackUrl } from './callbackAddress.js';
 import { fetchWithoutRedirect } from './httpPolicy.js';
@@ -44,12 +45,18 @@ function getSetting(key) {
 // ── Initiator side ────────────────────────────────────────────────
 
 // Start a pairing request to a remote peer (called from main API)
-export async function initiatePairing(remoteUrl) {
+// `reciprocalOffer` optionally grants the remote backup space on this instance in the
+// same handshake, so the operators do not have to repeat the flow in the other direction.
+export async function initiatePairing(remoteUrl, reciprocalOffer = null) {
   remoteUrl = validatePrivatePeerBaseUrl(remoteUrl);
   // Ensure we have an SSH key
   if (!hasKey()) {
     await generateKey();
   }
+
+  const offer = reciprocalOffer
+    ? validatePairingAccess(reciprocalOffer.allowed_path_prefix, reciprocalOffer.storage_limit_bytes)
+    : null;
 
   const token = randomBytes(32).toString('hex');
   const instanceName = getSetting('instance_name') || 'RedMan';
@@ -67,15 +74,17 @@ export async function initiatePairing(remoteUrl) {
     token,
     sshPubKey,
     callbackUrl,
+    offer && { allowed_path_prefix: offer.allowedPathPrefix, storage_limit_bytes: offer.storageLimitBytes },
   );
 
   // Store outgoing request with ephemeral secret (needed to process callback later)
   const result = db.prepare(`
     INSERT INTO pairing_requests (direction, token, remote_instance, remote_url, status,
-      handshake_version, ephemeral_secret)
-    VALUES ('outgoing', ?, ?, ?, 'pending', ?, ?)
+      handshake_version, ephemeral_secret, reciprocal_path, reciprocal_limit_bytes)
+    VALUES ('outgoing', ?, ?, ?, 'pending', ?, ?, ?, ?)
   `).run(token, '(discovering)', remoteUrl, HANDSHAKE_VERSION,
-    Buffer.from(ephemeralSecret).toString('base64'));
+    Buffer.from(ephemeralSecret).toString('base64'),
+    offer?.allowedPathPrefix || null, offer?.storageLimitBytes || null);
 
   const requestId = result.lastInsertRowid;
 
@@ -167,9 +176,22 @@ export function handlePairingCallback(callbackBody) {
     return { error: result.error };
   }
 
-  // Payload contains: { ssh_public_key, instance, storage_limit_bytes, allowed_path_prefix }
-  const { apiKey, payload, fingerprint } = result;
+  // Payload contains: { ssh_public_key, instance, storage_limit_bytes, allowed_path_prefix, reciprocal_accepted }
+  const { apiKey, reverseApiKey, payload, fingerprint } = result;
   const encryptedApiKey = encryptPeerApiKey(apiKey);
+
+  // Honour our own signed offer — only when we actually made one and they took it up
+  let reciprocalGranted = false;
+  if (payload.reciprocal_accepted === true && req.reciprocal_path && req.reciprocal_limit_bytes > 0) {
+    try {
+      grantReciprocalAccess(req, payload, reverseApiKey, result.remoteStaticPubKey);
+      reciprocalGranted = true;
+    } catch (err) {
+      db.prepare('UPDATE pairing_requests SET status = ?, error = ?, updated_at = datetime(\'now\') WHERE id = ?')
+        .run('failed', `Reciprocal access grant failed: ${err.message}`, req.id);
+      return { error: `Reciprocal access grant failed: ${err.message}` };
+    }
+  }
 
   // Store the derived API key (for making requests TO the remote) — zeroise ephemeral secret
   db.prepare(`
@@ -178,14 +200,14 @@ export function handlePairingCallback(callbackBody) {
       remote_instance = COALESCE(?, remote_instance),
       remote_storage_limit = ?, remote_allowed_path = ?,
       remote_static_pubkey = ?, remote_fingerprint = ?,
-      ephemeral_secret = NULL,
+      ephemeral_secret = NULL, reciprocal_accepted = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).run(encryptedApiKey, payload.ssh_public_key, payload.instance,
     payload.storage_limit_bytes || 0, payload.allowed_path_prefix || '/',
-    result.remoteStaticPubKey, fingerprint, req.id);
+    result.remoteStaticPubKey, fingerprint, reciprocalGranted ? 1 : 0, req.id);
 
-  console.log(`[pairing] Handshake complete with "${payload.instance}" (${fingerprint}) — API key derived, never transmitted`);
+  console.log(`[pairing] Handshake complete with "${payload.instance}" (${fingerprint}) — API key derived, never transmitted${reciprocalGranted ? '; reverse access granted' : ''}`);
   return { ok: true };
 }
 
@@ -214,6 +236,8 @@ export function receiveRequest(body, callbackUrl, ip) {
     ephemeralPublicKey: body.ephemeral_pubkey,
     staticPublicKey: body.static_pubkey,
     fingerprint: validation.fingerprint,
+    reciprocalPath: body.reciprocal_offer?.allowed_path_prefix,
+    reciprocalLimitBytes: body.reciprocal_offer?.storage_limit_bytes,
   });
   if (stored.error) return stored;
 
@@ -225,7 +249,8 @@ export function receiveRequest(body, callbackUrl, ip) {
 // List pending incoming requests (for the UI)
 export function getPendingIncoming() {
   return db.prepare(`
-    SELECT id, remote_instance, remote_url, status, remote_fingerprint, created_at, expires_at
+    SELECT id, remote_instance, remote_url, status, remote_fingerprint, created_at, expires_at,
+           reciprocal_path, reciprocal_limit_bytes
     FROM pairing_requests
     WHERE direction = 'incoming' AND status = 'pending' AND expires_at >= datetime('now')
     ORDER BY created_at DESC
@@ -242,7 +267,7 @@ export function getAllPairingRequests() {
 
 // Accept an incoming pairing request
 // V3: signs the full callback transcript, derives the API key, and encrypts the payload.
-export async function acceptPairing(id, access, confirmedFingerprint) {
+export async function acceptPairing(id, access, confirmedFingerprint, acceptReciprocal = false) {
   const req = db.prepare('SELECT * FROM pairing_requests WHERE id = ? AND direction = ?').get(id, 'incoming');
   if (!req) return { error: 'Pairing request not found' };
   if (req.status !== 'pending') return { error: `Already ${req.status}` };
@@ -250,6 +275,13 @@ export async function acceptPairing(id, access, confirmedFingerprint) {
     assertFingerprintConfirmed(req.remote_fingerprint, confirmedFingerprint);
   } catch (err) {
     return { error: err.message };
+  }
+
+  // Only honour a reciprocal offer that the peer actually signed into its request
+  const offered = Boolean(req.reciprocal_path && req.reciprocal_limit_bytes > 0);
+  const reciprocal = Boolean(acceptReciprocal) && offered;
+  if (acceptReciprocal && !offered) {
+    return { error: 'This peer did not offer backup space in return' };
   }
 
   // Check expiry
@@ -263,6 +295,7 @@ export async function acceptPairing(id, access, confirmedFingerprint) {
 
   let callbackBody;
   let derivedApiKey;
+  let derivedReverseApiKey;
   let peerId;
 
   try {
@@ -287,9 +320,10 @@ export async function acceptPairing(id, access, confirmedFingerprint) {
     instance: instanceName,
     storage_limit_bytes: access.storageLimitBytes,
     allowed_path_prefix: access.allowedPathPrefix,
+    reciprocal_accepted: reciprocal,
   };
 
-  ({ callbackBody, derivedApiKey } = prepareCallback(req, callbackPayload));
+  ({ callbackBody, derivedApiKey, derivedReverseApiKey } = prepareCallback(req, callbackPayload));
   const derivedApiKeyHash = hashPeerApiKey(derivedApiKey);
 
   // Create or replace authorized peer with the derived API key
@@ -360,11 +394,21 @@ export async function acceptPairing(id, access, confirmedFingerprint) {
       return { error: `Callback to initiator failed: ${err.error}` };
     }
 
-    db.prepare('UPDATE pairing_requests SET status = ?, peer_id = ?, updated_at = datetime(\'now\') WHERE id = ?')
-      .run('accepted', peerId, id);
+    db.prepare('UPDATE pairing_requests SET status = ?, peer_id = ?, reciprocal_accepted = ?, updated_at = datetime(\'now\') WHERE id = ?')
+      .run('accepted', peerId, reciprocal ? 1 : 0, id);
 
-    console.log(`[pairing] Accepted pairing from "${req.remote_instance}" (${req.remote_fingerprint}) — peer #${peerId}, key derived via ECDH`);
-    return { ok: true, peer_id: peerId };
+    // The initiator registered our reverse grant while handling the callback, so only
+    // now is it safe to record the destination it offered us.
+    if (reciprocal) {
+      try {
+        recordReciprocalDestination(req, derivedReverseApiKey);
+      } catch (err) {
+        console.error(`[pairing] Reverse destination for "${req.remote_instance}" could not be stored:`, err.message);
+      }
+    }
+
+    console.log(`[pairing] Accepted pairing from "${req.remote_instance}" (${req.remote_fingerprint}) — peer #${peerId}, key derived via ECDH${reciprocal ? ', reverse direction enabled' : ''}`);
+    return { ok: true, peer_id: peerId, reciprocal };
   } catch (err) {
     const msg = err.name === 'AbortError' ? 'Callback timed out' : err.message;
     db.prepare('UPDATE pairing_requests SET status = ?, error = ?, peer_id = ?, updated_at = datetime(\'now\') WHERE id = ?')
@@ -387,6 +431,65 @@ export function declinePairing(id) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
+
+// Receiver side: record the backup space the initiator granted us as a destination.
+// Destinations live as accepted outgoing pairing rows, so no extra table is needed.
+function recordReciprocalDestination(req, reverseApiKey) {
+  db.prepare(`
+    INSERT INTO pairing_requests (direction, token, remote_instance, remote_url, status,
+      handshake_version, api_key_encrypted, remote_ssh_pubkey, remote_static_pubkey,
+      remote_fingerprint, remote_allowed_path, remote_storage_limit, reciprocal_accepted)
+    VALUES ('outgoing', ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(
+    randomBytes(32).toString('hex'),
+    req.remote_instance,
+    req.remote_url,
+    HANDSHAKE_VERSION,
+    encryptPeerApiKey(reverseApiKey),
+    req.remote_ssh_pubkey,
+    req.remote_static_pubkey,
+    req.remote_fingerprint,
+    req.reciprocal_path,
+    req.reciprocal_limit_bytes,
+  );
+  console.log(`[pairing] Reverse destination stored for "${req.remote_instance}" (${req.reciprocal_path})`);
+}
+
+// Initiator side: honour the offer we signed by authorising the remote to back up here.
+function grantReciprocalAccess(req, payload, reverseApiKey, remoteStaticPubKey) {
+  const access = validatePairingAccess(req.reciprocal_path, req.reciprocal_limit_bytes);
+  const reverseKeyHash = hashPeerApiKey(reverseApiKey);
+  const remoteIp = extractIp(req.remote_url);
+  const existingPeer = findExistingPeer(db, remoteStaticPubKey, req.remote_instance);
+
+  if (payload.ssh_public_key) {
+    replaceKeyAuthorization(existingPeer?.ssh_public_key, payload.ssh_public_key, {
+      allowedPathPrefix: access.allowedPathPrefix,
+      sourceIp: remoteIp,
+    });
+  }
+
+  if (existingPeer) {
+    db.prepare(`
+      UPDATE authorized_peers SET api_key = ?, last_seen_ip = ?, enabled = 1,
+        api_key_hash = ?, static_pubkey = ?, allowed_path_prefix = ?, storage_limit_bytes = ?,
+        ssh_public_key = COALESCE(?, ssh_public_key),
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(hashedPeerKeyMarker(reverseKeyHash), remoteIp, reverseKeyHash, remoteStaticPubKey,
+      access.allowedPathPrefix, access.storageLimitBytes, payload.ssh_public_key || null, existingPeer.id);
+    return existingPeer.id;
+  }
+
+  const inserted = db.prepare(`
+    INSERT INTO authorized_peers
+      (name, api_key, api_key_hash, allowed_path_prefix, storage_limit_bytes, last_seen_ip, static_pubkey, ssh_public_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(payload.instance || req.remote_instance, hashedPeerKeyMarker(reverseKeyHash), reverseKeyHash,
+    access.allowedPathPrefix, access.storageLimitBytes, remoteIp, remoteStaticPubKey,
+    payload.ssh_public_key || null);
+  return Number(inserted.lastInsertRowid);
+}
 
 function extractIp(url) {
   try {
