@@ -10,6 +10,7 @@ import { claimBackupRun } from './runClaim.js';
 import { assertLocalSourceHasEntries } from './sourceHealth.js';
 import { validatePrivatePeerBaseUrl } from './peerUrlPolicy.js';
 import { decryptPeerApiKey } from './peerSecrets.js';
+import { resolvePeerBinding, syncJobRemoteUrl } from './peerBinding.js';
 import { runtimeConfig } from './runtimeConfig.js';
 import { validateSshHost, validateSshPort, validateSshUser } from '../middleware/validation.js';
 import { validatePrivatePeerHost } from './peerUrlPolicy.js';
@@ -83,14 +84,23 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
   });
 
   try {
-    const remoteApiKey = decryptPeerApiKey(job.remote_api_key_encrypted);
+    // Resolve the peer's current address and credential from the pairing record —
+    // re-pairing rotates the API key and may move the peer to a new address.
+    const binding = resolvePeerBinding(db, job);
+    const remoteApiKey = decryptPeerApiKey(binding.apiKeyEncrypted);
     if (!remoteApiKey) throw new Error('Hyper Backup peer credential is unavailable');
+    if (binding.source === 'job' && job.peer_static_pubkey) {
+      console.warn(`[hyper-backup] No accepted pairing for job ${job.id}'s peer identity — falling back to the credential stored on the job`);
+    }
+    if (syncJobRemoteUrl(db, job, binding.remoteUrl)) {
+      console.log(`[hyper-backup] Peer for job ${job.id} moved to ${binding.remoteUrl}`);
+    }
     if (job.direction === 'push') {
       await assertLocalSourceHasEntries(job.local_path, 'Hyper Backup source');
     }
 
     // Step 1: Call remote peer API to prepare
-    const prepareResult = await callPeerApi(job.remote_url, remoteApiKey, 'POST', '/peer/backup/prepare', {
+    const prepareResult = await callPeerApi(binding.remoteUrl, remoteApiKey, 'POST', '/peer/backup/prepare', {
       direction: job.direction,
       remotePath: job.remote_path,
       runId,
@@ -161,7 +171,7 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
         : ([23, 24].includes(result.exitCode) && result.progress.filesCopied > 0 ? 'partial' : 'failed');
 
     // Step 3: Notify remote peer that transfer is complete
-    await callPeerApi(job.remote_url, remoteApiKey, 'POST', '/peer/backup/complete', {
+    await callPeerApi(binding.remoteUrl, remoteApiKey, 'POST', '/peer/backup/complete', {
       runId,
       status,
       stats: result.progress,
@@ -257,25 +267,34 @@ export async function getPeerShares(remoteUrl, apiKey) {
 // Notify all known Hyper Backup peers that this instance is shutting down.
 // Best-effort: failures are logged but don't block shutdown.
 export async function notifyPeersOfShutdown() {
-  // Get unique peer URLs + keys from hyper backup jobs
-  const jobs = db.prepare('SELECT DISTINCT remote_url, remote_api_key_encrypted FROM hyper_backup_jobs').all();
+  // Resolve each job's peer live — a re-paired peer has a new key and address
+  const jobs = db.prepare(`
+    SELECT id, remote_url, peer_static_pubkey, remote_api_key_encrypted FROM hyper_backup_jobs
+  `).all();
   if (jobs.length === 0) return;
 
   const notified = new Set();
   const promises = [];
 
   for (const job of jobs) {
-    // Deduplicate by remote_url (multiple jobs may target the same peer)
-    if (notified.has(job.remote_url)) continue;
-    notified.add(job.remote_url);
+    let binding;
+    try {
+      binding = resolvePeerBinding(db, job);
+    } catch {
+      continue; // Nothing to notify — the job has no usable destination
+    }
+
+    // Deduplicate by resolved address (multiple jobs may target the same peer)
+    if (notified.has(binding.remoteUrl)) continue;
+    notified.add(binding.remoteUrl);
 
     promises.push(
-      callPeerApi(job.remote_url, decryptPeerApiKey(job.remote_api_key_encrypted), 'POST', '/peer/shutdown', {
+      callPeerApi(binding.remoteUrl, decryptPeerApiKey(binding.apiKeyEncrypted), 'POST', '/peer/shutdown', {
         reason: 'graceful shutdown',
       }).then(() => {
-        console.log(`[shutdown] Notified peer at ${job.remote_url}`);
+        console.log(`[shutdown] Notified peer at ${binding.remoteUrl}`);
       }).catch((err) => {
-        console.warn(`[shutdown] Could not notify peer at ${job.remote_url}: ${err.message}`);
+        console.warn(`[shutdown] Could not notify peer at ${binding.remoteUrl}: ${err.message}`);
       })
     );
   }

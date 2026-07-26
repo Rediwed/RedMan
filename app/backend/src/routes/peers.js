@@ -40,18 +40,19 @@ router.get('/', (req, res) => {
     ssh_authorization: p.ssh_public_key ? 'managed' : 'external',
   }));
 
-  // Outgoing: peers we've paired with and push backups to (deduplicated by remote_url, latest wins)
+  // Outgoing: peers we've paired with and push backups to (deduplicated by
+  // static identity where known, latest accepted pairing wins)
   const outgoing = db.prepare(`
     SELECT p1.id, p1.remote_instance as name, p1.remote_url, p1.status,
            p1.remote_storage_limit, p1.remote_allowed_path,
-           p1.handshake_version, p1.remote_fingerprint,
+           p1.handshake_version, p1.remote_fingerprint, p1.remote_static_pubkey,
            p1.created_at, p1.updated_at
     FROM pairing_requests p1
     INNER JOIN (
-      SELECT remote_url, MAX(id) as max_id
+      SELECT COALESCE(remote_static_pubkey, remote_url) AS peer_key, MAX(id) as max_id
       FROM pairing_requests
       WHERE direction = 'outgoing' AND status = 'accepted'
-      GROUP BY remote_url
+      GROUP BY COALESCE(remote_static_pubkey, remote_url)
     ) p2 ON p1.id = p2.max_id
     ORDER BY p1.created_at DESC
   `).all().map(p => ({ ...p, role: 'outgoing' }));
@@ -162,16 +163,16 @@ router.post('/pair/sync', async (req, res) => {
 
 // Check connectivity to outgoing (destination) peers we push backups to
 router.get('/connectivity', async (req, res) => {
-  // Outgoing peers: deduplicated by remote_url, latest accepted pairing wins
+  // Outgoing peers: deduplicated by static identity where known, latest accepted pairing wins
   const peers = db.prepare(`
     SELECT p1.id, p1.remote_instance as name, p1.remote_url, p1.updated_at,
-           p1.handshake_version, p1.remote_fingerprint
+           p1.handshake_version, p1.remote_fingerprint, p1.remote_static_pubkey
     FROM pairing_requests p1
     INNER JOIN (
-      SELECT remote_url, MAX(id) as max_id
+      SELECT COALESCE(remote_static_pubkey, remote_url) AS peer_key, MAX(id) as max_id
       FROM pairing_requests
       WHERE direction = 'outgoing' AND status = 'accepted'
-      GROUP BY remote_url
+      GROUP BY COALESCE(remote_static_pubkey, remote_url)
     ) p2 ON p1.id = p2.max_id
     ORDER BY p1.created_at DESC
   `).all();

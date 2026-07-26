@@ -22,7 +22,28 @@ import {
   encryptPeerApiKey,
   encryptedPeerKeyMarker,
 } from '../services/peerSecrets.js';
+import { findPairingByStaticKey, findPairingByUrl, resolvePeerBinding } from '../services/peerBinding.js';
 const router = Router();
+
+// Helper: look up the pairing for a selected peer. Prefers the stable static
+// identity so a re-paired peer keeps working even if its address changed.
+function getPairingKey({ staticPublicKey, remoteUrl }) {
+  const pairing = staticPublicKey
+    ? findPairingByStaticKey(db, staticPublicKey)
+    : findPairingByUrl(db, remoteUrl);
+  if (!pairing) return null;
+  return { ...pairing, api_key: decryptPeerApiKey(pairing.api_key_encrypted) };
+}
+
+// Helper: describe a job's live destination without exposing credentials
+function describeBinding(job) {
+  try {
+    const binding = resolvePeerBinding(db, job);
+    return { peer_name: binding.peerName, peer_bound: binding.source === 'identity', remote_url: binding.remoteUrl };
+  } catch {
+    return { peer_name: null, peer_bound: false, remote_url: job.remote_url };
+  }
+}
 
 // List all Hyper Backup jobs
 router.get('/jobs', (req, res) => {
@@ -30,6 +51,7 @@ router.get('/jobs', (req, res) => {
   // Don't expose API keys in list view
   const safe = jobs.map(j => ({
     ...j,
+    ...describeBinding(j),
     remote_api_key: j.remote_api_key ? '••••••••' : '',
     remote_api_key_encrypted: undefined,
     consecutive_skips: getJobSkipCount('hyper-backup', j.id),
@@ -46,20 +68,28 @@ router.get('/jobs', (req, res) => {
 router.get('/jobs/:id', (req, res) => {
   const job = db.prepare('SELECT * FROM hyper_backup_jobs WHERE id = ?').get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
+  const binding = describeBinding(job);
   job.remote_api_key = job.remote_api_key ? '••••••••' : '';
   delete job.remote_api_key_encrypted;
-  res.json(job);
+  res.json({ ...job, ...binding });
 });
 
 // Create a new Hyper Backup job
 router.post('/jobs', (req, res) => {
-  const { name, direction, remote_url, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_mode, notify_on_start, notify_on_success, notify_on_failure } = req.body;
-  let { remote_api_key } = req.body;
-  const pairing = remote_url ? getPairingKey(remote_url) : null;
+  const { name, direction, peer_static_pubkey, local_path, remote_path, ssh_user, ssh_host, ssh_port, cron_expression, notify_mode, notify_on_start, notify_on_success, notify_on_failure } = req.body;
+  let { remote_api_key, remote_url } = req.body;
+  const pairing = (peer_static_pubkey || remote_url)
+    ? getPairingKey({ staticPublicKey: peer_static_pubkey, remoteUrl: remote_url })
+    : null;
 
-  // Auto-fill API key from pairing record when not provided (form uses destination picker)
-  if (!remote_api_key && remote_url) {
-    if (pairing?.api_key) remote_api_key = pairing.api_key;
+  // A selected peer supplies its own current address and key — never snapshot them
+  if (pairing) {
+    remote_url = pairing.remote_url;
+    if (!remote_api_key) remote_api_key = pairing.api_key;
+  }
+
+  if (peer_static_pubkey && !pairing) {
+    return res.status(400).json({ error: 'Selected peer is not paired — pair it in Settings first' });
   }
 
   if (!name || !direction || !remote_url || !remote_api_key || !local_path || !remote_path) {
@@ -121,9 +151,10 @@ router.post('/jobs', (req, res) => {
     scheduleJob('hyper-backup', job.id, job.cron_expression);
   }
 
+  const binding = describeBinding(job);
   job.remote_api_key = '••••••••';
   delete job.remote_api_key_encrypted;
-  res.status(201).json(job);
+  res.status(201).json({ ...job, ...binding });
 });
 
 // Update a job
@@ -132,10 +163,11 @@ router.put('/jobs/:id', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Job not found' });
 
   const {
-    name, direction, remote_url, remote_api_key, local_path, remote_path,
+    name, direction, remote_api_key, local_path, remote_path,
     ssh_user, ssh_host, ssh_port, cron_expression, enabled,
     notify_mode, notify_on_start, notify_on_success, notify_on_failure,
   } = req.body;
+  let { remote_url, peer_static_pubkey } = req.body;
   if (cron_expression !== undefined && !validateCronExpression(cron_expression)) {
     return res.status(400).json({ error: 'cron_expression must be a valid 5-field cron expression' });
   }
@@ -162,15 +194,23 @@ router.put('/jobs/:id', (req, res) => {
     return res.status(400).json({ error: 'ssh_user must be a non-root account containing only letters, digits, dot, dash, or underscore' });
   }
 
+  // Re-bind to the selected peer. When the job keeps its destination we still
+  // re-read the pairing, so a re-paired peer's rotated key and moved address
+  // are picked up instead of the stale values stored on the job.
+  const requestedStaticKey = peer_static_pubkey ?? (remote_url === undefined ? existing.peer_static_pubkey : null);
   const targetRemoteUrl = remote_url ?? existing.remote_url;
-  const pairing = getPairingKey(targetRemoteUrl);
+  const pairing = getPairingKey({ staticPublicKey: requestedStaticKey, remoteUrl: targetRemoteUrl });
+  if (peer_static_pubkey && !pairing) {
+    return res.status(400).json({ error: 'Selected peer is not paired — pair it in Settings first' });
+  }
   const peerStaticPublicKey = pairing?.remote_static_pubkey
     || (targetRemoteUrl === existing.remote_url ? existing.peer_static_pubkey : null);
+  const effectiveRemoteUrl = pairing?.remote_url || targetRemoteUrl;
 
   const hasNewApiKey = remote_api_key && remote_api_key !== '••••••••';
   const encryptedApiKey = hasNewApiKey
     ? encryptPeerApiKey(remote_api_key)
-    : existing.remote_api_key_encrypted;
+    : (pairing?.api_key_encrypted || existing.remote_api_key_encrypted);
 
   db.prepare(`
     UPDATE hyper_backup_jobs SET
@@ -183,7 +223,7 @@ router.put('/jobs/:id', (req, res) => {
   `).run(
     name ?? existing.name,
     direction ?? existing.direction,
-    remote_url ?? existing.remote_url,
+    effectiveRemoteUrl,
     encryptedPeerKeyMarker(),
     encryptedApiKey,
     peerStaticPublicKey,
@@ -209,9 +249,10 @@ router.put('/jobs/:id', (req, res) => {
     removeJob('hyper-backup', updated.id);
   }
 
+  const binding = describeBinding(updated);
   updated.remote_api_key = '••••••••';
   delete updated.remote_api_key_encrypted;
-  res.json(updated);
+  res.json({ ...updated, ...binding });
 });
 
 // Delete a job
@@ -269,14 +310,8 @@ router.post('/test-connection', async (req, res) => {
 });
 
 // Helper: look up API key for a paired remote URL
-function getPairingKey(remoteUrl) {
-  const pairing = db.prepare(`
-    SELECT api_key_encrypted, remote_static_pubkey FROM pairing_requests
-    WHERE direction = 'outgoing' AND status = 'accepted' AND remote_url = ?
-    ORDER BY id DESC LIMIT 1
-  `).get(remoteUrl);
-  if (!pairing?.api_key_encrypted) return null;
-  return { ...pairing, api_key: decryptPeerApiKey(pairing.api_key_encrypted) };
+function getPairingKeyByUrl(remoteUrl) {
+  return getPairingKey({ remoteUrl });
 }
 
 // Browse directories on a remote peer (proxy to peer API)
@@ -287,7 +322,7 @@ router.get('/remote-browse', async (req, res) => {
     return res.status(400).json({ error: 'remote_url query parameter is required and must be a valid URL' });
   }
 
-  const pairing = getPairingKey(remote_url);
+  const pairing = getPairingKeyByUrl(remote_url);
   if (!pairing?.api_key) {
     return res.status(404).json({ error: 'No accepted pairing found for this remote URL' });
   }
@@ -308,7 +343,7 @@ router.get('/remote-roots', async (req, res) => {
     return res.status(400).json({ error: 'remote_url query parameter is required and must be a valid URL' });
   }
 
-  const pairing = getPairingKey(remote_url);
+  const pairing = getPairingKeyByUrl(remote_url);
   if (!pairing?.api_key) {
     return res.status(404).json({ error: 'No accepted pairing found for this remote URL' });
   }
@@ -339,7 +374,7 @@ router.get('/remote-shares', async (req, res) => {
     return res.status(400).json({ error: 'remote_url query parameter is required and must be a valid URL' });
   }
 
-  const pairing = getPairingKey(remote_url);
+  const pairing = getPairingKeyByUrl(remote_url);
   if (!pairing?.api_key) {
     return res.status(404).json({ error: 'No accepted pairing found for this remote URL' });
   }
