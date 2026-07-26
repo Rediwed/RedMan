@@ -529,7 +529,7 @@ export default function UpgradeReadinessWizard() {
           <div className="upgrade-form-grid">
             <div className="form-group upgrade-span-2 upgrade-primary-field">
               <label htmlFor="upgrade-peer-host">This NAS private IP</label>
-              <input id="upgrade-peer-host" aria-invalid={Boolean(configIssues.peerHost)} placeholder="192.168.70.2" value={configForm.peerHost ?? ''} onChange={event => setConfigForm({ ...configForm, peerHost: event.target.value })} />
+              <input id="upgrade-peer-host" aria-invalid={Boolean(configIssues.peerHost)} placeholder="10.10.0.2" value={configForm.peerHost ?? ''} onChange={event => setConfigForm({ ...configForm, peerHost: event.target.value })} />
               <span className="upgrade-field-hint">{configIssues.peerHost || 'The address the other RedMan NAS uses to reach this NAS. Do not enter the other NAS address.'}</span>
             </div>
             {configIssues.publicOrigin && <div className="form-group upgrade-span-2"><label>Public RedMan address</label><input aria-invalid="true" placeholder="https://redman.example.com" value={configForm.publicOrigin ?? ''} onChange={event => setConfigForm({ ...configForm, publicOrigin: event.target.value })} /><span className="upgrade-field-hint">{configIssues.publicOrigin}</span></div>}

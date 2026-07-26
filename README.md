@@ -311,7 +311,7 @@ services:
       - TRUSTED_PROXIES=172.20.0.5/32  # replace with the exact source RedMan sees
       - PORT=8090
       - PEER_API_PORT=8091
-      - PEER_HOST=100.90.128.2  # SSH address reachable by the other RedMan peer
+      - PEER_HOST=10.10.0.2  # SSH address reachable by the other RedMan peer
       - SSH_USER=redman-backup
       - RRSYNC_PATH=/usr/local/bin/rrsync
       - REDMAN_STORAGE_ROOTS=${REDMAN_STORAGE_PATH},${REDMAN_MEDIA_PATH}
