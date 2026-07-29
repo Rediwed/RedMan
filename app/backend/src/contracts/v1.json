@@ -494,7 +494,7 @@
     "versionBrowser": ["listSnapshots", "browseSnapshot", "resolveFilePath", "restoreFile", "pruneVersions"],
     "deltaVersion": ["withConfigLock", "registerTempFile", "cleanupTempFile", "cleanupOrphanedTempFiles", "startTempCleanup", "stopTempCleanup", "readManifest", "deltaifySnapshot", "rebaseDeltas", "rebaseDeltasWithTimestamp", "reconstructFile", "getChainLength", "verifyDeltaChain", "promoteDeltaToFull", "computeVersionStats", "getCachedVersionStats", "getAllCachedVersionStats"],
     "versionVerification": ["getActiveVersionVerification", "startVersionVerification", "cancelVersionVerification", "stopActiveVersionVerifications"],
-    "quotaUsage": ["getQuotaUsage", "invalidateQuotaUsage"],
+    "quotaUsage": ["getQuotaUsage", "invalidateQuotaUsage", "markQuotaUsageStale"],
     "databaseRetention": ["getDatabaseRetentionPolicy", "pruneDatabaseTelemetry", "runDatabaseRetentionBatches"],
     "jobHealth": ["getJobHealth"],
     "excludePolicy": ["normalizeExcludePatterns", "listExcludePatterns"],

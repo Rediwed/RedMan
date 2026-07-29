@@ -18,7 +18,7 @@ import { validateSignedCallbackUrl } from './services/peerUrlPolicy.js';
 import { failRunningHyperRunsForPeer, getPeerOwnedHyperRun } from './services/peerRunIsolation.js';
 import { assertLocalSourceHasEntries } from './services/sourceHealth.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './services/pathConfinement.js';
-import { getQuotaUsage, invalidateQuotaUsage } from './services/quotaUsage.js';
+import { getQuotaUsage, markQuotaUsageStale } from './services/quotaUsage.js';
 import { requirePeerHost, runtimeConfig } from './services/runtimeConfig.js';
 
 const logAudit = db.prepare(`
@@ -199,18 +199,30 @@ export function createPeerApi() {
     if (direction === 'push' && req.peer.storage_limit_bytes > 0) {
       const quotaRoot = resolveExistingPathWithinPrefix(req.peer.allowed_path_prefix, req.peer.allowed_path_prefix).path;
       quotaUsage = await getQuotaUsage(quotaRoot);
+      // Refuse on evidence, not on ignorance. A measurement that has not
+      // produced a figure yet says nothing about whether the quota is exceeded,
+      // and turning that into a refusal loses backups over a measurement, which
+      // is the more expensive failure by far.
+      //
+      // The figure being old does not weaken this: the last successful
+      // measurement is kept and enforced from, so a directory that has grown
+      // too large to measure quickly cannot use that slowness to escape its own
+      // limit. usedBytes is null only when this destination has never been
+      // measured at all, and that is recorded so a scan that never succeeds
+      // stays visible instead of quietly disabling the quota.
       if (quotaUsage.usedBytes === null) {
-        return res.status(503).json({
-          error: `Storage usage unavailable: ${quotaUsage.unavailableReason}`,
-          limitBytes: req.peer.storage_limit_bytes,
-        });
-      }
-      if (quotaUsage.usedBytes >= req.peer.storage_limit_bytes) {
+        logAudit.run(req.peer.id, req.peer.name, 'quota_unknown', JSON.stringify({
+          remotePath: normalizedPath, reason: quotaUsage.unavailableReason,
+          limitBytes: req.peer.storage_limit_bytes, runId,
+        }), req.peerIp);
+        console.warn(`[peer] Storage usage has never been measured for "${req.peer.name}" (${quotaUsage.unavailableReason}); allowing the backup and continuing to measure`);
+      } else if (quotaUsage.usedBytes >= req.peer.storage_limit_bytes) {
         const usedGB = (quotaUsage.usedBytes / (1024 ** 3)).toFixed(2);
         const limitGB = (req.peer.storage_limit_bytes / (1024 ** 3)).toFixed(2);
         logAudit.run(req.peer.id, req.peer.name, 'quota_exceeded', JSON.stringify({
           remotePath: normalizedPath, usedBytes: quotaUsage.usedBytes,
           limitBytes: req.peer.storage_limit_bytes, runId,
+          usageAgeMs: quotaUsage.ageMs ?? null,
         }), req.peerIp);
         return res.status(507).json({
           error: `Storage quota exceeded: using ${usedGB} GB of ${limitGB} GB allowed`,
@@ -254,9 +266,9 @@ export function createPeerApi() {
     console.log(`[peer] Backup run ${runId} from ${req.peer.name} completed: ${status}`);
     try {
       const quotaRoot = resolveExistingPathWithinPrefix(req.peer.allowed_path_prefix, req.peer.allowed_path_prefix).path;
-      invalidateQuotaUsage(quotaRoot);
+      markQuotaUsageStale(quotaRoot);
     } catch {
-      invalidateQuotaUsage();
+      markQuotaUsageStale();
     }
     res.json({ ok: true, acknowledged: true });
   });
@@ -323,6 +335,8 @@ export function createPeerApi() {
         ? Math.round((usedBytes / limitBytes) * 100)
         : null,
       cached: usage.cached,
+      stale: usage.stale === true,
+      ageMs: usage.ageMs ?? null,
       usageUnavailable: usage.unavailableReason,
     });
   });
