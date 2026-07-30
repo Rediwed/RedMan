@@ -70,12 +70,16 @@ function startScan(dirPath, timeoutMs) {
  * decision.
  */
 export async function getQuotaUsage(dirPath, options = {}) {
-  const maxAgeMs = boundedNumber(options.maxAgeMs, 600_000, 1_000, 86_400_000);
+  // A real backup target takes minutes to walk, not seconds: the pair this was
+  // written for measures 20 s at one end and 178 s at the other, and both grow
+  // with the data. The scan is off the critical path, so it can afford the time,
+  // but a budget it cannot finish within is the same as no measurement at all.
+  const maxAgeMs = boundedNumber(options.maxAgeMs, 3_600_000, 1_000, 86_400_000);
   const timeoutMs = boundedNumber(
     options.timeoutMs ?? process.env.PEER_QUOTA_DU_TIMEOUT_MS,
-    120_000,
-    1_000,
     600_000,
+    1_000,
+    1_800_000,
   );
   const firstWaitMs = boundedNumber(
     options.firstWaitMs ?? process.env.PEER_QUOTA_FIRST_WAIT_MS,
