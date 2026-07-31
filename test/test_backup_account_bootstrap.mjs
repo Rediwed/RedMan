@@ -44,4 +44,16 @@ assert.match(unraidSource, /34661573a4b773b07191fe4b6f583a348bb0ed70909ad84b1cc2
 assert.match(unraidSource, /BOOT_COMMAND="bash/);
 assert.match(unraidSource, /bash "\$CORE_SCRIPT"/);
 
+// Unraid's /etc/rc.d/rc.sshd restart rebuilds sshd_config from a template and
+// takes the Match block with it, while still reporting success — so signalling
+// the running listener must be tried first, and the block must be re-checked
+// after any reload rather than assumed to have survived.
+const sighupAt = portableSource.indexOf('kill -HUP "$sshd_pid"');
+const rcSshdAt = portableSource.indexOf('[[ -x /etc/rc.d/rc.sshd ]]');
+assert.notEqual(sighupAt, -1, 'reload must be able to signal sshd directly');
+assert.notEqual(rcSshdAt, -1);
+assert.ok(sighupAt < rcSshdAt, 'SIGHUP must be attempted before rc.sshd restart');
+assert.match(portableSource, /grep -qF "\$BEGIN_MARKER" "\$SSHD_CONFIG"/);
+assert.match(portableSource, /discarded the \$\{BACKUP_USER\} block/);
+
 console.log('Backup account bootstrap: generic Linux and Unraid greenfield plans passed');

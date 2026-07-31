@@ -371,6 +371,18 @@ fi
 
 reload_sshd() {
   if $SKIP_RELOAD; then return 0; fi
+  # Signal the running listener first: it re-reads the configuration in place.
+  # Unraid's /etc/rc.d/rc.sshd restart regenerates sshd_config from a template,
+  # which silently discards the Match block written above — so it is only ever
+  # a last resort, and the caller verifies the block survived either way.
+  local pidfile sshd_pid
+  for pidfile in /var/run/sshd.pid /run/sshd.pid; do
+    [[ -r "$pidfile" ]] || continue
+    sshd_pid=$(cat "$pidfile" 2>/dev/null || true)
+    if [[ "$sshd_pid" =~ ^[0-9]+$ ]] && kill -HUP "$sshd_pid" 2>/dev/null; then
+      return 0
+    fi
+  done
   if command -v systemctl >/dev/null 2>&1; then
     for unit in sshd ssh; do
       if systemctl reload "$unit" >/dev/null 2>&1; then return 0; fi
@@ -388,6 +400,15 @@ reload_sshd() {
 if ! reload_sshd; then
   rollback_config
   die "could not reload OpenSSH; the original configuration was restored (use --skip-reload only when SSH is reloaded externally)"
+fi
+
+# A reload that rewrites sshd_config from a distribution template takes the
+# Match block with it and still reports success. Reporting "ready" then leaves
+# the account reachable by password with no AuthorizedKeysCommand, which is
+# both a weaker posture than intended and a silently broken backup path — so
+# confirm the block is still in the file the daemon just read.
+if ! grep -qF "$BEGIN_MARKER" "$SSHD_CONFIG"; then
+  die "the OpenSSH reload rewrote $SSHD_CONFIG and discarded the ${BACKUP_USER} block; re-run with --skip-reload and signal sshd yourself (on Unraid: kill -HUP the pid in /var/run/sshd.pid)"
 fi
 
 echo "RedMan backup account ready: user=$BACKUP_USER keys=$AUTHORIZED_KEYS rrsync=$RRSYNC_PATH"
