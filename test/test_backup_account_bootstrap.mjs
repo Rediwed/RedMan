@@ -78,7 +78,7 @@ assert.doesNotMatch(portableSource, /-exec chown/);
 // -h keeps a symlink's target — which may lie outside the root — untouched.
 assert.doesNotMatch(portableSource, /chown -R "/);
 // The detection is bounded in the clean case too, not only when it finds a hit.
-assert.match(portableSource, /-xdev -maxdepth 3 ! -user "\$BACKUP_USER" -print -quit/);
+assert.match(portableSource, /-xdev -mindepth 1 -maxdepth 3 ! -user "\$BACKUP_USER" -print -quit/);
 assert.match(portableSource, /command -v timeout[^\n]*\|\| continue/);
 assert.match(portableSource, /rc -eq 124/);
 // Adoption must never abort the script: the sshd block is configured above it.

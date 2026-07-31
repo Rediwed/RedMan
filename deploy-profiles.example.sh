@@ -18,7 +18,9 @@ redman_deploy_profile() {
       T_PEER_HOST="${REDMAN_EXAMPLE_PEER_HOST:-}"
       T_AUTO_PROVISION_ROLE=""
       T_BOOTSTRAP_TOKEN="${REDMAN_EXAMPLE_BOOTSTRAP_TOKEN:-}"
-      T_BACKUP_ROOT_ARGS="--backup-root /mnt/user --backup-root /mnt/disks"
+      # A backup root is one destination directory, not a whole mount: the
+      # account is given ownership of everything beneath it.
+      T_BACKUP_ROOT_ARGS="--backup-root /mnt/user/cross-site"
       T_EXTRA_VOLS="-v /boot/config/shares:/boot/config/shares:ro -v /mnt/user:/mnt/user -v /mnt/cache:/mnt/cache:ro -v /mnt/disks:/mnt/disks -v /mnt/user/appdata/redman/ssh-keys/authorized_keys:/host-ssh/authorized_keys"
       T_SETUP_SCRIPT="setup-unraid-backup-user.sh"
       T_STORAGE_ROOTS="/mnt/user,/mnt/cache,/mnt/disks"

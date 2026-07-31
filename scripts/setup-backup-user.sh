@@ -466,6 +466,9 @@ adopt_or_report_backup_roots() {
       # -h so a symlink is re-owned instead of its target, which may lie outside
       # this root. chown -R walks with directory file descriptors, so unlike
       # find -exec it never re-resolves a path a writer could have swapped.
+      # Two limits remain: a hardlink shares its inode, so re-owning it changes
+      # every other name for that file too, and chown has no --one-file-system,
+      # so a mount nested under this root is re-owned with it.
       if chown -Rh "$BACKUP_USER:$BACKUP_GROUP" "$root"; then
         echo "Adopted existing content under $root for $BACKUP_USER"
       else
@@ -475,8 +478,9 @@ adopt_or_report_backup_roots() {
     fi
     command -v timeout >/dev/null 2>&1 || continue
     # Bounded on purpose: -quit stops at the first offender, -xdev and -maxdepth
-    # keep the clean case from walking an entire array during boot.
-    offender="$(timeout "$ADOPT_SCAN_SECONDS" find "$root" -xdev -maxdepth 3 ! -user "$BACKUP_USER" -print -quit 2>/dev/null)"
+    # keep the clean case from walking an entire array during boot. -mindepth 1
+    # skips the root itself, which is deliberately root-owned with setgid.
+    offender="$(timeout "$ADOPT_SCAN_SECONDS" find "$root" -xdev -mindepth 1 -maxdepth 3 ! -user "$BACKUP_USER" -print -quit 2>/dev/null)"
     rc=$?
     if [[ $rc -eq 124 ]]; then
       echo "NOTE: ownership under $root could not be verified within ${ADOPT_SCAN_SECONDS}s." >&2
