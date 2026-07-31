@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const fixture = resolve(import.meta.dirname, 'data', `hyper-ssh-target-${process.pid}`);
 mkdirSync(fixture, { recursive: true });
 process.env.DB_PATH = resolve(fixture, 'redman.db');
-const { resolveHyperSshTarget, buildHyperSshCommand } = await import('../app/backend/src/services/hyperBackup.js');
+const { resolveHyperSshTarget, buildHyperSshCommand, resolveHyperRemotePath } = await import('../app/backend/src/services/hyperBackup.js');
 const { default: db } = await import('../app/backend/src/db.js');
 
 try {
@@ -49,6 +49,24 @@ try {
   assert.throws(() => buildHyperSshCommand(22, '-oProxyCommand=touch /tmp/pwned'), /whitespace or start with/);
   assert.throws(() => buildHyperSshCommand(70000), /invalid SSH port/);
   assert.throws(() => buildHyperSshCommand('22 -oProxyCommand=x'), /invalid SSH port/);
+
+  // A restricted peer advertises the path rsync must ask for, because rrsync
+  // resolves it under the allowed prefix. Using the job's absolute path there
+  // makes the peer apply the prefix twice.
+  const pathJob = { remote_path: '/mnt/user/cross-site/appdata' };
+  assert.equal(resolveHyperRemotePath(pathJob, { rsyncPath: '/appdata' }), '/appdata');
+  // A peer that advertises nothing keeps the previous behaviour.
+  assert.equal(resolveHyperRemotePath(pathJob, {}), '/mnt/user/cross-site/appdata');
+  assert.equal(resolveHyperRemotePath(pathJob, { rsyncPath: null }), '/mnt/user/cross-site/appdata');
+  // The path comes from the peer, so it is validated before it reaches rsync.
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '../../etc' }), /invalid rsync path/);
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '/a/../../etc' }), /invalid rsync path/);
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: 'relative' }), /invalid rsync path/);
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '/a\nb' }), /invalid rsync path/);
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: 42 }), /invalid rsync path/);
+  // The transfer must use the resolved path, not the raw job field.
+  assert.match(hyperBackupSource, /const remotePath = resolveHyperRemotePath\(job, prepareResult\)/);
+  assert.doesNotMatch(hyperBackupSource, /\$\{sshUser\}@\$\{sshHost\}:\$\{job\.remote_path\}/);
 
   console.log('Hyper SSH target: authenticated peer advertisement, overrides, and validation passed');
 } finally {

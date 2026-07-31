@@ -52,6 +52,20 @@ export function buildRestrictedAuthorizedKey(publicKey, allowedPathPrefix, sourc
   return `${options.join(',')} ${normalizedKey}`;
 }
 
+// Translate an absolute path on this peer into the path rsync must request.
+// The authorized key confines the session to allowedPathPrefix via rrsync, and
+// rrsync resolves every request underneath that prefix — so sending the full
+// absolute path makes it apply the prefix twice and fail with a doubled path.
+export function toRrsyncPath(absolutePath, allowedPathPrefix) {
+  if (!allowedPathPrefix || allowedPathPrefix === '/') return absolutePath;
+  const prefix = allowedPathPrefix.replace(/\/+$/u, '');
+  if (absolutePath === prefix) return '/';
+  if (!absolutePath.startsWith(`${prefix}/`)) {
+    throw new Error(`Path "${absolutePath}" is outside the rrsync prefix "${prefix}"`);
+  }
+  return absolutePath.slice(prefix.length);
+}
+
 export function upsertAuthorizedKeyContent(existingContent, authorizedEntry, publicKey) {
   const identity = getSshKeyIdentity(publicKey);
   const lines = String(existingContent || '').split(/\r?\n/);

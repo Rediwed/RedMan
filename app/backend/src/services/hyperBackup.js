@@ -71,6 +71,20 @@ export function buildHyperSshCommand(port, identityPath = getIdentityPath()) {
     + ' -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes';
 }
 
+export function resolveHyperRemotePath(job, prepareResult) {
+  // A restricted peer reaches its filesystem through rrsync, which resolves
+  // every request under the allowed prefix. Such a peer advertises the path
+  // rsync must ask for; the job's own absolute path would be applied twice.
+  const advertised = prepareResult?.rsyncPath;
+  if (advertised === undefined || advertised === null) return job.remote_path;
+  if (typeof advertised !== 'string' || !advertised.startsWith('/')
+      || /[\n\r\0]/u.test(advertised)
+      || advertised.split('/').includes('..')) {
+    throw new Error('Remote prepare returned an invalid rsync path');
+  }
+  return advertised;
+}
+
 export function resolveHyperSshTarget(job, prepareResult) {
   const host = job.ssh_host || (prepareResult.sshHost
     ? validatePrivatePeerHost(prepareResult.sshHost, 'Remote prepare SSH host')
@@ -134,6 +148,7 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
     // Step 2: Execute rsync over SSH
     activeRuns.set(runId, { status: 'transferring', progress: null, startedAt: startTime });
     const { host: sshHost, user: sshUser, port: sshPort } = resolveHyperSshTarget(job, prepareResult);
+    const remotePath = resolveHyperRemotePath(job, prepareResult);
 
     const args = [
       '-avz', '--delete-after',
@@ -152,9 +167,9 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
 
     if (job.direction === 'push') {
       const source = job.local_path.endsWith('/') ? job.local_path : job.local_path + '/';
-      args.push(source, `${sshUser}@${sshHost}:${job.remote_path}/`);
+      args.push(source, `${sshUser}@${sshHost}:${remotePath}/`);
     } else {
-      args.push(`${sshUser}@${sshHost}:${job.remote_path}/`, job.local_path + '/');
+      args.push(`${sshUser}@${sshHost}:${remotePath}/`, job.local_path + '/');
     }
 
     const insertFile = db.prepare(`

@@ -19,6 +19,7 @@ import { failRunningHyperRunsForPeer, getPeerOwnedHyperRun } from './services/pe
 import { assertLocalSourceHasEntries } from './services/sourceHealth.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './services/pathConfinement.js';
 import { getQuotaUsage, markQuotaUsageStale } from './services/quotaUsage.js';
+import { toRrsyncPath } from './services/sshKeyValidation.js';
 import { requirePeerHost, runtimeConfig } from './services/runtimeConfig.js';
 
 const logAudit = db.prepare(`
@@ -253,6 +254,10 @@ export function createPeerApi() {
       sshHost: advertisedPeerHost,
       sshUser: runtimeConfig.sshUser,
       sshPort: runtimeConfig.sshPort,
+      // The path rsync must ask for. The restricted account reaches this
+      // instance through rrsync, which resolves every request under the
+      // allowed prefix, so the caller's absolute path would be applied twice.
+      rsyncPath: toRrsyncPath(confinedPath, req.peer.allowed_path_prefix),
       storage: Object.keys(storageInfo).length > 0 ? storageInfo : undefined,
     });
   });

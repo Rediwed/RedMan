@@ -3,6 +3,7 @@ import {
   buildRestrictedAuthorizedKey,
   normalizeSshPublicKey,
   removeAuthorizedKeyContent,
+  toRrsyncPath,
   upsertAuthorizedKeyContent,
 } from '../app/backend/src/services/sshKeyValidation.js';
 
@@ -31,5 +32,19 @@ assert.equal(updated.includes('/old/path'), false);
 assert.equal(updated.match(/ssh-ed25519/g).length, 1);
 assert.equal(removeAuthorizedKeyContent(updated, validKey), '');
 assert.equal(removeAuthorizedKeyContent(`ssh-ed25519 ${Buffer.from('other-key').toString('base64')} other@test\n${updated}`, validKey).includes('other@test'), true);
+
+// rrsync resolves every request under the prefix it was given, so sending the
+// full absolute path applies the prefix twice: the transfer then fails with
+// mkdir "/mnt/user/cross-site/mnt/user/cross-site/appdata".
+assert.equal(toRrsyncPath('/mnt/user/cross-site/appdata', '/mnt/user/cross-site'), '/appdata');
+assert.equal(toRrsyncPath('/mnt/user/cross-site/a/b', '/mnt/user/cross-site'), '/a/b');
+assert.equal(toRrsyncPath('/mnt/user/cross-site', '/mnt/user/cross-site'), '/');
+assert.equal(toRrsyncPath('/mnt/user/cross-site/x', '/mnt/user/cross-site/'), '/x');
+// An unrestricted peer keeps the absolute path.
+assert.equal(toRrsyncPath('/mnt/user/backup', '/'), '/mnt/user/backup');
+assert.equal(toRrsyncPath('/mnt/user/backup', null), '/mnt/user/backup');
+// A sibling directory that merely shares the prefix string is not inside it.
+assert.throws(() => toRrsyncPath('/mnt/user/cross-site-other/x', '/mnt/user/cross-site'), /outside the rrsync prefix/);
+assert.throws(() => toRrsyncPath('/etc/shadow', '/mnt/user/cross-site'), /outside the rrsync prefix/);
 
 console.log('SSH public key validation, restriction, replacement, and revocation passed');
