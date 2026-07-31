@@ -55,5 +55,13 @@ assert.notEqual(rcSshdAt, -1);
 assert.ok(sighupAt < rcSshdAt, 'SIGHUP must be attempted before rc.sshd restart');
 assert.match(portableSource, /grep -qF "\$BEGIN_MARKER" "\$SSHD_CONFIG"/);
 assert.match(portableSource, /discarded the \$\{BACKUP_USER\} block/);
+// As root, kill succeeds against any live pid, so a recycled pid would
+// terminate an unrelated daemon and still report a successful reload.
+assert.match(portableSource, /ps -p "\$sshd_pid" -o comm=/);
+assert.ok(portableSource.indexOf('ps -p "$sshd_pid" -o comm=') < portableSource.indexOf('kill -HUP "$sshd_pid"'),
+  'the pid must be confirmed to be sshd before it is signalled');
+// The on-disk file surviving does not prove the daemon resolves the block.
+assert.match(portableSource, /"\$SSHD_BIN" -T -f "\$SSHD_CONFIG" -C "user=\$BACKUP_USER/);
+assert.match(portableSource, /passwordauthentication no/);
 
 console.log('Backup account bootstrap: generic Linux and Unraid greenfield plans passed');

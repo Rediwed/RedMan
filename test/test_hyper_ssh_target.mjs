@@ -64,6 +64,18 @@ try {
   assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: 'relative' }), /invalid rsync path/);
   assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '/a\nb' }), /invalid rsync path/);
   assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: 42 }), /invalid rsync path/);
+  // Re-rooting only strips a prefix, so the advertised path is always a suffix
+  // of the configured one. A peer naming anything else is redirecting the
+  // transfer — on a pull that is the rsync source, and --delete-after would
+  // then wipe the local copy it was meant to restore.
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '/etc/shadow' }), /not part of this job/);
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '/root/.ssh' }), /not part of this job/);
+  assert.throws(() => resolveHyperRemotePath(pathJob, { rsyncPath: '/appdata-other' }), /not part of this job/);
+  // An unrestricted peer echoes the job's own absolute path, which still fits.
+  assert.equal(resolveHyperRemotePath(pathJob, { rsyncPath: '/mnt/user/cross-site/appdata' }), '/mnt/user/cross-site/appdata');
+  assert.equal(resolveHyperRemotePath({ remote_path: '/backups/' }, { rsyncPath: '/backups' }), '/backups');
+  // The whole prefix being the destination stays valid.
+  assert.equal(resolveHyperRemotePath(pathJob, { rsyncPath: '/' }), '/');
   // The transfer must use the resolved path, not the raw job field.
   assert.match(hyperBackupSource, /const remotePath = resolveHyperRemotePath\(job, prepareResult\)/);
   assert.doesNotMatch(hyperBackupSource, /\$\{sshUser\}@\$\{sshHost\}:\$\{job\.remote_path\}/);

@@ -180,16 +180,21 @@ export function createPeerApi() {
     }
 
     let confinedPath;
+    let advertisedRsyncPath;
     if (direction === 'pull') {
       try {
-        confinedPath = resolveExistingPathWithinPrefix(normalizedPath, req.peer.allowed_path_prefix).path;
+        const resolved = resolveExistingPathWithinPrefix(normalizedPath, req.peer.allowed_path_prefix);
+        confinedPath = resolved.path;
+        advertisedRsyncPath = toRrsyncPath(confinedPath, resolved.prefix);
         await assertLocalSourceHasEntries(confinedPath, 'Hyper Backup remote source');
       } catch (err) {
         return res.status(409).json({ error: err.message });
       }
     } else {
       try {
-        confinedPath = ensureDirectoryWithinPrefix(normalizedPath, req.peer.allowed_path_prefix).path;
+        const resolved = ensureDirectoryWithinPrefix(normalizedPath, req.peer.allowed_path_prefix);
+        confinedPath = resolved.path;
+        advertisedRsyncPath = toRrsyncPath(confinedPath, resolved.prefix);
       } catch (err) {
         return res.status(409).json({ error: err.message });
       }
@@ -257,7 +262,7 @@ export function createPeerApi() {
       // The path rsync must ask for. The restricted account reaches this
       // instance through rrsync, which resolves every request under the
       // allowed prefix, so the caller's absolute path would be applied twice.
-      rsyncPath: toRrsyncPath(confinedPath, req.peer.allowed_path_prefix),
+      rsyncPath: advertisedRsyncPath,
       storage: Object.keys(storageInfo).length > 0 ? storageInfo : undefined,
     });
   });

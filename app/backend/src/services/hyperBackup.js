@@ -82,6 +82,15 @@ export function resolveHyperRemotePath(job, prepareResult) {
       || advertised.split('/').includes('..')) {
     throw new Error('Remote prepare returned an invalid rsync path');
   }
+  // Re-rooting only ever strips the peer's prefix, so the advertised path is a
+  // suffix of the destination this job was configured with. Requiring that
+  // keeps the peer from naming a different path entirely: on a pull it is the
+  // rsync source, and with --delete-after a redirected source would wipe the
+  // local copy it was supposed to restore.
+  const configured = String(job.remote_path || '').replace(/\/+$/u, '');
+  if (advertised !== '/' && !configured.endsWith(advertised)) {
+    throw new Error(`Remote prepare advertised "${advertised}", which is not part of this job's configured path`);
+  }
   return advertised;
 }
 

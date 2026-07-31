@@ -375,11 +375,17 @@ reload_sshd() {
   # Unraid's /etc/rc.d/rc.sshd restart regenerates sshd_config from a template,
   # which silently discards the Match block written above — so it is only ever
   # a last resort, and the caller verifies the block survived either way.
-  local pidfile sshd_pid
+  local pidfile sshd_pid pid_comm
   for pidfile in /var/run/sshd.pid /run/sshd.pid; do
-    [[ -r "$pidfile" ]] || continue
+    [[ -f "$pidfile" ]] || continue
     sshd_pid=$(cat "$pidfile" 2>/dev/null || true)
-    if [[ "$sshd_pid" =~ ^[0-9]+$ ]] && kill -HUP "$sshd_pid" 2>/dev/null; then
+    [[ "$sshd_pid" =~ ^[0-9]+$ ]] || continue
+    # As root, kill succeeds against any live process. A stale pidfile whose
+    # number has been recycled would otherwise terminate an unrelated daemon
+    # (SIGHUP's default disposition) and still report a successful reload.
+    pid_comm=$(ps -p "$sshd_pid" -o comm= 2>/dev/null | tr -d '[:space:]')
+    [[ "$pid_comm" == "sshd" ]] || continue
+    if kill -HUP "$sshd_pid" 2>/dev/null; then
       return 0
     fi
   done
@@ -406,9 +412,20 @@ fi
 # Match block with it and still reports success. Reporting "ready" then leaves
 # the account reachable by password with no AuthorizedKeysCommand, which is
 # both a weaker posture than intended and a silently broken backup path — so
-# confirm the block is still in the file the daemon just read.
+# confirm the block survived, and confirm it in the configuration OpenSSH
+# actually resolves for this account rather than only in the file.
 if ! grep -qF "$BEGIN_MARKER" "$SSHD_CONFIG"; then
   die "the OpenSSH reload rewrote $SSHD_CONFIG and discarded the ${BACKUP_USER} block; re-run with --skip-reload and signal sshd yourself (on Unraid: kill -HUP the pid in /var/run/sshd.pid)"
+fi
+
+effective_config=$("$SSHD_BIN" -T -f "$SSHD_CONFIG" -C "user=$BACKUP_USER,host=localhost,addr=127.0.0.1" 2>/dev/null || true)
+if [[ -n "$effective_config" ]]; then
+  if ! grep -qiF "authorizedkeyscommand $AUTHORIZED_KEYS_COMMAND" <<< "$effective_config"; then
+    die "OpenSSH does not resolve AuthorizedKeysCommand for ${BACKUP_USER}; the Match block is present but not effective"
+  fi
+  if ! grep -qi '^passwordauthentication no$' <<< "$effective_config"; then
+    die "OpenSSH still allows password authentication for ${BACKUP_USER}; the Match block is present but not effective"
+  fi
 fi
 
 echo "RedMan backup account ready: user=$BACKUP_USER keys=$AUTHORIZED_KEYS rrsync=$RRSYNC_PATH"

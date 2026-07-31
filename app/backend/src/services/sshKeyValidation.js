@@ -1,3 +1,5 @@
+import { posix } from 'node:path';
+
 const ED25519_KEY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export function normalizeSshPublicKey(publicKey) {
@@ -57,6 +59,13 @@ export function buildRestrictedAuthorizedKey(publicKey, allowedPathPrefix, sourc
 // rrsync resolves every request underneath that prefix — so sending the full
 // absolute path makes it apply the prefix twice and fail with a doubled path.
 export function toRrsyncPath(absolutePath, allowedPathPrefix) {
+  // Only ever hand this a canonical path. Stripping a prefix off an
+  // unnormalised path would turn "<prefix>/../../etc" into "/../../etc",
+  // which is a traversal the caller then has to notice on its behalf.
+  if (typeof absolutePath !== 'string' || !absolutePath.startsWith('/')
+      || posix.normalize(absolutePath).replace(/(.)\/+$/u, '$1') !== absolutePath) {
+    throw new Error(`Refusing to re-root a non-canonical path: "${absolutePath}"`);
+  }
   if (!allowedPathPrefix || allowedPathPrefix === '/') return absolutePath;
   const prefix = allowedPathPrefix.replace(/\/+$/u, '');
   if (absolutePath === prefix) return '/';

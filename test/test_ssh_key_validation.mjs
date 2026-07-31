@@ -46,5 +46,15 @@ assert.equal(toRrsyncPath('/mnt/user/backup', null), '/mnt/user/backup');
 // A sibling directory that merely shares the prefix string is not inside it.
 assert.throws(() => toRrsyncPath('/mnt/user/cross-site-other/x', '/mnt/user/cross-site'), /outside the rrsync prefix/);
 assert.throws(() => toRrsyncPath('/etc/shadow', '/mnt/user/cross-site'), /outside the rrsync prefix/);
+// Stripping a prefix off an unnormalised path would produce a traversal that
+// the caller then has to catch, so refuse anything non-canonical outright.
+assert.throws(() => toRrsyncPath('/mnt/user/cross-site/../../etc', '/mnt/user/cross-site'), /non-canonical/);
+assert.throws(() => toRrsyncPath('/mnt/user/cross-site//appdata', '/mnt/user/cross-site'), /non-canonical/);
+assert.throws(() => toRrsyncPath('/mnt/user/cross-site/./appdata', '/mnt/user/cross-site'), /non-canonical/);
+assert.throws(() => toRrsyncPath('/mnt/user/cross-site/appdata/', '/mnt/user/cross-site'), /non-canonical/);
+assert.throws(() => toRrsyncPath('relative/path', '/mnt/user/cross-site'), /non-canonical/);
+assert.throws(() => toRrsyncPath(null, '/mnt/user/cross-site'), /non-canonical/);
+// Root itself is canonical and must still be accepted.
+assert.equal(toRrsyncPath('/', '/'), '/');
 
 console.log('SSH public key validation, restriction, replacement, and revocation passed');
