@@ -96,6 +96,10 @@ for (const p of ['/mnt/user', '/mnt/disks', '/etc', '/home']) {
 assert.match(portableSource, /for root in "\$\{CANONICAL_ROOT_LIST\[@\]\}"/);
 // A filename chosen by a peer must not be able to rewrite the console.
 assert.match(portableSource, /tr -d '\[:cntrl:\]'/);
+// -R would hand the root itself to the account; it is meant to stay
+// root-owned with setgid so new content inherits the group.
+assert.match(portableSource, /chown "root:\$BACKUP_GROUP" "\$root" && chmod 2770 "\$root"/);
+
 // The Unraid wrapper accepts the flag but never persists it into the boot file.
 assert.match(unraidSource, /--adopt-backup-roots\)/);
 const wrapperAdopt = unraidSource.slice(unraidSource.indexOf('--adopt-backup-roots)'), unraidSource.indexOf('--adopt-backup-roots)') + 260);

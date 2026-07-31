@@ -470,6 +470,9 @@ adopt_or_report_backup_roots() {
       # every other name for that file too, and chown has no --one-file-system,
       # so a mount nested under this root is re-owned with it.
       if chown -Rh "$BACKUP_USER:$BACKUP_GROUP" "$root"; then
+        # The root itself is deliberately root-owned with setgid so new content
+        # inherits the group; -R would otherwise hand it to the account too.
+        chown "root:$BACKUP_GROUP" "$root" && chmod 2770 "$root" || true
         echo "Adopted existing content under $root for $BACKUP_USER"
       else
         echo "WARNING: adoption incomplete under $root; some files kept their previous owner." >&2
