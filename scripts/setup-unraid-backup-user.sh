@@ -58,6 +58,12 @@ while [[ $# -gt 0 ]]; do
       CORE_ARGS+=("$1")
       shift
       ;;
+    --adopt-backup-roots)
+      # Never added to PERSIST_ARGS: adoption is a one-off migration and must
+      # not end up in the boot script.
+      CORE_ARGS+=("$1")
+      shift
+      ;;
     --dry-run)
       DRY_RUN=true
       CORE_ARGS+=("$1")

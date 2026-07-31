@@ -70,15 +70,35 @@ assert.match(portableSource, /--adopt-backup-roots/);
 assert.match(portableSource, /ADOPT_ROOTS=false/);
 // Handing over is opt-in: an unbounded recursive chown must not run on boot.
 assert.doesNotMatch(portableSource, /^ADOPT_ROOTS=true/m);
-// The detection stops at the first offender and is time-capped, so a large
-// tree cannot stall every boot.
-assert.match(portableSource, /! -user "\$BACKUP_USER" -print -quit/);
-assert.match(portableSource, /timeout "\$ADOPT_SCAN_SECONDS" find/);
-// Symlink targets can point outside the backup root, so they are never followed.
-assert.match(portableSource, /-type l -exec chown -h/);
-assert.doesNotMatch(portableSource, /chown -R [^\n]*BACKUP_USER/);
-const adoptIdx = portableSource.indexOf('-type l -exec chown -h');
-const dirIdx = portableSource.indexOf('-type d -exec chown "$BACKUP_USER');
-assert.ok(dirIdx !== -1 && adoptIdx > dirIdx, 'directories, files and symlinks are handled separately');
+// find -exec chown hands path strings to a separate process that re-resolves
+// them, so a writer swapping a directory component mid-run can redirect a root
+// chown outside the tree. chown -R walks with directory file descriptors.
+assert.match(portableSource, /chown -Rh "\$BACKUP_USER:\$BACKUP_GROUP" "\$root"/);
+assert.doesNotMatch(portableSource, /-exec chown/);
+// -h keeps a symlink's target — which may lie outside the root — untouched.
+assert.doesNotMatch(portableSource, /chown -R "/);
+// The detection is bounded in the clean case too, not only when it finds a hit.
+assert.match(portableSource, /-xdev -maxdepth 3 ! -user "\$BACKUP_USER" -print -quit/);
+assert.match(portableSource, /command -v timeout[^\n]*\|\| continue/);
+assert.match(portableSource, /rc -eq 124/);
+// Adoption must never abort the script: the sshd block is configured above it.
+const adoptIdx = portableSource.indexOf('adopt_or_report_backup_roots || true');
+const reloadIdx = portableSource.indexOf('if ! reload_sshd; then');
+assert.ok(adoptIdx !== -1 && reloadIdx !== -1 && adoptIdx > reloadIdx, 'adoption runs after the sshd configuration');
+assert.match(portableSource, /adopt_or_report_backup_roots \|\| true/);
+// Re-owning a mount point or system path would rewrite unrelated shares.
+assert.match(portableSource, /ADOPT_DENYLIST=/);
+assert.match(portableSource, /mountpoint -q "\$root" && return 0/);
+for (const p of ['/mnt/user', '/mnt/disks', '/etc', '/home']) {
+  assert.ok(portableSource.includes(p), `denylist must cover ${p}`);
+}
+// It acts on the canonicalised root, not the raw argument.
+assert.match(portableSource, /for root in "\$\{CANONICAL_ROOT_LIST\[@\]\}"/);
+// A filename chosen by a peer must not be able to rewrite the console.
+assert.match(portableSource, /tr -d '\[:cntrl:\]'/);
+// The Unraid wrapper accepts the flag but never persists it into the boot file.
+assert.match(unraidSource, /--adopt-backup-roots\)/);
+const wrapperAdopt = unraidSource.slice(unraidSource.indexOf('--adopt-backup-roots)'), unraidSource.indexOf('--adopt-backup-roots)') + 260);
+assert.doesNotMatch(wrapperAdopt, /PERSIST_ARGS\+=/);
 
 console.log('Backup account bootstrap: generic Linux and Unraid greenfield plans passed');

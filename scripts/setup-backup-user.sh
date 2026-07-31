@@ -225,6 +225,7 @@ account_can_access() {
 }
 
 CANONICAL_BACKUP_ROOTS=""
+CANONICAL_ROOT_LIST=()
 for root in "${BACKUP_ROOTS[@]}"; do
   [[ -n "$root" ]] || continue
   if [[ ! -e "$root" ]]; then
@@ -235,37 +236,8 @@ for root in "${BACKUP_ROOTS[@]}"; do
   canonical_root="$(readlink -f -- "$root")"
   [[ "$canonical_root" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "canonical backup root contains unsupported characters: $canonical_root"
   CANONICAL_BACKUP_ROOTS="${CANONICAL_BACKUP_ROOTS:+$CANONICAL_BACKUP_ROOTS:}$canonical_root"
+  CANONICAL_ROOT_LIST+=("$canonical_root")
 done
-
-# Content left behind by an earlier root-owned backup can never be updated by
-# this account: rsync mirrors the source's permissions and chmod is refused to
-# anyone but the owner, so every run fails with "Operation not permitted".
-# Detection stops at the first offender and gives up rather than walking a large
-# tree on every boot; handing the files over is an explicit, one-off migration.
-ADOPT_SCAN_SECONDS=10
-adopt_or_report_backup_roots() {
-  local root offender scan
-  scan=(find)
-  command -v timeout >/dev/null 2>&1 && scan=(timeout "$ADOPT_SCAN_SECONDS" find)
-  for root in "${BACKUP_ROOTS[@]}"; do
-    [[ -n "$root" && -d "$root" ]] || continue
-    if $ADOPT_ROOTS; then
-      # Never dereference a symlink: its target may sit outside the backup root.
-      find "$root" -type d -exec chown "$BACKUP_USER:$BACKUP_GROUP" {} +
-      find "$root" -type f -exec chown "$BACKUP_USER:$BACKUP_GROUP" {} +
-      find "$root" -type l -exec chown -h "$BACKUP_USER:$BACKUP_GROUP" {} +
-      echo "Adopted existing content under $root for $BACKUP_USER"
-      continue
-    fi
-    offender="$("${scan[@]}" "$root" ! -user "$BACKUP_USER" -print -quit 2>/dev/null || true)"
-    if [[ -n "$offender" ]]; then
-      echo "WARNING: $root holds content owned by another account (for example $offender)." >&2
-      echo "         Backups to this root will fail to set permissions on those files." >&2
-      echo "         Re-run with --adopt-backup-roots to hand them to $BACKUP_USER." >&2
-    fi
-  done
-}
-adopt_or_report_backup_roots
 
 install -d -m 0755 "$(dirname "$AUTHORIZED_KEYS_COMMAND")"
 {
@@ -460,5 +432,64 @@ if [[ -n "$effective_config" ]]; then
     die "OpenSSH still allows password authentication for ${BACKUP_USER}; the Match block is present but not effective"
   fi
 fi
+
+# Content predating the restricted account is owned by root. rsync mirrors the
+# source's permissions and chmod is refused to anyone but the owner, so those
+# files can never be updated — every run ends in "Operation not permitted".
+#
+# This runs last and never aborts the script: the account, its forced-command
+# reader and the sshd block are configured above and must not be left half-done
+# because a chown failed on one file.
+ADOPT_SCAN_SECONDS=10
+# Re-owning one of these would rewrite unrelated shares, not a backup target.
+ADOPT_DENYLIST="/ /boot /etc /home /mnt /mnt/disks /mnt/user /mnt/user0 /root /tmp /usr /var"
+
+adopt_root_is_refused() {
+  local root=$1 entry
+  for entry in $ADOPT_DENYLIST; do
+    [[ "$root" == "$entry" ]] && return 0
+  done
+  # A mount point is a whole filesystem, never a single backup destination.
+  command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$root" && return 0
+  return 1
+}
+
+adopt_or_report_backup_roots() {
+  local root offender rc
+  for root in "${CANONICAL_ROOT_LIST[@]}"; do
+    [[ -n "$root" && -d "$root" ]] || continue
+    if $ADOPT_ROOTS; then
+      if adopt_root_is_refused "$root"; then
+        echo "WARNING: refusing to adopt $root; it is a mount point or a system path, not a backup destination." >&2
+        continue
+      fi
+      # -h so a symlink is re-owned instead of its target, which may lie outside
+      # this root. chown -R walks with directory file descriptors, so unlike
+      # find -exec it never re-resolves a path a writer could have swapped.
+      if chown -Rh "$BACKUP_USER:$BACKUP_GROUP" "$root"; then
+        echo "Adopted existing content under $root for $BACKUP_USER"
+      else
+        echo "WARNING: adoption incomplete under $root; some files kept their previous owner." >&2
+      fi
+      continue
+    fi
+    command -v timeout >/dev/null 2>&1 || continue
+    # Bounded on purpose: -quit stops at the first offender, -xdev and -maxdepth
+    # keep the clean case from walking an entire array during boot.
+    offender="$(timeout "$ADOPT_SCAN_SECONDS" find "$root" -xdev -maxdepth 3 ! -user "$BACKUP_USER" -print -quit 2>/dev/null)"
+    rc=$?
+    if [[ $rc -eq 124 ]]; then
+      echo "NOTE: ownership under $root could not be verified within ${ADOPT_SCAN_SECONDS}s." >&2
+    elif [[ -n "$offender" ]]; then
+      # The name comes from whoever writes into the backup root; strip control
+      # characters so it cannot rewrite the operator's console.
+      offender="$(printf '%s' "$offender" | tr -d '[:cntrl:]')"
+      echo "WARNING: $root holds content owned by another account (for example $offender)." >&2
+      echo "         Backups will fail to set permissions on those files." >&2
+      echo "         Re-run this script with --adopt-backup-roots to hand them to $BACKUP_USER." >&2
+    fi
+  done
+}
+adopt_or_report_backup_roots || true
 
 echo "RedMan backup account ready: user=$BACKUP_USER keys=$AUTHORIZED_KEYS rrsync=$RRSYNC_PATH"
