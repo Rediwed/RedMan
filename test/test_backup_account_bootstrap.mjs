@@ -64,4 +64,21 @@ assert.ok(portableSource.indexOf('ps -p "$sshd_pid" -o comm=') < portableSource.
 assert.match(portableSource, /"\$SSHD_BIN" -T -f "\$SSHD_CONFIG" -C "user=\$BACKUP_USER/);
 assert.match(portableSource, /passwordauthentication no/);
 
+// A restricted account cannot chmod files it does not own, so backup content
+// left by an earlier root-owned run is unusable until it is handed over.
+assert.match(portableSource, /--adopt-backup-roots/);
+assert.match(portableSource, /ADOPT_ROOTS=false/);
+// Handing over is opt-in: an unbounded recursive chown must not run on boot.
+assert.doesNotMatch(portableSource, /^ADOPT_ROOTS=true/m);
+// The detection stops at the first offender and is time-capped, so a large
+// tree cannot stall every boot.
+assert.match(portableSource, /! -user "\$BACKUP_USER" -print -quit/);
+assert.match(portableSource, /timeout "\$ADOPT_SCAN_SECONDS" find/);
+// Symlink targets can point outside the backup root, so they are never followed.
+assert.match(portableSource, /-type l -exec chown -h/);
+assert.doesNotMatch(portableSource, /chown -R [^\n]*BACKUP_USER/);
+const adoptIdx = portableSource.indexOf('-type l -exec chown -h');
+const dirIdx = portableSource.indexOf('-type d -exec chown "$BACKUP_USER');
+assert.ok(dirIdx !== -1 && adoptIdx > dirIdx, 'directories, files and symlinks are handled separately');
+
 console.log('Backup account bootstrap: generic Linux and Unraid greenfield plans passed');

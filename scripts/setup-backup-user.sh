@@ -12,6 +12,7 @@ RRSYNC_PATH="/usr/local/bin/rrsync"
 AUTHORIZED_KEYS_COMMAND=""
 DRY_RUN=false
 SKIP_RELOAD=false
+ADOPT_ROOTS=false
 BACKUP_ROOTS=("")
 SUPPLEMENTARY_GROUPS=("")
 
@@ -37,6 +38,7 @@ Options:
   --backup-root PATH       Host backup root the account must access (repeatable)
   --supplementary-group G  Existing host group to join (repeatable)
   --skip-reload            Validate sshd config but let the operator reload it
+  --adopt-backup-roots     Give the account ownership of existing backup content
   --dry-run                Print the resolved plan without changing the host
   --help                    Show this help
 EOF
@@ -81,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --backup-root) BACKUP_ROOTS+=("${2:-}"); shift 2 ;;
     --supplementary-group) SUPPLEMENTARY_GROUPS+=("${2:-}"); shift 2 ;;
     --skip-reload) SKIP_RELOAD=true; shift ;;
+    --adopt-backup-roots) ADOPT_ROOTS=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) usage_error "unknown option: $1" ;;
@@ -233,6 +236,36 @@ for root in "${BACKUP_ROOTS[@]}"; do
   [[ "$canonical_root" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "canonical backup root contains unsupported characters: $canonical_root"
   CANONICAL_BACKUP_ROOTS="${CANONICAL_BACKUP_ROOTS:+$CANONICAL_BACKUP_ROOTS:}$canonical_root"
 done
+
+# Content left behind by an earlier root-owned backup can never be updated by
+# this account: rsync mirrors the source's permissions and chmod is refused to
+# anyone but the owner, so every run fails with "Operation not permitted".
+# Detection stops at the first offender and gives up rather than walking a large
+# tree on every boot; handing the files over is an explicit, one-off migration.
+ADOPT_SCAN_SECONDS=10
+adopt_or_report_backup_roots() {
+  local root offender scan
+  scan=(find)
+  command -v timeout >/dev/null 2>&1 && scan=(timeout "$ADOPT_SCAN_SECONDS" find)
+  for root in "${BACKUP_ROOTS[@]}"; do
+    [[ -n "$root" && -d "$root" ]] || continue
+    if $ADOPT_ROOTS; then
+      # Never dereference a symlink: its target may sit outside the backup root.
+      find "$root" -type d -exec chown "$BACKUP_USER:$BACKUP_GROUP" {} +
+      find "$root" -type f -exec chown "$BACKUP_USER:$BACKUP_GROUP" {} +
+      find "$root" -type l -exec chown -h "$BACKUP_USER:$BACKUP_GROUP" {} +
+      echo "Adopted existing content under $root for $BACKUP_USER"
+      continue
+    fi
+    offender="$("${scan[@]}" "$root" ! -user "$BACKUP_USER" -print -quit 2>/dev/null || true)"
+    if [[ -n "$offender" ]]; then
+      echo "WARNING: $root holds content owned by another account (for example $offender)." >&2
+      echo "         Backups to this root will fail to set permissions on those files." >&2
+      echo "         Re-run with --adopt-backup-roots to hand them to $BACKUP_USER." >&2
+    fi
+  done
+}
+adopt_or_report_backup_roots
 
 install -d -m 0755 "$(dirname "$AUTHORIZED_KEYS_COMMAND")"
 {
