@@ -23,6 +23,13 @@ const KEY_PATH = join(SSH_DIR, 'id_ed25519');
 const PUB_KEY_PATH = KEY_PATH + '.pub';
 const AUTHORIZED_KEYS = join(SSH_DIR, 'authorized_keys');
 
+// Path to the outgoing private key, or null when no key has been generated yet.
+// Callers must pass this to ssh/rsync explicitly: the key lives in the data
+// volume, not in $HOME/.ssh, so ssh will never discover it on its own.
+export function getIdentityPath() {
+  return existsSync(KEY_PATH) ? KEY_PATH : null;
+}
+
 // Check if an SSH key pair exists
 export function hasKey() {
   return existsSync(KEY_PATH) && existsSync(PUB_KEY_PATH);
@@ -156,8 +163,10 @@ export function replaceKeyAuthorization(previousKey, nextKey, restriction) {
 // Test SSH connection to a host (non-interactive, times out after 10s)
 export function testSshConnection(host, user = 'redman-backup', port = 22) {
   const target = validateSshConnectionTarget(host, user, port);
+  const identity = getIdentityPath();
   return new Promise((resolve) => {
     const proc = spawn('ssh', [
+      ...(identity ? ['-i', identity, '-o', 'IdentitiesOnly=yes'] : []),
       '-o', 'BatchMode=yes',
       '-o', 'ConnectTimeout=10',
       '-o', 'StrictHostKeyChecking=accept-new',

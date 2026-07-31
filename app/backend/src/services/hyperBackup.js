@@ -11,6 +11,7 @@ import { assertLocalSourceHasEntries } from './sourceHealth.js';
 import { validatePrivatePeerBaseUrl } from './peerUrlPolicy.js';
 import { decryptPeerApiKey } from './peerSecrets.js';
 import { resolvePeerBinding, syncJobRemoteUrl } from './peerBinding.js';
+import { getIdentityPath } from './sshManager.js';
 import { runtimeConfig } from './runtimeConfig.js';
 import { validateSshHost, validateSshPort, validateSshUser } from '../middleware/validation.js';
 import { validatePrivatePeerHost } from './peerUrlPolicy.js';
@@ -49,6 +50,25 @@ const RSYNC_EXIT_MESSAGES = {
 
 export function getActiveHyperRun(runId) {
   return activeRuns.get(runId);
+}
+
+export function buildHyperSshCommand(port, identityPath = getIdentityPath()) {
+  // rsync splits this string on whitespace and hands the pieces to ssh as argv,
+  // so a value containing a space would inject an extra ssh option — and ssh
+  // does run -o ProxyCommand= through a shell. Validate here rather than trust
+  // the caller: this is an exported contract function.
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Hyper Backup SSH transport got an invalid SSH port: ${port}`);
+  }
+  if (identityPath != null && (/\s/.test(identityPath) || identityPath.startsWith('-'))) {
+    throw new Error('Hyper Backup SSH identity path may not contain whitespace or start with "-"');
+  }
+  // The key lives in the data volume, never in $HOME/.ssh, so ssh cannot find
+  // it by itself. Without -i every transfer fails with "Permission denied
+  // (publickey)" once the container is recreated.
+  const identity = identityPath ? `-i ${identityPath} -o IdentitiesOnly=yes ` : '';
+  return `ssh ${identity}-p ${port} -o StrictHostKeyChecking=accept-new`
+    + ' -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes';
 }
 
 export function resolveHyperSshTarget(job, prepareResult) {
@@ -127,7 +147,7 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
       IS_MAC ? '--progress' : '--info=progress2',
       '--out-format=%i %l %n',
       // SSH with keepalive to prevent silent connection drops on long transfers
-      '-e', `ssh -p ${sshPort} -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes`,
+      '-e', buildHyperSshCommand(sshPort),
     ];
 
     if (job.direction === 'push') {
