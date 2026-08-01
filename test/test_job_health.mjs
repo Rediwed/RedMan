@@ -36,5 +36,32 @@ const paused = getJobHealth(db, {
 });
 assert.equal(paused.state, 'paused');
 assert.equal(paused.stale, false);
+
+// SQLite writes UTC. Reading "YYYY-MM-DD HH:MM:SS" without a zone gives local
+// time, which shifts the run behind its own schedule and reports a job that
+// just succeeded as overdue. schedulePolicy resolves the cron zone from TZ, so
+// the case only reproduces when TZ is set and ahead of UTC.
+const cronZoneOffset = process.env.TZ
+  ? -new Date('2026-08-01T10:00:00Z').getTimezoneOffset()
+  : 0;
+if (cronZoneOffset > 0) {
+  db.prepare(`INSERT INTO backup_runs (id, feature, config_id, status, completed_at, files_copied, files_failed)
+    VALUES (100, 'hyper-backup', 42, 'completed', '2026-08-01 03:03:41', 5, 0)`).run();
+  const utcHealth = getJobHealth(db, {
+    feature: 'hyper-backup',
+    configId: 42,
+    // Scheduled at 05:00 local; with a +2 offset the 03:03 UTC run is that
+    // day's occurrence, so nothing is due until tomorrow.
+    cronExpression: '0 5 * * *',
+    enabled: true,
+    now: new Date('2026-08-01T10:17:00Z'),
+  });
+  assert.equal(utcHealth.stale, false, 'a run completed after its scheduled time is not overdue');
+  assert.equal(utcHealth.state, 'healthy');
+  assert.equal(new Date(utcHealth.expectedAfterLastSuccess).toISOString(), '2026-08-02T03:00:00.000Z');
+} else {
+  console.log('  (UTC-parsing case skipped: TZ unset or not ahead of UTC)');
+}
+
 db.close();
 console.log('Job health projection: success, issue, staleness, restore, and next run passed');

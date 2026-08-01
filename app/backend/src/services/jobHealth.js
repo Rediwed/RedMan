@@ -1,5 +1,14 @@
 import { nextCronOccurrence } from './schedulePolicy.js';
 
+// SQLite writes datetime('now') in UTC, but "YYYY-MM-DD HH:MM:SS" without a
+// zone is read as local time — which silently shifts every run by the host's
+// offset and makes a completed schedule look overdue.
+function parseDbTime(value) {
+  if (!value) return null;
+  const parsed = Date.parse(`${String(value).replace(' ', 'T')}Z`);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 function latestRun(db, feature, configId, statuses) {
   const placeholders = statuses.map(() => '?').join(', ');
   return db.prepare(`
@@ -35,9 +44,12 @@ export function getJobHealth(db, {
   try {
     if (enabled) nextRun = nextCronOccurrence(cronExpression, { currentDate: now });
     if (lastSuccess) {
-      expectedAfterLastSuccess = nextCronOccurrence(cronExpression, {
-        currentDate: new Date(lastSuccess.completed_at),
-      });
+      const completedAt = parseDbTime(lastSuccess.completed_at);
+      if (completedAt !== null) {
+        expectedAfterLastSuccess = nextCronOccurrence(cronExpression, {
+          currentDate: new Date(completedAt),
+        });
+      }
     }
   } catch {
     // Invalid legacy schedules are surfaced as missing next-run health.
@@ -47,7 +59,7 @@ export function getJobHealth(db, {
     !lastSuccess || (expectedAfterLastSuccess && Date.parse(expectedAfterLastSuccess) < now.getTime())
   );
   const issueAfterSuccess = !!lastIssue && (
-    !lastSuccess || Date.parse(lastIssue.completed_at) > Date.parse(lastSuccess.completed_at)
+    !lastSuccess || parseDbTime(lastIssue.completed_at) > parseDbTime(lastSuccess.completed_at)
   );
   const state = !enabled
     ? 'paused'
