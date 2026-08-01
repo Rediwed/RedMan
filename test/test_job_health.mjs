@@ -40,18 +40,15 @@ assert.equal(paused.stale, false);
 // SQLite writes UTC. Reading "YYYY-MM-DD HH:MM:SS" without a zone gives local
 // time, which shifts the run behind its own schedule and reports a job that
 // just succeeded as overdue. schedulePolicy resolves the cron zone from TZ, so
-// the case only reproduces when TZ is set and ahead of UTC.
-const cronZoneOffset = process.env.TZ
-  ? -new Date('2026-08-01T10:00:00Z').getTimezoneOffset()
-  : 0;
-if (cronZoneOffset > 0) {
+// the case is re-run in a fixed zone rather than depending on the host's.
+if (process.env.JOB_HEALTH_UTC_CASE) {
   db.prepare(`INSERT INTO backup_runs (id, feature, config_id, status, completed_at, files_copied, files_failed)
     VALUES (100, 'hyper-backup', 42, 'completed', '2026-08-01 03:03:41', 5, 0)`).run();
   const utcHealth = getJobHealth(db, {
     feature: 'hyper-backup',
     configId: 42,
-    // Scheduled at 05:00 local; with a +2 offset the 03:03 UTC run is that
-    // day's occurrence, so nothing is due until tomorrow.
+    // 05:00 in Europe/Amsterdam is 03:00 UTC, so the 03:03 UTC run is that
+    // day's occurrence and nothing is due until tomorrow.
     cronExpression: '0 5 * * *',
     enabled: true,
     now: new Date('2026-08-01T10:17:00Z'),
@@ -60,7 +57,13 @@ if (cronZoneOffset > 0) {
   assert.equal(utcHealth.state, 'healthy');
   assert.equal(new Date(utcHealth.expectedAfterLastSuccess).toISOString(), '2026-08-02T03:00:00.000Z');
 } else {
-  console.log('  (UTC-parsing case skipped: TZ unset or not ahead of UTC)');
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const run = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
+    env: { ...process.env, TZ: 'Europe/Amsterdam', JOB_HEALTH_UTC_CASE: '1' },
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 0, `UTC-parsing case failed:\n${run.stdout}${run.stderr}`);
 }
 
 db.close();

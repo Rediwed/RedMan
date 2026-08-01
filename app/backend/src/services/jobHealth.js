@@ -4,8 +4,11 @@ import { nextCronOccurrence } from './schedulePolicy.js';
 // zone is read as local time — which silently shifts every run by the host's
 // offset and makes a completed schedule look overdue.
 function parseDbTime(value) {
-  if (!value) return null;
-  const parsed = Date.parse(`${String(value).replace(' ', 'T')}Z`);
+  if (typeof value !== 'string' || !value) return null;
+  // Columns written with toISOString() already carry a zone; only the bare
+  // SQLite form needs one appended.
+  const iso = /(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value.replace(' ', 'T')}Z`;
+  const parsed = Date.parse(iso);
   return Number.isNaN(parsed) ? null : parsed;
 }
 
