@@ -1,94 +1,29 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const tests = [
-  'test_version_selection.mjs',
-  'test_snapshot_summary.mjs',
-  'test_delta_safety.mjs',
-  'test_snapshot_path_confinement.mjs',
-  'test_version_verification.mjs',
-  'test_quota_usage.mjs',
-  'test_database_retention.mjs',
-  'test_temp_cleanup.mjs',
-  'test_notification_semantics.mjs',
-  'test_dialog_accessibility.mjs',
-  'test_pairing_retry_ui.mjs',
-  'test_ssd_retention_ui.mjs',
-  'test_ssd_path_policy.mjs',
-  'test_hyper_manual_setup.mjs',
-  'test_hyper_ssh_target.mjs',
-  'test_restore_audit.mjs',
-  'test_job_health.mjs',
-  'test_backup_health_ui.mjs',
-  'test_notification_tracker.mjs',
-  'test_exclude_policy.mjs',
-  'test_safety_settings_ui.mjs',
-  'test_format_bytes.mjs',
-  'test_icon_labels.mjs',
-  'test_auth_config.mjs',
-  'test_auth_lifecycle.mjs',
-  'test_main_auth.mjs',
-  'test_route_authorization.mjs',
-  'test_auth_routes.mjs',
-  'test_auth_frontend.mjs',
-  'test_auth_backup_restore.mjs',
-  'test_auth_startup.mjs',
-  'test_auth_client_ip.mjs',
-  'test_auth_deployment.mjs',
-  'test_backup_account_bootstrap.mjs',
-  'test_breakglass_runtime_contract.mjs',
-  'test_legacy_schema_migration.mjs',
-  'test_migration_preflight.mjs',
-  'test_fresh_start.mjs',
-  'test_database_file_safety.mjs',
-  'test_db_backup_policy.mjs',
-  'test_peer_auth.mjs',
-  'test_peer_secrets.mjs',
-  'test_peer_ssh_authorization.mjs',
-  'test_root_peer_key_reconciliation.mjs',
-  'test_ssh_key_validation.mjs',
-  'test_ssh_manager_storage.mjs',
-  'test_ssh_connection_policy.mjs',
-  'test_run_status.mjs',
-  'test_child_process_shutdown.mjs',
-  'test_process_shutdown.mjs',
-  'test_frontend_run_status.mjs',
-  'test_frontend_schedule.mjs',
-  'test_peer_run_isolation.mjs',
-  'test_peer_binding.mjs',
-  'test_run_claim.mjs',
-  'test_run_lifecycle.mjs',
-  'test_rsync_output.mjs',
-  'test_rclone_output.mjs',
-  'test_rclone_policy.mjs',
-  'test_runtime_config.mjs',
-  'test_resource_budget.mjs',
-  'test_storage_config.mjs',
-  'test_notification_policy_component.mjs',
-  'test_media_deletion_policy.mjs',
-  'test_media_import_ledger.mjs',
-  'test_media_import_status.mjs',
-  'test_drive_scanner_completion.mjs',
-  'test_eject_policy.mjs',
-  'test_immich_command.mjs',
-  'test_immich_failure_summary.mjs',
-  'test_source_health.mjs',
-  'test_forward_auth_trust.mjs',
-  'test_peer_url_policy.mjs',
-  'test_http_policy.mjs',
-  'test_settings_policy.mjs',
-  'test_docker_client.mjs',
-  'test_docker_api_proxy.mjs',
-  'test_schedule_policy.mjs',
-  'test_peer_access_policy.mjs',
-  'test_pairing_state.mjs',
-  'test_pairing_ingress.mjs',
-  'test_pairing_http_limits.mjs',
-  'test_handshake.mjs',
-  'test_callback_address.mjs',
-  'test_path_confinement.mjs',
-  'test_filesystem_access.mjs',
-];
+// Discovered rather than listed: a hand-maintained array silently skips every
+// test added after someone forgets to append to it.
+const RUN_SEPARATELY = new Set([
+  'test_mitigation_regressions.mjs', // this runner
+  'test_backward_compat.mjs',        // pre-push step 2, needs --skip-live
+  'test_comprehensive.mjs',          // integration suite, takes minutes
+  'test_delta_versioning.mjs',       // needs a live API on localhost:8090
+  'test_upgrade_readiness.mjs',      // npm run test:bridge
+  'test_upgrade_bridge_runtime.mjs', // npm run test:bridge
+]);
+
+// A stale exclusion would quietly keep a test out of the suite forever.
+for (const name of RUN_SEPARATELY) {
+  if (!existsSync(resolve(import.meta.dirname, name))) {
+    console.error(`Excluded test no longer exists: ${name}`);
+    process.exit(1);
+  }
+}
+
+const tests = readdirSync(import.meta.dirname)
+  .filter(name => /^test_[a-z0-9_]+\.mjs$/.test(name) && !RUN_SEPARATELY.has(name))
+  .sort();
 
 for (const test of tests) {
   const result = spawnSync(process.execPath, [resolve(import.meta.dirname, test)], {

@@ -60,6 +60,10 @@ function writeManifest(directory, files) {
 
 const originalNow = Date.now;
 try {
+  // Deltaification forces a fresh keyframe once the previous one is older than
+  // delta_keyframe_days (7), so each phase pins the clock near its own fixture
+  // timestamps — otherwise these assertions expire as real time moves on.
+  Date.now = () => new Date('2026-07-20T13:00:00Z').getTime();
   const conversionDestination = resolve(fixture, 'conversion-destination');
   const conversionConfig = createConfig(
     'Atomic conversion',
