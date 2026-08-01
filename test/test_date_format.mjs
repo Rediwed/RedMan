@@ -22,10 +22,11 @@ for (const bad of ['', '   ', 'not a date', '2026-13-45 99:99:99', null, undefin
 // An explicit timezone makes these assertions independent of the host's.
 const settings = { timezone: 'Europe/Amsterdam', time_format: '24h', date_format: 'DD/MM/YYYY' };
 // 03:03 UTC is 05:03 in Amsterdam; the bug rendered it as 03:03.
-assert.match(formatTimeOnly('2026-08-01 03:03:41', settings), /05[:.]03/);
-assert.match(formatDateTime('2026-08-01 03:03:41', settings), /05[:.]03/);
-// Just before midnight UTC the local date is already the next day.
-assert.match(formatDateShort('2026-08-01 23:30:00', settings), /02/);
+assert.equal(formatTimeOnly('2026-08-01 03:03:41', settings), '05:03');
+assert.match(formatDateTime('2026-08-01 03:03:41', settings), /\b05:03\b/);
+// Just before midnight UTC the local date is already the next day. Assert the
+// whole string: a substring like /02/ would also match the year.
+assert.equal(formatDateShort('2026-08-01 23:30:00', settings), '02 Aug 2026');
 
 assert.equal(formatTimeOnly('', settings), '');
 assert.equal(formatDateTime('', settings), '—');
