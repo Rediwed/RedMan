@@ -2,6 +2,19 @@
 // All database timestamps are stored as UTC — this utility ensures consistent display.
 
 /**
+ * Parse a database timestamp. SQLite writes datetime('now') in UTC without a
+ * zone suffix, which JavaScript would otherwise read as local time.
+ * @param {string} isoString - timestamp from the database
+ * @returns {Date|null} parsed date, or null when unusable
+ */
+export function parseDbDate(isoString) {
+  if (typeof isoString !== 'string' || !isoString) return null;
+  const zoned = /(Z|[+-]\d{2}:?\d{2})$/.test(isoString) ? isoString : `${isoString}Z`;
+  const date = new Date(zoned);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+/**
  * Format a database timestamp for display.
  * @param {string} isoString - UTC timestamp from the database
  * @param {object} settings - Settings object with timezone, date_format, time_format
@@ -10,10 +23,8 @@
 export function formatDateTime(isoString, settings = {}) {
   if (!isoString) return '—';
 
-  // DB timestamps don't always have 'Z' suffix — always treat as UTC
-  const dateStr = isoString.endsWith('Z') ? isoString : isoString + 'Z';
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return isoString;
+  const date = parseDbDate(isoString);
+  if (!date) return isoString;
 
   const tz = settings.timezone && settings.timezone !== 'system'
     ? settings.timezone : undefined;
@@ -70,9 +81,8 @@ export function formatPreview(settings = {}) {
 export function formatDateShort(isoString, settings = {}) {
   if (!isoString) return '—';
 
-  const dateStr = isoString.endsWith('Z') ? isoString : isoString + 'Z';
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return isoString;
+  const date = parseDbDate(isoString);
+  if (!date) return isoString;
 
   const tz = settings.timezone && settings.timezone !== 'system'
     ? settings.timezone : undefined;
@@ -104,8 +114,8 @@ export function formatDateShort(isoString, settings = {}) {
 export function formatTimeOnly(isoString, settings = {}) {
   if (!isoString) return '';
 
-  const date = new Date(isoString);
-  if (isNaN(date.getTime())) return '';
+  const date = parseDbDate(isoString);
+  if (!date) return '';
 
   const tz = settings.timezone && settings.timezone !== 'system'
     ? settings.timezone : undefined;

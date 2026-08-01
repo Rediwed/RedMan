@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import { dispatchReconnect } from '../hooks/useReconnect.js';
 import { formatBytes } from '../utils/formatBytes.js';
+import { parseDbDate } from '../utils/dateFormat.js';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import './ConnectionStatus.css';
 
@@ -183,8 +184,9 @@ function formatUptime(seconds) {
 }
 
 function formatRelativeTime(iso) {
-  if (!iso) return null;
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  const seen = parseDbDate(iso);
+  if (!seen) return null;
+  const diff = Math.floor((Date.now() - seen.getTime()) / 1000);
   if (diff < 0) return 'just now';
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;

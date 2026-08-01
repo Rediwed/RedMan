@@ -76,10 +76,8 @@ export default function MetricsChart({ data, dataKey, label, color, maxValue, un
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.font = '10px system-ui';
       ctx.textAlign = 'left';
-      const first = new Date(data[0].recorded_at);
       ctx.fillText(formatTimeOnly(data[0].recorded_at, settings), padding.left, h - 2);
       ctx.textAlign = 'right';
-      const last = new Date(data[data.length - 1].recorded_at);
       ctx.fillText(formatTimeOnly(data[data.length - 1].recorded_at, settings), w - padding.right, h - 2);
     }
   }, [data, dataKey, color, maxValue, unit]);
