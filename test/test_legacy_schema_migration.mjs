@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { runMigrations, getSchemaVersion } from '../app/backend/src/migrations.js';
+import { runMigrations, getSchemaVersion, LATEST_SCHEMA_VERSION } from '../app/backend/src/migrations.js';
 
 const require = createRequire(resolve(import.meta.dirname, '../app/package.json'));
 const Database = require('better-sqlite3');
@@ -39,7 +39,7 @@ db.exec(`
 `);
 
 runMigrations(db);
-assert.equal(getSchemaVersion(db), 28);
+assert.equal(getSchemaVersion(db), LATEST_SCHEMA_VERSION);
 const ssdColumns = new Set(db.prepare('PRAGMA table_info(ssd_backup_configs)').all().map(column => column.name));
 for (const column of ['retention_days', 'delta_versioning', 'delta_threshold', 'delta_max_chain', 'delta_keyframe_days', 'retention_policy']) {
   assert.ok(ssdColumns.has(column), `Missing legacy SSD column ${column}`);

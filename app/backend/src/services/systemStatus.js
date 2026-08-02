@@ -10,6 +10,7 @@ import { getJobHealth } from './jobHealth.js';
 import { listExternalJobs } from './externalJobs.js';
 import { listContainers, isDockerAvailable } from './docker.js';
 import { getPeerConnectivity } from './peerConnectivity.js';
+import { getRelayStatus } from './ntfyRelay.js';
 
 // Ordered worst-first so a rollup is a simple minimum.
 const SEVERITY_ORDER = ['fail', 'warn', 'unknown', 'paused', 'ok'];
@@ -167,6 +168,55 @@ async function peerChecks() {
   }));
 }
 
+/**
+ * The relay's own health.
+ *
+ * Without this, a broker RedMan cannot reach looks identical to every relayed
+ * schedule failing at once. One honest "the collector is down" beats a board
+ * full of misattributed blame.
+ */
+function relayChecks(now) {
+  const relay = getRelayStatus();
+  if (!relay.configured) return [];
+
+  const lastSuccess = relay.lastSuccessAt ? new Date(relay.lastSuccessAt) : null;
+  const silentMinutes = lastSuccess ? (now.getTime() - lastSuccess.getTime()) / 60000 : null;
+
+  let state = 'ok';
+  let summary = 'Collecting heartbeats';
+  let at = relay.lastSuccessAt;
+
+  if (!relay.running) {
+    state = 'paused';
+    summary = 'Collector not running';
+    at = null;
+  } else if (!lastSuccess) {
+    state = 'unknown';
+    summary = relay.lastError ? `No successful poll yet — ${relay.lastError}` : 'No successful poll yet';
+    at = null;
+  } else if (relay.lastError) {
+    state = 'warn';
+    summary = `Last poll failed — ${relay.lastError}`;
+  } else if (silentMinutes > 30) {
+    state = 'warn';
+    summary = 'No successful poll since';
+  }
+
+  return [check({
+    id: 'relay:ntfy',
+    category: 'Relay',
+    // The topic name is deliberately not shown: on a public broker it is the
+    // capability, and this board is readable by anyone with read access.
+    subject: 'ntfy heartbeat topic',
+    state,
+    summary,
+    at,
+    since: relay.lastSuccessAt,
+    link: '/settings',
+    detail: { consecutiveFailures: relay.consecutiveFailures, lastRecorded: relay.lastRecorded },
+  })];
+}
+
 function worst(states) {
   for (const level of SEVERITY_ORDER) {
     if (states.includes(level)) return level;
@@ -184,6 +234,7 @@ export async function getSystemStatus({ now = new Date() } = {}) {
     { name: 'external', run: async () => externalJobChecks(now) },
     { name: 'containers', run: containerChecks },
     { name: 'peers', run: peerChecks },
+    { name: 'relay', run: async () => relayChecks(now) },
   ];
 
   const settled = await Promise.allSettled(collectors.map(c => c.run()));
