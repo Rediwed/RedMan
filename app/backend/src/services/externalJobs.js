@@ -12,7 +12,9 @@ import { recordEvent } from './events.js';
 const TOKEN_BYTES = 32;
 const MAX_MESSAGE_LENGTH = 500;
 const VALID_STATUSES = ['completed', 'failed', 'running'];
-const RELAY_MAX_AGE_SECONDS = 3600;
+// Kept in step with the relay's lookback window: a message older than the window
+// will never be re-read anyway, so accepting one only widens the replay door.
+const RELAY_MAX_AGE_SECONDS = 900;
 
 export function generateIngestToken() {
   return randomBytes(TOKEN_BYTES).toString('base64url');
@@ -295,7 +297,9 @@ export function signRelayedHeartbeat(secretHash, fields) {
 }
 
 function signatureMatches(expectedHex, candidateHex) {
-  if (typeof candidateHex !== 'string' || !/^[0-9a-f]+$/i.test(candidateHex)) return false;
+  // Exactly one SHA-256 digest: Buffer.from drops a trailing nibble, so odd
+  // lengths would let a signature verify with a character appended to it.
+  if (typeof candidateHex !== 'string' || !/^[0-9a-f]{64}$/i.test(candidateHex)) return false;
   const expected = Buffer.from(expectedHex, 'hex');
   const candidate = Buffer.from(candidateHex.toLowerCase(), 'hex');
   if (expected.length !== candidate.length) return false;
@@ -328,7 +332,12 @@ export function recordRelayedHeartbeat(db, fields, { now = new Date(), maxAgeSec
     exit_code: fields.exitCode,
     duration_seconds: fields.duration,
     message: fields.message,
-    source_ref: fields.sourceRef,
+    // Keyed on the signature, not on the delivering message: a broker hands out
+    // a fresh id for every publish, so anyone who captured a valid line off the
+    // topic could re-post it verbatim and push the overdue deadline forward
+    // without forging anything. The signature covers the timestamp, so a repeat
+    // of the same run is identical while a genuine later run differs.
+    source_ref: `relay:${expected}`,
   });
 
   if (recorded.duplicate) return { ok: true, duplicate: true, slug };

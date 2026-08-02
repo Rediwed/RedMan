@@ -16,6 +16,7 @@ import {
   hashIngestToken,
   signRelayedHeartbeat,
   recordRelayedHeartbeat,
+  recordHeartbeat,
   getExternalJob,
 } from '../app/backend/src/services/externalJobs.js';
 import { parseRelayMessage, RELAY_PREFIX } from '../app/backend/src/services/ntfyRelay.js';
@@ -94,7 +95,7 @@ check('a non-numeric exit code is rejected, not coerced to zero', () => {
 // ── Verification ───────────────────────────────────────────────────
 
 check('a correctly signed heartbeat is recorded', () => {
-  const result = recordRelayedHeartbeat(db, { ...signed(), sourceRef: 'ntfy:t:aaa' });
+  const result = recordRelayedHeartbeat(db, signed());
   assert.equal(result.ok, true);
   assert.equal(result.duplicate, false);
   assert.equal(result.status, 'completed');
@@ -105,8 +106,14 @@ check('a forged signature is refused', () => {
   const result = recordRelayedHeartbeat(db, {
     ...signed({ exitCode: 0, message: 'all fine' }),
     signature: 'f'.repeat(64),
-    sourceRef: 'ntfy:t:forged',
   });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'bad-signature');
+});
+
+check('a signature with a character appended does not verify', () => {
+  const honest = signed({ message: 'truncation guard' });
+  const result = recordRelayedHeartbeat(db, { ...honest, signature: `${honest.signature}a` });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'bad-signature');
 });
@@ -114,7 +121,7 @@ check('a forged signature is refused', () => {
 check('changing a signed field invalidates the signature', () => {
   const honest = signed({ exitCode: 1, message: 'crowdsec down' });
   // Someone on the topic flips a failure into a success but keeps the signature.
-  const tampered = { ...honest, exitCode: 0, message: 'all good', sourceRef: 'ntfy:t:tampered' };
+  const tampered = { ...honest, exitCode: 0, message: 'all good' };
   const result = recordRelayedHeartbeat(db, tampered);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'bad-signature');
@@ -127,7 +134,6 @@ check('a signature from another job does not authenticate this one', () => {
   const result = recordRelayedHeartbeat(db, {
     ...fields,
     signature: signRelayedHeartbeat(otherKey, fields),
-    sourceRef: 'ntfy:t:crosssign',
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'bad-signature');
@@ -141,24 +147,22 @@ check('an unknown slug is refused', () => {
 });
 
 check('an old message cannot be replayed onto the topic', () => {
-  const stale = signed({ ts: nowSeconds() - 7200 });
-  const result = recordRelayedHeartbeat(db, { ...stale, sourceRef: 'ntfy:t:stale' });
+  const result = recordRelayedHeartbeat(db, signed({ ts: nowSeconds() - 7200 }));
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'stale');
 });
 
 check('a timestamp far in the future is refused too', () => {
-  const ahead = signed({ ts: nowSeconds() + 7200 });
-  const result = recordRelayedHeartbeat(db, { ...ahead, sourceRef: 'ntfy:t:ahead' });
+  const result = recordRelayedHeartbeat(db, signed({ ts: nowSeconds() + 7200 }));
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'stale');
 });
 
-// ── Idempotency ────────────────────────────────────────────────────
+// ── Idempotency and replay ─────────────────────────────────────────
 
 check('re-reading the same message does not record it twice', () => {
   const before = db.prepare('SELECT COUNT(*) AS c FROM external_job_runs').get().c;
-  const fields = { ...signed({ message: 'second poll' }), sourceRef: 'ntfy:t:repeat' };
+  const fields = signed({ message: 'second poll' });
   const first = recordRelayedHeartbeat(db, fields);
   const second = recordRelayedHeartbeat(db, fields);
   const after = db.prepare('SELECT COUNT(*) AS c FROM external_job_runs').get().c;
@@ -168,11 +172,35 @@ check('re-reading the same message does not record it twice', () => {
   assert.equal(after, before + 1);
 });
 
+check('a captured line re-published under a new broker id is still a duplicate', () => {
+  // The whole point: an attacker who cannot forge can still copy. Keying
+  // de-duplication on the delivering message would let this reset the clock.
+  const captured = signed({ ts: nowSeconds() - 30, message: 'captured off the topic' });
+  const genuine = recordRelayedHeartbeat(db, captured);
+  const reportedAfterGenuine = db.prepare('SELECT last_reported_at FROM external_jobs WHERE id = ?')
+    .get(job.id).last_reported_at;
+
+  const replayed = recordRelayedHeartbeat(db, { ...captured, sourceRef: 'ntfy:topic:a-brand-new-id' });
+  const reportedAfterReplay = db.prepare('SELECT last_reported_at FROM external_jobs WHERE id = ?')
+    .get(job.id).last_reported_at;
+
+  assert.equal(genuine.duplicate, false);
+  assert.equal(replayed.duplicate, true);
+  // The overdue clock must not have moved: that is what the replay was for.
+  assert.equal(reportedAfterReplay, reportedAfterGenuine);
+});
+
+check('a later genuine run is not mistaken for a replay', () => {
+  const first = recordRelayedHeartbeat(db, signed({ ts: nowSeconds() - 20, message: 'run one' }));
+  const later = recordRelayedHeartbeat(db, signed({ ts: nowSeconds() - 10, message: 'run one' }));
+  assert.equal(first.duplicate, false);
+  assert.equal(later.duplicate, false);
+});
+
 check('heartbeats delivered over HTTP keep working without a source reference', () => {
   const plain = createExternalJob(db, { name: 'Plain', slug: 'plain-job' });
-  const fields = { slug: 'plain-job', ts: nowSeconds(), exitCode: 0, duration: 1, message: '' };
-  recordRelayedHeartbeat(db, { ...fields, signature: signRelayedHeartbeat(hashIngestToken(plain.token), fields) });
-  recordRelayedHeartbeat(db, { ...fields, signature: signRelayedHeartbeat(hashIngestToken(plain.token), fields) });
+  recordHeartbeat(db, 'plain-job', plain.token, { exit_code: 0 });
+  recordHeartbeat(db, 'plain-job', plain.token, { exit_code: 0 });
   const nulls = db.prepare(
     'SELECT COUNT(*) AS c FROM external_job_runs WHERE source_ref IS NULL AND job_id = ?'
   ).get(plain.job.id).c;

@@ -20,6 +20,10 @@ export const RELAY_PREFIX = 'redman-hb1';
 const DEFAULT_POLL_SECONDS = 60;
 const LOOKBACK_MINUTES = 15;
 const REQUEST_TIMEOUT_MS = 20_000;
+// Anyone who knows the topic can publish to it, and a poll asks for the whole
+// backlog. A timeout bounds how long the transfer may take, not how large it
+// may be, so the size needs its own ceiling.
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const START_DELAY_MS = 15_000;
 const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 
@@ -95,6 +99,37 @@ export function parseRelayMessage(text) {
 }
 
 /**
+ * Read a response body, refusing anything past the ceiling.
+ *
+ * Returns null when the limit is exceeded, so a flooded topic costs one poll
+ * rather than the process.
+ */
+async function readCapped(res, maxBytes) {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (!res.body) return null;
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/**
  * Read the topic once and record whatever verifies.
  *
  * Never throws: a relay that cannot reach the broker must not take down the
@@ -121,7 +156,10 @@ export async function pollRelayOnce({ now = new Date() } = {}) {
     if (!res.ok) {
       return { ok: false, error: `ntfy returned ${res.status}` };
     }
-    body = await res.text();
+    body = await readCapped(res, MAX_RESPONSE_BYTES);
+    if (body === null) {
+      return { ok: false, error: `response exceeded ${MAX_RESPONSE_BYTES} bytes` };
+    }
   } catch (err) {
     return { ok: false, error: err.name === 'AbortError' ? 'request timed out' : err.message };
   } finally {
@@ -146,10 +184,6 @@ export async function pollRelayOnce({ now = new Date() } = {}) {
     const fields = parseRelayMessage(envelope.message);
     if (!fields) continue;
     seen += 1;
-
-    // Scoping the reference to the topic keeps two brokers from colliding on
-    // the short ids ntfy hands out.
-    fields.sourceRef = `ntfy:${settings.ntfy_bridge_topic}:${envelope.id}`;
 
     const result = recordRelayedHeartbeat(db, fields, { now });
     if (!result.ok) {

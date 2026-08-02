@@ -729,6 +729,38 @@ Omit `cron_expression` for jobs that run irregularly; without a declared schedul
 a job is never reported late. The endpoint keeps accepting heartbeats during
 upgrade-bridge mode so a maintenance window does not create false overdue alarms.
 
+#### Heartbeats from hosts that cannot reach RedMan
+
+A host outside the network has no route in, so it leaves a signed line on an ntfy
+topic instead and RedMan collects it on its own outbound polls. Enable it under
+**Settings → Notifications → Collect heartbeats from a topic**.
+
+```
+redman-hb1 <slug> <unix-ts> <exit|-> <duration|-> <signature> <message>
+```
+
+The signature is `HMAC-SHA256` over the first five fields joined by newlines,
+keyed with the SHA-256 of the job's ingest token — a value the reporting host can
+derive and RedMan already stores, so no secret ever crosses the broker. From a
+shell script:
+
+```bash
+key="$(printf '%s' "$REDMAN_HEARTBEAT_TOKEN" | sha256sum | cut -d' ' -f1)"
+payload="$(printf '%s\n%s\n%s\n%s\n%s' "$slug" "$ts" "$code" "$SECONDS" "$msg")"
+sig="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$key" -hex | awk '{print $NF}')"
+```
+
+**Choose a topic nobody can guess, and do not reuse the notification topic.**
+Anyone who knows the topic name can read every heartbeat on it and publish to it.
+Signing means they cannot invent a result or alter one, and a repeat of a line
+already recorded is rejected, so a captured message cannot be re-posted to hide a
+job that has since stopped running. What they can still learn is which schedules
+exist and whether they are passing.
+
+Messages older than 15 minutes are refused, which is also how far back each poll
+reads. A missed poll or a restart therefore heals on the next round rather than
+leaving a permanent gap.
+
 ### Peer API (port 8091)
 
 Machine-to-machine endpoints authenticated via Bearer API key:

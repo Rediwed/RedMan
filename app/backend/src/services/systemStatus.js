@@ -205,7 +205,9 @@ function relayChecks(now) {
   return [check({
     id: 'relay:ntfy',
     category: 'Relay',
-    subject: `ntfy topic ${relay.topic}`,
+    // The topic name is deliberately not shown: on a public broker it is the
+    // capability, and this board is readable by anyone with read access.
+    subject: 'ntfy heartbeat topic',
     state,
     summary,
     at,
