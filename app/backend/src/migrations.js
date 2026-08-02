@@ -912,6 +912,64 @@ const migrations = [
       console.log('[migration-28] Added reciprocal pairing offer columns');
     }
   },
+  {
+    version: 29,
+    description: 'Track externally scheduled jobs that report in by heartbeat',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS external_jobs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          slug TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          host TEXT,
+          cron_expression TEXT,
+          grace_seconds INTEGER NOT NULL DEFAULT 900,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          ingest_token_hash TEXT NOT NULL,
+          last_reported_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS external_job_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          job_id INTEGER NOT NULL REFERENCES external_jobs(id) ON DELETE CASCADE,
+          status TEXT NOT NULL,
+          exit_code INTEGER,
+          duration_seconds INTEGER,
+          message TEXT,
+          reported_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_external_job_runs_job_reported
+          ON external_job_runs(job_id, reported_at);
+        CREATE INDEX IF NOT EXISTS idx_external_job_runs_reported
+          ON external_job_runs(reported_at);
+      `);
+      console.log('[migration-29] Added external job heartbeat tables');
+    }
+  },
+  {
+    version: 30,
+    description: 'Persist notifiable events so the UI has a history, not just a live feed',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL,
+          category TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          subject TEXT,
+          title TEXT NOT NULL,
+          body TEXT,
+          detail TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+        CREATE INDEX IF NOT EXISTS idx_events_severity_created ON events(severity, created_at);
+        CREATE INDEX IF NOT EXISTS idx_events_category_created ON events(category, created_at);
+      `);
+      console.log('[migration-30] Added event history table');
+    }
+  },
 ];
 
 /**

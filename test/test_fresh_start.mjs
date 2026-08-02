@@ -55,11 +55,14 @@ try {
     'peer_audit_log',
     'cache',
     'pairing_requests',
+    'external_jobs',
+    'external_job_runs',
+    'events',
     'schema_migrations',
   ];
 
   for (const table of requiredTables) assert(tables.includes(table), `Missing table: ${table}`);
-    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 28);
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 30);
   db.close();
 
   console.log('Fresh database startup: 2 idempotent starts passed');

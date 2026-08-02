@@ -99,7 +99,6 @@ Health details (authenticated): `GET /api/health/details` — uptime, host platf
 
 **`/api/overview`** (overview.js):
 `GET /summary`
-
 **`/api/settings`** (settings.js):
 `GET|PUT /` · `POST /ntfy-test` · `POST /browser-notify-test` · `GET /ssh/status` · `POST /ssh/generate` · `POST /ssh/authorize-localhost` · `POST /ssh/test` · `POST /db/backup` · `POST /db/backup-all` · `GET /db/backups?dest_path` · `GET /db/recovery-scan?paths` · `GET /db/recovery-info?dest_path` · `POST /db/restore` · `GET /notifications/stream` (SSE)
 
@@ -114,7 +113,16 @@ Health details (authenticated): `GET /api/health/details` — uptime, host platf
 
 **`/api/discovery`** (discovery.js):
 `GET /subnets?refresh` · `GET /peers?refresh` · `GET /immich?refresh` · `POST /clear-cache`
+**`/api/external-jobs`** (externalJobs.js):
+`POST /heartbeat/:slug` (per-job Bearer token, mounted before the auth chain) · `GET|POST /` · `GET /runs?job_id&page&limit` · `GET|PUT|DELETE /:id` · `POST /:id/regenerate-token`
 
+**`/api/events`** (events.js):
+`GET /?severity&category&type&since&page&limit` · `GET /summary?since`
+
+**`/api/status`** (status.js):
+`GET /` — normalized status board across backups, external jobs, containers, and peers
+
+Events are recorded by `services/events.js` from inside `notify.js`'s `sendQuiet()`, before the per-channel delivery gates. Disabling ntfy or browser notifications must never suppress the history. `job_progress` is deliberately excluded as transient noise.
 **Peer API** (`:8091`, peerApi.js — Bearer key auth, all logged to `peer_audit_log`):
 `GET /peer/discover` (unauthenticated — returns service identity for network scanning) · `POST /peer/pair/request` (unauthenticated — incoming pairing request) · `POST /peer/pair/callback` (unauthenticated — pairing acceptance callback) · `GET /peer/health` · `POST /peer/backup/prepare` · `POST /peer/backup/complete` · `GET /peer/backup/status/:runId` · `POST /peer/shutdown` · `GET /peer/storage` · `GET /peer/browse?dir` · `GET /peer/roots` · `GET /peer/shares`
 
@@ -136,6 +144,8 @@ Health details (authenticated): `GET /api/health/details` — uptime, host platf
 | `/hyper-backup` | `HyperBackupPage` | Hyper Backup |
 | `/rclone` | `RclonePage` | Rclone Sync |
 | `/media-import` | `MediaImportPage` | Media Import |
+| `/external-jobs` | `ExternalJobsPage` | External job heartbeats |
+| `/status` | `StatusPage` | Event history and severity summary |
 | `/settings` | `SettingsPage` | Settings (tabbed: General, Notifications, Peers, Integrations, Infrastructure, Upgrade) |
 
 ### Frontend Patterns

@@ -1,0 +1,193 @@
+.external-jobs-page .ext-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.ext-summary-tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ext-summary-tile.is-alert {
+  border-color: var(--color-warning);
+}
+
+.ext-summary-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.ext-summary-tile.is-alert .ext-summary-value {
+  color: var(--color-warning);
+}
+
+.ext-summary-label {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.ext-job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ext-job {
+  padding: 0.85rem 1rem;
+}
+
+.ext-job.is-overdue {
+  border-left: 3px solid var(--color-warning);
+}
+
+.ext-job-main {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.ext-job-toggle {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0.2rem;
+  display: flex;
+}
+
+.ext-job-identity {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.ext-job-name {
+  font-weight: 600;
+}
+
+.ext-job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.ext-job-meta span {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ext-job-meta code {
+  background: var(--color-surface-alt);
+  padding: 0 0.35rem;
+  border-radius: 4px;
+}
+
+.ext-job-unscheduled {
+  font-style: italic;
+}
+
+.ext-job-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.ext-job-timing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.ext-job-overdue {
+  color: var(--color-warning);
+}
+
+.ext-job-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.ext-job-issue {
+  margin-top: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ext-job-runs {
+  margin-top: 0.85rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.75rem;
+}
+
+.ext-run-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.ext-run-table th {
+  text-align: left;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  padding-bottom: 0.35rem;
+}
+
+.ext-run-table td {
+  padding: 0.3rem 0.5rem 0.3rem 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.ext-run-message {
+  color: var(--color-text-muted);
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-snippet {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.7rem;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  margin: 0 0 0.5rem;
+  white-space: pre;
+}
+
+.ext-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.35rem;
+}
+
+.ext-token-warning {
+  margin-bottom: 1rem;
+}

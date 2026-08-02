@@ -17,6 +17,7 @@ import {
   hashedPeerKeyMarker,
 } from '../services/peerSecrets.js';
 import { reconcilePeerSshAuthorization } from '../services/peerSshAuthorization.js';
+import { getPeerConnectivity } from '../services/peerConnectivity.js';
 const router = Router();
 
 function generateApiKey() {
@@ -163,57 +164,7 @@ router.post('/pair/sync', async (req, res) => {
 
 // Check connectivity to outgoing (destination) peers we push backups to
 router.get('/connectivity', async (req, res) => {
-  // Outgoing peers: deduplicated by static identity where known, latest accepted pairing wins
-  const peers = db.prepare(`
-    SELECT p1.id, p1.remote_instance as name, p1.remote_url, p1.updated_at,
-           p1.handshake_version, p1.remote_fingerprint, p1.remote_static_pubkey
-    FROM pairing_requests p1
-    INNER JOIN (
-      SELECT COALESCE(remote_static_pubkey, remote_url) AS peer_key, MAX(id) as max_id
-      FROM pairing_requests
-      WHERE direction = 'outgoing' AND status = 'accepted'
-      GROUP BY COALESCE(remote_static_pubkey, remote_url)
-    ) p2 ON p1.id = p2.max_id
-    ORDER BY p1.created_at DESC
-  `).all();
-
-  const results = await Promise.all(peers.map(async (peer) => {
-    // Extract host from remote_url to build the discover endpoint
-    let discoverUrl;
-    try {
-      discoverUrl = `${validatePrivatePeerBaseUrl(peer.remote_url)}/peer/discover`;
-    } catch {
-      return { id: peer.id, name: peer.name, url: peer.remote_url, status: 'unknown', last_seen_at: peer.updated_at };
-    }
-
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3000);
-      const r = await fetchWithoutRedirect(discoverUrl, {
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json' },
-      });
-      clearTimeout(timer);
-      if (!r.ok) {
-        return { id: peer.id, name: peer.name, url: peer.remote_url, status: 'unreachable', last_seen_at: peer.updated_at };
-      }
-      const data = await r.json();
-      if (data.service === 'redman') {
-        return {
-          id: peer.id, name: peer.name, url: peer.remote_url, status: 'online',
-          instance: data.instance, version: data.version, hostname: data.hostname,
-          handshake_version: peer.handshake_version || 1,
-          fingerprint: peer.remote_fingerprint || null,
-          last_seen_at: peer.updated_at,
-        };
-      }
-      return { id: peer.id, name: peer.name, url: peer.remote_url, status: 'unreachable', last_seen_at: peer.updated_at };
-    } catch {
-      return { id: peer.id, name: peer.name, url: peer.remote_url, status: 'unreachable', last_seen_at: peer.updated_at };
-    }
-  }));
-
-  res.json(results);
+  res.json(await getPeerConnectivity());
 });
 
 // Get a single peer (key masked)

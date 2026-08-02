@@ -250,8 +250,33 @@ export const getDbRecoveryInfo = (destPath) => fetchJSON(`/settings/db/recovery-
 export const restoreDb = (backupPath) => postJSON('/settings/db/restore', { backup_path: backupPath });
 
 // ===== Hardened Upgrade Readiness =====
-export const getUpgradeReadiness = () => fetchJSON('/upgrade-readiness');
-export const createUpgradeReadinessBackup = () => postJSON('/upgrade-readiness/backup', {});
+export const getUpgradeReadiness = () => fetchJSON('/upgrade-readiness');export const createUpgradeReadinessBackup = () => postJSON('/upgrade-readiness/backup', {});
 export const remediateUpgradeReadinessIssue = (issueId) => postJSON('/upgrade-readiness/remediate', { issueId });
 export const createUpgradeHostPlan = (data) => postJSON('/upgrade-readiness/host-plan', data);
 export const createUpgradeFinalConfig = (data) => postJSON('/upgrade-readiness/final-config', data);
+
+// ===== External Jobs (heartbeat-reported schedules on other hosts) =====
+export const getExternalJobs = () => fetchJSON('/external-jobs');
+export const createExternalJob = (data) => postJSON('/external-jobs', data);
+export const updateExternalJob = (id, data) => putJSON(`/external-jobs/${id}`, data);
+export const deleteExternalJob = (id) => deleteJSON(`/external-jobs/${id}`);
+export const regenerateExternalJobToken = (id) => postJSON(`/external-jobs/${id}/regenerate-token`, {});
+export const getExternalJobRuns = (jobId = null, page = 1, limit = 50) => {
+  const params = new URLSearchParams({ page, limit });
+  if (jobId) params.set('job_id', jobId);
+  return fetchJSON(`/external-jobs/runs?${params}`);
+};
+
+// ===== Event history =====
+export const getEvents = (filters = {}, page = 1, limit = 50) => {
+  const params = new URLSearchParams({ page, limit });
+  for (const key of ['severity', 'category', 'type', 'since']) {
+    if (filters[key]) params.set(key, filters[key]);
+  }
+  return fetchJSON(`/events?${params}`);
+};
+export const getEventSummary = (since = '-24 hours') =>
+  fetchJSON(`/events/summary?since=${encodeURIComponent(since)}`);
+
+// ===== System status board =====
+export const getSystemStatus = () => fetchJSON('/status');

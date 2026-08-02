@@ -19,6 +19,8 @@ const RESULT_KEYS = [
   'authRecovery',
   'pairingExpired',
   'pairingHistory',
+  'externalRuns',
+  'events',
 ];
 
 function readPositiveSetting(db, key, fallback) {
@@ -35,6 +37,8 @@ export function getDatabaseRetentionPolicy(db) {
     securityAuditDays: readPositiveSetting(db, 'peer_security_audit_retention_days', 365),
     authAuditDays: readPositiveSetting(db, 'auth_audit_retention_days', 365),
     metricsHours: readPositiveSetting(db, 'metrics_retention_hours', 24),
+    externalRunDays: readPositiveSetting(db, 'external_run_retention_days', 90),
+    eventDays: readPositiveSetting(db, 'event_retention_days', 90),
   };
 }
 
@@ -146,9 +150,25 @@ export function pruneDatabaseTelemetry(db, overrides = {}, options = {}) {
         LIMIT ?
       )
     `).run(batchSize).changes;
+    // Always keeps the newest run per job: pruning history must never make a
+    // reporting job look like it never checked in.
+    const externalRuns = db.prepare(`
+      DELETE FROM external_job_runs WHERE id IN (
+        SELECT id FROM external_job_runs
+        WHERE reported_at < datetime('now', ?)
+          AND id NOT IN (SELECT MAX(id) FROM external_job_runs GROUP BY job_id)
+        LIMIT ?
+      )
+    `).run(`-${policy.externalRunDays} days`, batchSize).changes;
+    const events = db.prepare(`
+      DELETE FROM events WHERE id IN (
+        SELECT id FROM events WHERE created_at < datetime('now', ?) LIMIT ?
+      )
+    `).run(`-${policy.eventDays} days`, batchSize).changes;
     return {
       runFiles, runs, routineAudit, securityAudit, metrics, summaries,
       authAudit, authSessions, authRecovery, pairingExpired, pairingHistory,
+      externalRuns, events,
     };
   });
   return prune.immediate();

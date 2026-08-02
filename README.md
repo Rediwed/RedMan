@@ -706,6 +706,28 @@ All feature routes are prefixed with `/api/` and pass through the selected authe
 | `/api/peers/*` | Authorized peer management, audit log |
 | `/api/media-import/*` | Drive detection and Immich import |
 | `/api/filesystem/*` | Path browsing |
+| `/api/external-jobs/*` | External job registration, health, and run history (authenticated) |
+| `POST /api/external-jobs/heartbeat/:slug` | Heartbeat ingest for schedules on other hosts (per-job Bearer token, not a user session) |
+| `/api/events/*` | Event history and severity summary |
+| `GET /api/status` | Normalized status board across backups, external jobs, containers, and peers |
+
+#### External job heartbeats
+
+Schedules that RedMan does not run itself report in with one request. Register the
+job, declare the schedule you expect it to keep, and RedMan raises it as overdue
+when a report fails to arrive within the grace period:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $REDMAN_HEARTBEAT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"exit_code\":$?,\"duration_seconds\":$SECONDS}" \
+  https://redman.example/api/external-jobs/heartbeat/my-nightly-job
+```
+
+Omit `cron_expression` for jobs that run irregularly; without a declared schedule
+a job is never reported late. The endpoint keeps accepting heartbeats during
+upgrade-bridge mode so a maintenance window does not create false overdue alarms.
 
 ### Peer API (port 8091)
 

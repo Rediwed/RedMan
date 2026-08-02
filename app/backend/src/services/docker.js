@@ -33,6 +33,17 @@ function getDockerControlClient() {
 }
 
 // List all containers with basic info
+// Docker reports healthcheck results inside the status string ("Up 2 hours
+// (healthy)"). Reading it here avoids an inspect call per container on every
+// dashboard refresh.
+function healthFromStatus(status) {
+  if (typeof status !== 'string') return null;
+  if (status.includes('(healthy)')) return 'healthy';
+  if (status.includes('(unhealthy)')) return 'unhealthy';
+  if (status.includes('(health: starting)')) return 'starting';
+  return null; // no healthcheck defined for this container
+}
+
 export async function listContainers() {
   try {
     const containers = await getDockerClient().listContainers({ all: true });
@@ -42,6 +53,7 @@ export async function listContainers() {
       image: c.Image,
       state: c.State,
       status: c.Status,
+      health: healthFromStatus(c.Status),
       created: new Date(c.Created * 1000).toISOString(),
       ports: c.Ports.map(p => ({
         private: p.PrivatePort,

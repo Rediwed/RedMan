@@ -1,182 +1,696 @@
 {
   "_comment": "RedMan v1.0.0 backward compatibility contract. DO NOT MODIFY — changes here must follow the migration process in migrations.js. This file is the source of truth for the test/test_backward_compat.mjs test suite.",
   "version": "1.1.9",
-
   "api": {
     "health": {
-      "GET /api/health": { "auth": false, "returns": ["status", "version", "timestamp", "uptime", "hostname", "platform", "nodeVersion", "activeJobs", "runningJobs", "memory", "pid", "upgradeBridge"] },
-      "GET /api/health/details": { "auth": true, "returns": ["status", "version", "timestamp", "uptime", "hostname", "platform", "nodeVersion", "activeJobs", "runningJobs", "memory", "pid", "upgradeBridge"] }
+      "GET /api/health": {
+        "auth": false,
+        "returns": [
+          "status",
+          "version",
+          "timestamp",
+          "uptime",
+          "hostname",
+          "platform",
+          "nodeVersion",
+          "activeJobs",
+          "runningJobs",
+          "memory",
+          "pid",
+          "upgradeBridge"
+        ]
+      },
+      "GET /api/health/details": {
+        "auth": true,
+        "returns": [
+          "status",
+          "version",
+          "timestamp",
+          "uptime",
+          "hostname",
+          "platform",
+          "nodeVersion",
+          "activeJobs",
+          "runningJobs",
+          "memory",
+          "pid",
+          "upgradeBridge"
+        ]
+      }
     },
     "auth": {
-      "GET /api/auth/status": { "auth": false },
-      "POST /api/auth/bootstrap": { "auth": false },
-      "POST /api/auth/login": { "auth": false },
-      "POST /api/auth/recover": { "auth": false },
-      "GET /api/auth/session": { "auth": true },
-      "POST /api/auth/logout": { "auth": true },
-      "POST /api/auth/password": { "auth": true },
-      "GET /api/auth/users": { "auth": true },
-      "POST /api/auth/users": { "auth": true },
-      "PUT /api/auth/users/:id": { "auth": true },
-      "POST /api/auth/users/:id/revoke-sessions": { "auth": true },
-      "GET /api/auth/audit": { "auth": true }
+      "GET /api/auth/status": {
+        "auth": false
+      },
+      "POST /api/auth/bootstrap": {
+        "auth": false
+      },
+      "POST /api/auth/login": {
+        "auth": false
+      },
+      "POST /api/auth/recover": {
+        "auth": false
+      },
+      "GET /api/auth/session": {
+        "auth": true
+      },
+      "POST /api/auth/logout": {
+        "auth": true
+      },
+      "POST /api/auth/password": {
+        "auth": true
+      },
+      "GET /api/auth/users": {
+        "auth": true
+      },
+      "POST /api/auth/users": {
+        "auth": true
+      },
+      "PUT /api/auth/users/:id": {
+        "auth": true
+      },
+      "POST /api/auth/users/:id/revoke-sessions": {
+        "auth": true
+      },
+      "GET /api/auth/audit": {
+        "auth": true
+      }
     },
     "ssd-backup": {
-      "GET /api/ssd-backup/shares": { "auth": true },
-      "GET /api/ssd-backup/browse": { "auth": true, "query": ["path"] },
-      "GET /api/ssd-backup/configs": { "auth": true },
-      "GET /api/ssd-backup/configs/:id": { "auth": true },
-      "POST /api/ssd-backup/configs": { "auth": true },
-      "PUT /api/ssd-backup/configs/:id": { "auth": true },
-      "DELETE /api/ssd-backup/configs/:id": { "auth": true },
-      "POST /api/ssd-backup/configs/:id/run": { "auth": true },
-      "POST /api/ssd-backup/runs/:id/cancel": { "auth": true },
-      "GET /api/ssd-backup/runs": { "auth": true, "query": ["page", "limit", "config_id"] },
-      "GET /api/ssd-backup/runs/:id": { "auth": true },
-      "GET /api/ssd-backup/runs/:id/progress": { "auth": true },
-      "POST /api/ssd-backup/configs/:id/prune": { "auth": true },
-      "GET /api/ssd-backup/configs/:id/snapshots": { "auth": true },
-      "GET /api/ssd-backup/configs/:id/browse": { "auth": true, "query": ["timestamp", "path"] },
-      "GET /api/ssd-backup/configs/:id/download": { "auth": true, "query": ["timestamp", "path", "inline"] },
-      "POST /api/ssd-backup/configs/:id/restore": { "auth": true },
-      "POST /api/ssd-backup/configs/:id/verify-versions": { "auth": true },
-      "GET /api/ssd-backup/verification-runs/:id": { "auth": true },
-      "POST /api/ssd-backup/verification-runs/:id/cancel": { "auth": true }
+      "GET /api/ssd-backup/shares": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/browse": {
+        "auth": true,
+        "query": [
+          "path"
+        ]
+      },
+      "GET /api/ssd-backup/configs": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/configs/:id": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/configs": {
+        "auth": true
+      },
+      "PUT /api/ssd-backup/configs/:id": {
+        "auth": true
+      },
+      "DELETE /api/ssd-backup/configs/:id": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/configs/:id/run": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/runs/:id/cancel": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/runs": {
+        "auth": true,
+        "query": [
+          "page",
+          "limit",
+          "config_id"
+        ]
+      },
+      "GET /api/ssd-backup/runs/:id": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/runs/:id/progress": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/configs/:id/prune": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/configs/:id/snapshots": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/configs/:id/browse": {
+        "auth": true,
+        "query": [
+          "timestamp",
+          "path"
+        ]
+      },
+      "GET /api/ssd-backup/configs/:id/download": {
+        "auth": true,
+        "query": [
+          "timestamp",
+          "path",
+          "inline"
+        ]
+      },
+      "POST /api/ssd-backup/configs/:id/restore": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/configs/:id/verify-versions": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/verification-runs/:id": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/verification-runs/:id/cancel": {
+        "auth": true
+      }
     },
     "hyper-backup": {
-      "GET /api/hyper-backup/jobs": { "auth": true },
-      "GET /api/hyper-backup/jobs/:id": { "auth": true },
-      "POST /api/hyper-backup/jobs": { "auth": true },
-      "PUT /api/hyper-backup/jobs/:id": { "auth": true },
-      "DELETE /api/hyper-backup/jobs/:id": { "auth": true },
-      "POST /api/hyper-backup/jobs/:id/run": { "auth": true },
-      "POST /api/hyper-backup/runs/:id/cancel": { "auth": true },
-      "POST /api/hyper-backup/test-connection": { "auth": true },
-      "GET /api/hyper-backup/remote-browse": { "auth": true, "query": ["remote_url", "dir"] },
-      "GET /api/hyper-backup/remote-roots": { "auth": true, "query": ["remote_url"] },
-      "GET /api/hyper-backup/remote-shares": { "auth": true, "query": ["remote_url"] },
-      "GET /api/hyper-backup/runs": { "auth": true, "query": ["page", "limit", "job_id"] },
-      "GET /api/hyper-backup/runs/:id": { "auth": true }
-      ,"GET /api/hyper-backup/runs/:id/progress": { "auth": true }
+      "GET /api/hyper-backup/jobs": {
+        "auth": true
+      },
+      "GET /api/hyper-backup/jobs/:id": {
+        "auth": true
+      },
+      "POST /api/hyper-backup/jobs": {
+        "auth": true
+      },
+      "PUT /api/hyper-backup/jobs/:id": {
+        "auth": true
+      },
+      "DELETE /api/hyper-backup/jobs/:id": {
+        "auth": true
+      },
+      "POST /api/hyper-backup/jobs/:id/run": {
+        "auth": true
+      },
+      "POST /api/hyper-backup/runs/:id/cancel": {
+        "auth": true
+      },
+      "POST /api/hyper-backup/test-connection": {
+        "auth": true
+      },
+      "GET /api/hyper-backup/remote-browse": {
+        "auth": true,
+        "query": [
+          "remote_url",
+          "dir"
+        ]
+      },
+      "GET /api/hyper-backup/remote-roots": {
+        "auth": true,
+        "query": [
+          "remote_url"
+        ]
+      },
+      "GET /api/hyper-backup/remote-shares": {
+        "auth": true,
+        "query": [
+          "remote_url"
+        ]
+      },
+      "GET /api/hyper-backup/runs": {
+        "auth": true,
+        "query": [
+          "page",
+          "limit",
+          "job_id"
+        ]
+      },
+      "GET /api/hyper-backup/runs/:id": {
+        "auth": true
+      },
+      "GET /api/hyper-backup/runs/:id/progress": {
+        "auth": true
+      }
     },
     "rclone": {
-      "GET /api/rclone/remotes": { "auth": true },
-      "GET /api/rclone/remote/:name/ls": { "auth": true, "query": ["path"] },
-      "GET /api/rclone/jobs": { "auth": true },
-      "GET /api/rclone/jobs/:id": { "auth": true },
-      "POST /api/rclone/jobs": { "auth": true },
-      "PUT /api/rclone/jobs/:id": { "auth": true },
-      "DELETE /api/rclone/jobs/:id": { "auth": true },
-      "POST /api/rclone/jobs/:id/run": { "auth": true },
-      "POST /api/rclone/runs/:id/cancel": { "auth": true },
-      "GET /api/rclone/runs": { "auth": true, "query": ["page", "limit", "job_id"] },
-      "GET /api/rclone/runs/:id": { "auth": true },
-      "GET /api/rclone/runs/:id/progress": { "auth": true },
-      "GET /api/rclone/providers": { "auth": true },
-      "GET /api/rclone/remotes/:name/config": { "auth": true },
-      "POST /api/rclone/remotes": { "auth": true },
-      "PUT /api/rclone/remotes/:name": { "auth": true },
-      "DELETE /api/rclone/remotes/:name": { "auth": true },
-      "POST /api/rclone/remotes/:name/test": { "auth": true }
+      "GET /api/rclone/remotes": {
+        "auth": true
+      },
+      "GET /api/rclone/remote/:name/ls": {
+        "auth": true,
+        "query": [
+          "path"
+        ]
+      },
+      "GET /api/rclone/jobs": {
+        "auth": true
+      },
+      "GET /api/rclone/jobs/:id": {
+        "auth": true
+      },
+      "POST /api/rclone/jobs": {
+        "auth": true
+      },
+      "PUT /api/rclone/jobs/:id": {
+        "auth": true
+      },
+      "DELETE /api/rclone/jobs/:id": {
+        "auth": true
+      },
+      "POST /api/rclone/jobs/:id/run": {
+        "auth": true
+      },
+      "POST /api/rclone/runs/:id/cancel": {
+        "auth": true
+      },
+      "GET /api/rclone/runs": {
+        "auth": true,
+        "query": [
+          "page",
+          "limit",
+          "job_id"
+        ]
+      },
+      "GET /api/rclone/runs/:id": {
+        "auth": true
+      },
+      "GET /api/rclone/runs/:id/progress": {
+        "auth": true
+      },
+      "GET /api/rclone/providers": {
+        "auth": true
+      },
+      "GET /api/rclone/remotes/:name/config": {
+        "auth": true
+      },
+      "POST /api/rclone/remotes": {
+        "auth": true
+      },
+      "PUT /api/rclone/remotes/:name": {
+        "auth": true
+      },
+      "DELETE /api/rclone/remotes/:name": {
+        "auth": true
+      },
+      "POST /api/rclone/remotes/:name/test": {
+        "auth": true
+      }
     },
     "docker": {
-      "GET /api/docker/status": { "auth": true },
-      "GET /api/docker/containers": { "auth": true },
-      "POST /api/docker/containers/:id/:action": { "auth": true },
-      "GET /api/docker/containers/:id/stats": { "auth": true },
-      "GET /api/docker/containers/:id/metrics": { "auth": true, "query": ["hours"] }
+      "GET /api/docker/status": {
+        "auth": true
+      },
+      "GET /api/docker/containers": {
+        "auth": true
+      },
+      "POST /api/docker/containers/:id/:action": {
+        "auth": true
+      },
+      "GET /api/docker/containers/:id/stats": {
+        "auth": true
+      },
+      "GET /api/docker/containers/:id/metrics": {
+        "auth": true,
+        "query": [
+          "hours"
+        ]
+      }
     },
     "media-import": {
-      "GET /api/media-import/drives": { "auth": true },
-      "GET /api/media-import/drives/known": { "auth": true },
-      "GET /api/media-import/drives/:id": { "auth": true },
-      "PUT /api/media-import/drives/:id": { "auth": true },
-      "POST /api/media-import/drives/:id/scan": { "auth": true },
-      "GET /api/media-import/drives/:id/scan": { "auth": true },
-      "POST /api/media-import/drives/:id/import": { "auth": true },
-      "GET /api/media-import/runs/:id/progress": { "auth": true },
-      "POST /api/media-import/runs/:id/cancel": { "auth": true },
-      "GET /api/media-import/runs": { "auth": true, "query": ["page", "drive_id"] },
-      "GET /api/media-import/runs/:id": { "auth": true },
-      "GET /api/media-import/runs/:id/files": { "auth": true, "query": ["action"] },
-      "POST /api/media-import/drives/:id/eject": { "auth": true },
-      "POST /api/media-import/test-immich": { "auth": true },
-      "GET /api/media-import/status": { "auth": true }
+      "GET /api/media-import/drives": {
+        "auth": true
+      },
+      "GET /api/media-import/drives/known": {
+        "auth": true
+      },
+      "GET /api/media-import/drives/:id": {
+        "auth": true
+      },
+      "PUT /api/media-import/drives/:id": {
+        "auth": true
+      },
+      "POST /api/media-import/drives/:id/scan": {
+        "auth": true
+      },
+      "GET /api/media-import/drives/:id/scan": {
+        "auth": true
+      },
+      "POST /api/media-import/drives/:id/import": {
+        "auth": true
+      },
+      "GET /api/media-import/runs/:id/progress": {
+        "auth": true
+      },
+      "POST /api/media-import/runs/:id/cancel": {
+        "auth": true
+      },
+      "GET /api/media-import/runs": {
+        "auth": true,
+        "query": [
+          "page",
+          "drive_id"
+        ]
+      },
+      "GET /api/media-import/runs/:id": {
+        "auth": true
+      },
+      "GET /api/media-import/runs/:id/files": {
+        "auth": true,
+        "query": [
+          "action"
+        ]
+      },
+      "POST /api/media-import/drives/:id/eject": {
+        "auth": true
+      },
+      "POST /api/media-import/test-immich": {
+        "auth": true
+      },
+      "GET /api/media-import/status": {
+        "auth": true
+      }
     },
     "settings": {
-      "GET /api/settings/public": { "auth": true },
-      "GET /api/settings": { "auth": true },
-      "PUT /api/settings": { "auth": true },
-      "POST /api/settings/ntfy-test": { "auth": true },
-      "POST /api/settings/browser-notify-test": { "auth": true },
-      "GET /api/settings/ssh/status": { "auth": true },
-      "POST /api/settings/ssh/generate": { "auth": true },
-      "POST /api/settings/ssh/authorize-localhost": { "auth": true },
-      "POST /api/settings/ssh/test": { "auth": true },
-      "POST /api/settings/db/backup": { "auth": true },
-      "POST /api/settings/db/backup-all": { "auth": true },
-      "GET /api/settings/db/backups": { "auth": true, "query": ["dest_path"] },
-      "GET /api/settings/db/recovery-scan": { "auth": true, "query": ["paths"] },
-      "GET /api/settings/db/recovery-info": { "auth": true, "query": ["dest_path"] },
-      "POST /api/settings/db/restore": { "auth": true },
-      "GET /api/settings/notifications/stream": { "auth": true }
+      "GET /api/settings/public": {
+        "auth": true
+      },
+      "GET /api/settings": {
+        "auth": true
+      },
+      "PUT /api/settings": {
+        "auth": true
+      },
+      "POST /api/settings/ntfy-test": {
+        "auth": true
+      },
+      "POST /api/settings/browser-notify-test": {
+        "auth": true
+      },
+      "GET /api/settings/ssh/status": {
+        "auth": true
+      },
+      "POST /api/settings/ssh/generate": {
+        "auth": true
+      },
+      "POST /api/settings/ssh/authorize-localhost": {
+        "auth": true
+      },
+      "POST /api/settings/ssh/test": {
+        "auth": true
+      },
+      "POST /api/settings/db/backup": {
+        "auth": true
+      },
+      "POST /api/settings/db/backup-all": {
+        "auth": true
+      },
+      "GET /api/settings/db/backups": {
+        "auth": true,
+        "query": [
+          "dest_path"
+        ]
+      },
+      "GET /api/settings/db/recovery-scan": {
+        "auth": true,
+        "query": [
+          "paths"
+        ]
+      },
+      "GET /api/settings/db/recovery-info": {
+        "auth": true,
+        "query": [
+          "dest_path"
+        ]
+      },
+      "POST /api/settings/db/restore": {
+        "auth": true
+      },
+      "GET /api/settings/notifications/stream": {
+        "auth": true
+      }
     },
     "peers": {
-      "GET /api/peers": { "auth": true },
-      "GET /api/peers/connectivity": { "auth": true },
-      "POST /api/peers": { "auth": true },
-      "GET /api/peers/:id": { "auth": true },
-      "PUT /api/peers/:id": { "auth": true },
-      "DELETE /api/peers/:id": { "auth": true },
-      "POST /api/peers/:id/regenerate-key": { "auth": true },
-      "GET /api/peers/:id/audit-log": { "auth": true, "query": ["page", "limit"] },
-      "GET /api/peers/audit-log/all": { "auth": true, "query": ["page", "limit"] },
-      "POST /api/peers/pair": { "auth": true, "body": ["remote_url", "reciprocal_offer"] },
-      "GET /api/peers/pair/incoming": { "auth": true },
-      "GET /api/peers/pair/history": { "auth": true },
-      "GET /api/peers/pair/status/:id": { "auth": true },
-      "POST /api/peers/pair/:id/accept": { "auth": true, "body": ["allowed_path_prefix", "storage_limit_bytes", "confirmed_fingerprint", "accept_reciprocal"] },
-      "POST /api/peers/pair/:id/decline": { "auth": true }
-      ,"DELETE /api/peers/pair/:id": { "auth": true }
-      ,"POST /api/peers/pair/sync": { "auth": true }
+      "GET /api/peers": {
+        "auth": true
+      },
+      "GET /api/peers/connectivity": {
+        "auth": true
+      },
+      "POST /api/peers": {
+        "auth": true
+      },
+      "GET /api/peers/:id": {
+        "auth": true
+      },
+      "PUT /api/peers/:id": {
+        "auth": true
+      },
+      "DELETE /api/peers/:id": {
+        "auth": true
+      },
+      "POST /api/peers/:id/regenerate-key": {
+        "auth": true
+      },
+      "GET /api/peers/:id/audit-log": {
+        "auth": true,
+        "query": [
+          "page",
+          "limit"
+        ]
+      },
+      "GET /api/peers/audit-log/all": {
+        "auth": true,
+        "query": [
+          "page",
+          "limit"
+        ]
+      },
+      "POST /api/peers/pair": {
+        "auth": true,
+        "body": [
+          "remote_url",
+          "reciprocal_offer"
+        ]
+      },
+      "GET /api/peers/pair/incoming": {
+        "auth": true
+      },
+      "GET /api/peers/pair/history": {
+        "auth": true
+      },
+      "GET /api/peers/pair/status/:id": {
+        "auth": true
+      },
+      "POST /api/peers/pair/:id/accept": {
+        "auth": true,
+        "body": [
+          "allowed_path_prefix",
+          "storage_limit_bytes",
+          "confirmed_fingerprint",
+          "accept_reciprocal"
+        ]
+      },
+      "POST /api/peers/pair/:id/decline": {
+        "auth": true
+      },
+      "DELETE /api/peers/pair/:id": {
+        "auth": true
+      },
+      "POST /api/peers/pair/sync": {
+        "auth": true
+      }
     },
     "overview": {
-      "GET /api/overview/summary": { "auth": true }
+      "GET /api/overview/summary": {
+        "auth": true
+      }
     },
     "filesystem": {
-      "GET /api/filesystem/browse": { "auth": true, "query": ["dir"] },
-      "GET /api/filesystem/roots": { "auth": true }
+      "GET /api/filesystem/browse": {
+        "auth": true,
+        "query": [
+          "dir"
+        ]
+      },
+      "GET /api/filesystem/roots": {
+        "auth": true
+      }
     },
     "discovery": {
-      "GET /api/discovery/subnets": { "auth": true, "query": ["refresh"] },
-      "GET /api/discovery/peers": { "auth": true, "query": ["refresh"] },
-      "GET /api/discovery/immich": { "auth": true, "query": ["refresh"] },
-      "POST /api/discovery/clear-cache": { "auth": true }
+      "GET /api/discovery/subnets": {
+        "auth": true,
+        "query": [
+          "refresh"
+        ]
+      },
+      "GET /api/discovery/peers": {
+        "auth": true,
+        "query": [
+          "refresh"
+        ]
+      },
+      "GET /api/discovery/immich": {
+        "auth": true,
+        "query": [
+          "refresh"
+        ]
+      },
+      "POST /api/discovery/clear-cache": {
+        "auth": true
+      }
     },
     "upgrade-readiness": {
-      "GET /api/upgrade-readiness": { "auth": true },
-      "POST /api/upgrade-readiness/backup": { "auth": true, "role": "admin" },
-      "POST /api/upgrade-readiness/remediate": { "auth": true, "role": "admin" },
-      "POST /api/upgrade-readiness/host-plan": { "auth": true, "role": "admin" },
-      "POST /api/upgrade-readiness/final-config": { "auth": true, "role": "admin" }
+      "GET /api/upgrade-readiness": {
+        "auth": true
+      },
+      "POST /api/upgrade-readiness/backup": {
+        "auth": true,
+        "role": "admin"
+      },
+      "POST /api/upgrade-readiness/remediate": {
+        "auth": true,
+        "role": "admin"
+      },
+      "POST /api/upgrade-readiness/host-plan": {
+        "auth": true,
+        "role": "admin"
+      },
+      "POST /api/upgrade-readiness/final-config": {
+        "auth": true,
+        "role": "admin"
+      }
+    },
+    "external-jobs": {
+      "POST /api/external-jobs/heartbeat/:slug": {
+        "auth": false,
+        "note": "Per-job bearer token in the Authorization header",
+        "body": [
+          "status",
+          "exit_code",
+          "duration_seconds",
+          "message"
+        ]
+      },
+      "GET /api/external-jobs": {
+        "auth": true
+      },
+      "POST /api/external-jobs": {
+        "auth": true,
+        "body": [
+          "slug",
+          "name",
+          "host",
+          "cron_expression",
+          "grace_seconds",
+          "enabled"
+        ]
+      },
+      "GET /api/external-jobs/runs": {
+        "auth": true,
+        "query": [
+          "job_id",
+          "page",
+          "limit"
+        ]
+      },
+      "GET /api/external-jobs/:id": {
+        "auth": true
+      },
+      "PUT /api/external-jobs/:id": {
+        "auth": true,
+        "body": [
+          "name",
+          "host",
+          "cron_expression",
+          "grace_seconds",
+          "enabled"
+        ]
+      },
+      "DELETE /api/external-jobs/:id": {
+        "auth": true
+      },
+      "POST /api/external-jobs/:id/regenerate-token": {
+        "auth": true
+      }
+    },
+    "events": {
+      "GET /api/events": {
+        "auth": true,
+        "query": [
+          "severity",
+          "category",
+          "type",
+          "since",
+          "page",
+          "limit"
+        ]
+      },
+      "GET /api/events/summary": {
+        "auth": true,
+        "query": [
+          "since"
+        ]
+      }
+    },
+    "status": {
+      "GET /api/status": {
+        "auth": true
+      }
     }
   },
-
   "peerApi": {
-    "GET /peer/discover": { "auth": false, "returns": ["service", "instance", "version", "hostname"] },
-    "POST /peer/pair/request": { "auth": false, "body": ["version", "role", "instance", "token", "ephemeral_pubkey", "static_pubkey", "signature", "ssh_public_key", "callback_url", "reciprocal_offer"] },
-    "POST /peer/pair/callback": { "auth": false, "body": ["version", "role", "token", "request_static_pubkey", "ephemeral_pubkey", "static_pubkey", "signature", "encrypted_payload", "nonce"] },
-    "GET /peer/health": { "returns": ["ok", "instance", "version", "timestamp"] },
-    "POST /peer/backup/prepare": { "body": ["direction", "remotePath", "runId"] },
-    "POST /peer/backup/complete": { "body": ["runId", "status"] },
+    "GET /peer/discover": {
+      "auth": false,
+      "returns": [
+        "service",
+        "instance",
+        "version",
+        "hostname"
+      ]
+    },
+    "POST /peer/pair/request": {
+      "auth": false,
+      "body": [
+        "version",
+        "role",
+        "instance",
+        "token",
+        "ephemeral_pubkey",
+        "static_pubkey",
+        "signature",
+        "ssh_public_key",
+        "callback_url",
+        "reciprocal_offer"
+      ]
+    },
+    "POST /peer/pair/callback": {
+      "auth": false,
+      "body": [
+        "version",
+        "role",
+        "token",
+        "request_static_pubkey",
+        "ephemeral_pubkey",
+        "static_pubkey",
+        "signature",
+        "encrypted_payload",
+        "nonce"
+      ]
+    },
+    "GET /peer/health": {
+      "returns": [
+        "ok",
+        "instance",
+        "version",
+        "timestamp"
+      ]
+    },
+    "POST /peer/backup/prepare": {
+      "body": [
+        "direction",
+        "remotePath",
+        "runId"
+      ]
+    },
+    "POST /peer/backup/complete": {
+      "body": [
+        "runId",
+        "status"
+      ]
+    },
     "GET /peer/backup/status/:runId": {},
     "POST /peer/shutdown": {},
     "GET /peer/storage": {},
-    "GET /peer/browse": { "query": ["dir"] },
+    "GET /peer/browse": {
+      "query": [
+        "dir"
+      ]
+    },
     "GET /peer/roots": {},
     "GET /peer/shares": {}
   },
-
   "database": {
     "settings": {
       "columns": {
@@ -461,73 +975,535 @@
         "updated_at": "TEXT",
         "expires_at": "TEXT"
       }
+    },
+    "external_jobs": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "slug": "TEXT NOT NULL UNIQUE",
+        "name": "TEXT NOT NULL",
+        "host": "TEXT",
+        "cron_expression": "TEXT",
+        "grace_seconds": "INTEGER NOT NULL DEFAULT 900",
+        "enabled": "INTEGER NOT NULL DEFAULT 1",
+        "ingest_token_hash": "TEXT NOT NULL",
+        "last_reported_at": "TEXT",
+        "created_at": "TEXT NOT NULL",
+        "updated_at": "TEXT NOT NULL"
+      }
+    },
+    "external_job_runs": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "job_id": "INTEGER NOT NULL",
+        "status": "TEXT NOT NULL",
+        "exit_code": "INTEGER",
+        "duration_seconds": "INTEGER",
+        "message": "TEXT",
+        "reported_at": "TEXT NOT NULL"
+      }
+    },
+    "events": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "type": "TEXT NOT NULL",
+        "category": "TEXT NOT NULL",
+        "severity": "TEXT NOT NULL",
+        "subject": "TEXT",
+        "title": "TEXT NOT NULL",
+        "body": "TEXT",
+        "detail": "TEXT",
+        "created_at": "TEXT NOT NULL"
+      }
     }
   },
-
   "services": {
-    "authConfig": ["getAuthConfig", "authConfig"],
-    "authService": ["normalizeUsername", "validatePassword", "normalizeProxyIdentity", "auditAuthEvent", "getAuthUserCount", "getLocalUserCount", "bootstrapAdmin", "createLocalUser", "authenticateLocalUser", "createSession", "findActiveSession", "verifySessionCsrf", "revokeSession", "revokeUserSessions", "revokeSessionsAfterDatabaseRestore", "resolveProxyAccount", "issueRecoveryToken", "resetPasswordWithRecovery", "changeLocalPassword", "updateAuthUser", "listAuthUsers", "promoteLocalAdminForRecovery", "provisionProxyAccount"],
-    "sessionCookies": ["parseCookies", "setSessionCookies", "clearSessionCookies", "getSessionCookie", "getCsrfCookie"],
-    "routePermissions": ["PERMISSIONS", "API_ROUTE_POLICIES", "getRoutePermission", "authorizeApiRoute"],
-    "rsync": ["getActiveRun", "executeSsdBackup", "parseItemizeAction", "runRsyncWithSsh", "killActiveRsyncProcesses", "stopActiveRsyncProcesses"],
-    "rsyncOutput": ["appendOutputTail", "cleanRsyncLine", "parseItemizeAction", "parseProgressLine", "parseProgress2Line", "createRsyncOutputProcessor"],
-    "runLifecycle": ["normalizePagination", "startClaimedRun", "getFeatureRun", "listFeatureRuns", "getRunProgress", "getRunDetail", "cancelFeatureRun"],
-    "runStatus": ["isCancelledRun", "resolveMediaImportStatus"],
-    "runtimeConfig": ["getRuntimeConfig", "requirePeerHost", "runtimeConfig"],
-    "resourceBudget": ["getRuntimeResourceBudget"],
-    "storageConfig": ["getStorageConfig", "getAvailableStorageRoots", "storageConfig"],
-    "peerSshAuthorization": ["reconcilePeerSshAuthorization", "reconcilePeerSshAuthorizationsAtStartup"],
-    "peerUrlPolicy": ["validatePrivatePeerHost", "validatePrivatePeerBaseUrl", "validateSignedCallbackUrl"],
-    "peerSecrets": ["PEER_SECRET_MIGRATION_MAX_ROWS", "PEER_SECRET_MIGRATION_MIN_FREE_BYTES", "assertPeerSecretMigrationBounded", "hashPeerApiKey", "encryptedPeerKeyMarker", "hashedPeerKeyMarker", "encryptPeerApiKey", "decryptPeerApiKey", "migratePeerSecrets"],
-    "httpPolicy": ["fetchWithoutRedirect"],
-    "dockerClient": ["createDockerClient", "executeDockerControlAction"],
-    "snapshotPathPolicy": ["validateSnapshotTimestamp", "normalizeSnapshotRelativePath", "resolveExistingSnapshotPath", "resolveSnapshotRoot", "prepareRestoreDestination"],
-    "hyperBackup": ["getActiveHyperRun", "buildHyperSshCommand", "resolveHyperRemotePath", "resolveHyperSshTarget", "executeHyperBackup", "testPeerConnection", "browsePeerDirectory", "getPeerRoots", "getPeerShares", "notifyPeersOfShutdown"],
-    "rclone": ["getActiveRcloneRun", "listRemotes", "browseRemote", "validateRcloneJobInput", "executeRcloneJob", "createRcloneLogProcessor", "stopActiveRcloneProcesses", "getProviderTypes", "getRemoteConfig", "createRemote", "updateRemote", "deleteRemote", "testRemote", "redactSensitive"],
-    "docker": ["listContainers", "containerAction", "getContainerStats", "startMetricsPoller", "stopMetricsPoller", "getMetrics", "isDockerAvailable"],
-    "scheduler": ["registerExecutor", "startScheduler", "scheduleJob", "removeJob", "stopAllJobs", "startRunFileRetention", "stopRunFileRetention", "getNextRun", "getActiveJobCount", "getRunningJobCount", "getSkipStatus", "getJobSkipCount", "isJobRunning"],
-    "driveMonitor": ["detectDrives", "startDriveMonitor", "stopDriveMonitor", "isDriveMounted", "getConnectedDrives"],
-    "driveScanner": ["startScan", "getScanProgress", "clearScan"],
-    "immichImport": ["getActiveImport", "testImmichConnection", "isImmichGoAvailable", "startImport", "stopActiveImportProcesses", "isEjectSupported", "ejectDrive"],
-    "immichRetry": ["createImmichRetryDirectory", "removeImmichRetryDirectory"],
-    "immichFailureSummary": ["summarizeImmichGoFailure"],
-    "versionBrowser": ["listSnapshots", "browseSnapshot", "resolveFilePath", "restoreFile", "pruneVersions"],
-    "deltaVersion": ["withConfigLock", "registerTempFile", "cleanupTempFile", "cleanupOrphanedTempFiles", "startTempCleanup", "stopTempCleanup", "readManifest", "deltaifySnapshot", "rebaseDeltas", "rebaseDeltasWithTimestamp", "reconstructFile", "getChainLength", "verifyDeltaChain", "promoteDeltaToFull", "computeVersionStats", "getCachedVersionStats", "getAllCachedVersionStats"],
-    "versionVerification": ["getActiveVersionVerification", "startVersionVerification", "cancelVersionVerification", "stopActiveVersionVerifications"],
-    "quotaUsage": ["getQuotaUsage", "invalidateQuotaUsage", "markQuotaUsageStale"],
-    "databaseRetention": ["getDatabaseRetentionPolicy", "pruneDatabaseTelemetry", "runDatabaseRetentionBatches"],
-    "jobHealth": ["getJobHealth"],
-    "excludePolicy": ["normalizeExcludePatterns", "listExcludePatterns"],
-    "notify": ["sendNotification", "sendBrowser", "notifyJobStarted", "notifyJobCompleted", "notifyJobPartial", "notifyJobError", "notifyJobCancelled", "notifyJobSkipped", "notifyJobProgress", "createJobNotificationTracker", "notifyDriveAttached", "notifyDriveEjected", "notifyDriveLost", "notifyDriveScanStarted", "notifyDriveScanCompleted", "notifyImportStarted", "notifyImportCompleted", "notifyImportError", "notifyBackupResult", "sendTestNtfy", "sendTestBrowser", "addBrowserSubscriber", "removeBrowserSubscriber"],
-    "sshManager": ["hasKey", "getIdentityPath", "getPublicKey", "generateKey", "authorizeLocalhost", "authorizeKey", "revokeKey", "replaceKeyAuthorization", "testSshConnection", "getSshStatus"],
-    "sshConnectionPolicy": ["validateSshConnectionTarget"],
-    "unraid": ["getShares", "browsePath"],
-    "discovery": ["discoverPeers", "discoverImmich", "clearDiscoveryCache", "getDetectedSubnets"],
-    "pairing": ["initiatePairing", "getOutgoingPairingStatus", "handlePairingCallback", "receiveRequest", "getPendingIncoming", "getAllPairingRequests", "acceptPairing", "declinePairing"],
-    "callbackAddress": ["resolveCallbackUrl", "detectInterfaceCallbackIp"],
-    "pairingIngress": ["MAX_ACTIVE_INCOMING_PAIRINGS", "MAX_INCOMING_PAIRING_ROWS", "storeIncomingPairingRequest"],
-    "upgradeReadiness": ["assessUpgradeReadiness", "createUpgradeBackup", "remediateUpgradeIssue", "createHostPreparationPlan", "createFinalConfiguration", "UPGRADE_BRIDGE_VERSION"]
+    "authConfig": [
+      "getAuthConfig",
+      "authConfig"
+    ],
+    "authService": [
+      "normalizeUsername",
+      "validatePassword",
+      "normalizeProxyIdentity",
+      "auditAuthEvent",
+      "getAuthUserCount",
+      "getLocalUserCount",
+      "bootstrapAdmin",
+      "createLocalUser",
+      "authenticateLocalUser",
+      "createSession",
+      "findActiveSession",
+      "verifySessionCsrf",
+      "revokeSession",
+      "revokeUserSessions",
+      "revokeSessionsAfterDatabaseRestore",
+      "resolveProxyAccount",
+      "issueRecoveryToken",
+      "resetPasswordWithRecovery",
+      "changeLocalPassword",
+      "updateAuthUser",
+      "listAuthUsers",
+      "promoteLocalAdminForRecovery",
+      "provisionProxyAccount"
+    ],
+    "sessionCookies": [
+      "parseCookies",
+      "setSessionCookies",
+      "clearSessionCookies",
+      "getSessionCookie",
+      "getCsrfCookie"
+    ],
+    "routePermissions": [
+      "PERMISSIONS",
+      "API_ROUTE_POLICIES",
+      "getRoutePermission",
+      "authorizeApiRoute"
+    ],
+    "rsync": [
+      "getActiveRun",
+      "executeSsdBackup",
+      "parseItemizeAction",
+      "runRsyncWithSsh",
+      "killActiveRsyncProcesses",
+      "stopActiveRsyncProcesses"
+    ],
+    "rsyncOutput": [
+      "appendOutputTail",
+      "cleanRsyncLine",
+      "parseItemizeAction",
+      "parseProgressLine",
+      "parseProgress2Line",
+      "createRsyncOutputProcessor"
+    ],
+    "runLifecycle": [
+      "normalizePagination",
+      "startClaimedRun",
+      "getFeatureRun",
+      "listFeatureRuns",
+      "getRunProgress",
+      "getRunDetail",
+      "cancelFeatureRun"
+    ],
+    "runStatus": [
+      "isCancelledRun",
+      "resolveMediaImportStatus"
+    ],
+    "runtimeConfig": [
+      "getRuntimeConfig",
+      "requirePeerHost",
+      "runtimeConfig"
+    ],
+    "resourceBudget": [
+      "getRuntimeResourceBudget"
+    ],
+    "storageConfig": [
+      "getStorageConfig",
+      "getAvailableStorageRoots",
+      "storageConfig"
+    ],
+    "peerSshAuthorization": [
+      "reconcilePeerSshAuthorization",
+      "reconcilePeerSshAuthorizationsAtStartup"
+    ],
+    "peerUrlPolicy": [
+      "validatePrivatePeerHost",
+      "validatePrivatePeerBaseUrl",
+      "validateSignedCallbackUrl"
+    ],
+    "peerSecrets": [
+      "PEER_SECRET_MIGRATION_MAX_ROWS",
+      "PEER_SECRET_MIGRATION_MIN_FREE_BYTES",
+      "assertPeerSecretMigrationBounded",
+      "hashPeerApiKey",
+      "encryptedPeerKeyMarker",
+      "hashedPeerKeyMarker",
+      "encryptPeerApiKey",
+      "decryptPeerApiKey",
+      "migratePeerSecrets"
+    ],
+    "httpPolicy": [
+      "fetchWithoutRedirect"
+    ],
+    "dockerClient": [
+      "createDockerClient",
+      "executeDockerControlAction"
+    ],
+    "snapshotPathPolicy": [
+      "validateSnapshotTimestamp",
+      "normalizeSnapshotRelativePath",
+      "resolveExistingSnapshotPath",
+      "resolveSnapshotRoot",
+      "prepareRestoreDestination"
+    ],
+    "hyperBackup": [
+      "getActiveHyperRun",
+      "buildHyperSshCommand",
+      "resolveHyperRemotePath",
+      "resolveHyperSshTarget",
+      "executeHyperBackup",
+      "testPeerConnection",
+      "browsePeerDirectory",
+      "getPeerRoots",
+      "getPeerShares",
+      "notifyPeersOfShutdown"
+    ],
+    "rclone": [
+      "getActiveRcloneRun",
+      "listRemotes",
+      "browseRemote",
+      "validateRcloneJobInput",
+      "executeRcloneJob",
+      "createRcloneLogProcessor",
+      "stopActiveRcloneProcesses",
+      "getProviderTypes",
+      "getRemoteConfig",
+      "createRemote",
+      "updateRemote",
+      "deleteRemote",
+      "testRemote",
+      "redactSensitive"
+    ],
+    "docker": [
+      "listContainers",
+      "containerAction",
+      "getContainerStats",
+      "startMetricsPoller",
+      "stopMetricsPoller",
+      "getMetrics",
+      "isDockerAvailable"
+    ],
+    "scheduler": [
+      "registerExecutor",
+      "startScheduler",
+      "scheduleJob",
+      "removeJob",
+      "stopAllJobs",
+      "startRunFileRetention",
+      "stopRunFileRetention",
+      "getNextRun",
+      "getActiveJobCount",
+      "getRunningJobCount",
+      "getSkipStatus",
+      "getJobSkipCount",
+      "isJobRunning"
+    ],
+    "driveMonitor": [
+      "detectDrives",
+      "startDriveMonitor",
+      "stopDriveMonitor",
+      "isDriveMounted",
+      "getConnectedDrives"
+    ],
+    "driveScanner": [
+      "startScan",
+      "getScanProgress",
+      "clearScan"
+    ],
+    "immichImport": [
+      "getActiveImport",
+      "testImmichConnection",
+      "isImmichGoAvailable",
+      "startImport",
+      "stopActiveImportProcesses",
+      "isEjectSupported",
+      "ejectDrive"
+    ],
+    "immichRetry": [
+      "createImmichRetryDirectory",
+      "removeImmichRetryDirectory"
+    ],
+    "immichFailureSummary": [
+      "summarizeImmichGoFailure"
+    ],
+    "versionBrowser": [
+      "listSnapshots",
+      "browseSnapshot",
+      "resolveFilePath",
+      "restoreFile",
+      "pruneVersions"
+    ],
+    "deltaVersion": [
+      "withConfigLock",
+      "registerTempFile",
+      "cleanupTempFile",
+      "cleanupOrphanedTempFiles",
+      "startTempCleanup",
+      "stopTempCleanup",
+      "readManifest",
+      "deltaifySnapshot",
+      "rebaseDeltas",
+      "rebaseDeltasWithTimestamp",
+      "reconstructFile",
+      "getChainLength",
+      "verifyDeltaChain",
+      "promoteDeltaToFull",
+      "computeVersionStats",
+      "getCachedVersionStats",
+      "getAllCachedVersionStats"
+    ],
+    "versionVerification": [
+      "getActiveVersionVerification",
+      "startVersionVerification",
+      "cancelVersionVerification",
+      "stopActiveVersionVerifications"
+    ],
+    "quotaUsage": [
+      "getQuotaUsage",
+      "invalidateQuotaUsage",
+      "markQuotaUsageStale"
+    ],
+    "databaseRetention": [
+      "getDatabaseRetentionPolicy",
+      "pruneDatabaseTelemetry",
+      "runDatabaseRetentionBatches"
+    ],
+    "jobHealth": [
+      "getJobHealth",
+      "parseDbTime"
+    ],
+    "excludePolicy": [
+      "normalizeExcludePatterns",
+      "listExcludePatterns"
+    ],
+    "notify": [
+      "sendNotification",
+      "sendBrowser",
+      "notifyJobStarted",
+      "notifyJobCompleted",
+      "notifyJobPartial",
+      "notifyJobError",
+      "notifyJobCancelled",
+      "notifyJobSkipped",
+      "notifyJobProgress",
+      "createJobNotificationTracker",
+      "notifyDriveAttached",
+      "notifyDriveEjected",
+      "notifyDriveLost",
+      "notifyDriveScanStarted",
+      "notifyDriveScanCompleted",
+      "notifyImportStarted",
+      "notifyImportCompleted",
+      "notifyImportError",
+      "notifyBackupResult",
+      "sendTestNtfy",
+      "sendTestBrowser",
+      "addBrowserSubscriber",
+      "removeBrowserSubscriber"
+    ],
+    "sshManager": [
+      "hasKey",
+      "getIdentityPath",
+      "getPublicKey",
+      "generateKey",
+      "authorizeLocalhost",
+      "authorizeKey",
+      "revokeKey",
+      "replaceKeyAuthorization",
+      "testSshConnection",
+      "getSshStatus"
+    ],
+    "sshConnectionPolicy": [
+      "validateSshConnectionTarget"
+    ],
+    "unraid": [
+      "getShares",
+      "browsePath"
+    ],
+    "discovery": [
+      "discoverPeers",
+      "discoverImmich",
+      "clearDiscoveryCache",
+      "getDetectedSubnets"
+    ],
+    "pairing": [
+      "initiatePairing",
+      "getOutgoingPairingStatus",
+      "handlePairingCallback",
+      "receiveRequest",
+      "getPendingIncoming",
+      "getAllPairingRequests",
+      "acceptPairing",
+      "declinePairing"
+    ],
+    "callbackAddress": [
+      "resolveCallbackUrl",
+      "detectInterfaceCallbackIp"
+    ],
+    "pairingIngress": [
+      "MAX_ACTIVE_INCOMING_PAIRINGS",
+      "MAX_INCOMING_PAIRING_ROWS",
+      "storeIncomingPairingRequest"
+    ],
+    "upgradeReadiness": [
+      "assessUpgradeReadiness",
+      "createUpgradeBackup",
+      "remediateUpgradeIssue",
+      "createHostPreparationPlan",
+      "createFinalConfiguration",
+      "UPGRADE_BRIDGE_VERSION"
+    ],
+    "externalJobs": [
+      "generateIngestToken",
+      "hashIngestToken",
+      "ingestTokenMatches",
+      "normaliseSlug",
+      "getExternalJobHealth",
+      "listExternalJobs",
+      "getExternalJob",
+      "createExternalJob",
+      "updateExternalJob",
+      "deleteExternalJob",
+      "regenerateIngestToken",
+      "recordHeartbeat",
+      "listExternalJobRuns",
+      "pruneExternalJobRuns"
+    ],
+    "events": [
+      "SEVERITIES",
+      "recordEvent",
+      "listEvents",
+      "getEventSummary",
+      "listEventCategories"
+    ],
+    "systemStatus": [
+      "getSystemStatus"
+    ],
+    "peerConnectivity": [
+      "getPeerConnectivity",
+      "clearPeerConnectivityCache"
+    ]
   },
-
   "frontendApi": {
     "exports": [
-      "getAuthStatus", "getAuthSession", "bootstrapAuth", "loginAuth", "recoverAuth", "logoutAuth", "changeAuthPassword", "getAuthUsers", "createAuthUser", "updateAuthUser", "revokeAuthUserSessions", "getAuthAudit",
-      "getSettings", "getPublicSettings", "saveSettings",
+      "getAuthStatus",
+      "getAuthSession",
+      "bootstrapAuth",
+      "loginAuth",
+      "recoverAuth",
+      "logoutAuth",
+      "changeAuthPassword",
+      "getAuthUsers",
+      "createAuthUser",
+      "updateAuthUser",
+      "revokeAuthUserSessions",
+      "getAuthAudit",
+      "getSettings",
+      "getPublicSettings",
+      "saveSettings",
       "getOverviewSummary",
-      "getSsdShares", "browsePath", "getSsdConfigs", "getSsdConfig", "createSsdConfig", "updateSsdConfig", "deleteSsdConfig", "triggerSsdBackup", "getSsdRuns", "getSsdRunDetail", "getSsdRunProgress",
-      "getSsdSnapshots", "browseSsdSnapshot", "getSsdDownloadUrl", "getSsdPreviewUrl", "restoreSsdFile", "verifySsdVersions",
-      "getHyperJobs", "getHyperJob", "createHyperJob", "updateHyperJob", "deleteHyperJob", "triggerHyperBackup", "testHyperConnection", "getHyperRuns", "getHyperRunDetail", "getHyperRunProgress", "browseRemotePeer", "getRemotePeerRoots", "getRemotePeerShares",
-      "getSshStatus", "generateSshKey", "authorizeLocalSsh", "testSshConnection",
-      "getPeers", "getPeerConnectivity", "getPeer", "createPeer", "updatePeer", "deletePeer", "regeneratePeerKey", "getPeerAuditLog", "getAllPeerAuditLog",
-      "getRcloneRemotes", "getRcloneProviders", "getRcloneRemoteConfig", "createRcloneRemote", "updateRcloneRemote", "deleteRcloneRemote", "testRcloneRemote", "browseRemote", "getRcloneJobs", "getRcloneJob", "createRcloneJob", "updateRcloneJob", "deleteRcloneJob", "triggerRcloneSync", "getRcloneRuns", "getRcloneRunDetail", "getRcloneRunProgress",
-      "getDockerStatus", "getDockerContainers", "dockerAction", "getContainerStats", "getContainerMetrics",
-      "getMediaDrives", "getKnownDrives", "getMediaDrive", "updateMediaDrive", "scanDrive", "getScanProgress", "startDriveImport", "getImportProgress", "ejectDrive", "getMediaImportRuns", "getMediaImportRunDetail", "getMediaImportRunFiles", "testImmichConnection", "getMediaImportStatus",
-      "browseDirectory", "getFilesystemRoots",
-      "testNtfy", "testBrowserNotify",
-      "backupDbTo", "backupDbToAll", "getDbBackups", "getDbRecoveryScan", "getDbRecoveryInfo", "restoreDb",
-      "discoverPeers", "discoverImmich", "clearDiscoveryCache", "getDiscoverySubnets",
-      "initiatePairing", "getPairingIncoming", "getPairingStatus", "getPairingHistory", "acceptPairing", "declinePairing",
-      "getUpgradeReadiness", "createUpgradeReadinessBackup", "remediateUpgradeReadinessIssue", "createUpgradeHostPlan", "createUpgradeFinalConfig"
+      "getSsdShares",
+      "browsePath",
+      "getSsdConfigs",
+      "getSsdConfig",
+      "createSsdConfig",
+      "updateSsdConfig",
+      "deleteSsdConfig",
+      "triggerSsdBackup",
+      "getSsdRuns",
+      "getSsdRunDetail",
+      "getSsdRunProgress",
+      "getSsdSnapshots",
+      "browseSsdSnapshot",
+      "getSsdDownloadUrl",
+      "getSsdPreviewUrl",
+      "restoreSsdFile",
+      "verifySsdVersions",
+      "getHyperJobs",
+      "getHyperJob",
+      "createHyperJob",
+      "updateHyperJob",
+      "deleteHyperJob",
+      "triggerHyperBackup",
+      "testHyperConnection",
+      "getHyperRuns",
+      "getHyperRunDetail",
+      "getHyperRunProgress",
+      "browseRemotePeer",
+      "getRemotePeerRoots",
+      "getRemotePeerShares",
+      "getSshStatus",
+      "generateSshKey",
+      "authorizeLocalSsh",
+      "testSshConnection",
+      "getPeers",
+      "getPeerConnectivity",
+      "getPeer",
+      "createPeer",
+      "updatePeer",
+      "deletePeer",
+      "regeneratePeerKey",
+      "getPeerAuditLog",
+      "getAllPeerAuditLog",
+      "getRcloneRemotes",
+      "getRcloneProviders",
+      "getRcloneRemoteConfig",
+      "createRcloneRemote",
+      "updateRcloneRemote",
+      "deleteRcloneRemote",
+      "testRcloneRemote",
+      "browseRemote",
+      "getRcloneJobs",
+      "getRcloneJob",
+      "createRcloneJob",
+      "updateRcloneJob",
+      "deleteRcloneJob",
+      "triggerRcloneSync",
+      "getRcloneRuns",
+      "getRcloneRunDetail",
+      "getRcloneRunProgress",
+      "getDockerStatus",
+      "getDockerContainers",
+      "dockerAction",
+      "getContainerStats",
+      "getContainerMetrics",
+      "getMediaDrives",
+      "getKnownDrives",
+      "getMediaDrive",
+      "updateMediaDrive",
+      "scanDrive",
+      "getScanProgress",
+      "startDriveImport",
+      "getImportProgress",
+      "ejectDrive",
+      "getMediaImportRuns",
+      "getMediaImportRunDetail",
+      "getMediaImportRunFiles",
+      "testImmichConnection",
+      "getMediaImportStatus",
+      "browseDirectory",
+      "getFilesystemRoots",
+      "testNtfy",
+      "testBrowserNotify",
+      "backupDbTo",
+      "backupDbToAll",
+      "getDbBackups",
+      "getDbRecoveryScan",
+      "getDbRecoveryInfo",
+      "restoreDb",
+      "discoverPeers",
+      "discoverImmich",
+      "clearDiscoveryCache",
+      "getDiscoverySubnets",
+      "initiatePairing",
+      "getPairingIncoming",
+      "getPairingStatus",
+      "getPairingHistory",
+      "acceptPairing",
+      "declinePairing",
+      "getUpgradeReadiness",
+      "createUpgradeReadinessBackup",
+      "remediateUpgradeReadinessIssue",
+      "createUpgradeHostPlan",
+      "createUpgradeFinalConfig",
+      "getExternalJobs",
+      "createExternalJob",
+      "updateExternalJob",
+      "deleteExternalJob",
+      "regenerateExternalJobToken",
+      "getExternalJobRuns",
+      "getEvents",
+      "getEventSummary",
+      "getSystemStatus"
     ]
   }
 }
