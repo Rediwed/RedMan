@@ -197,6 +197,21 @@ check('a later genuine run is not mistaken for a replay', () => {
   assert.equal(later.duplicate, false);
 });
 
+check('an absent exit code is recorded as unknown, not as success', () => {
+  const absent = createExternalJob(db, { name: 'Absent', slug: 'absent-fields-job' });
+  const fields = { slug: 'absent-fields-job', ts: nowSeconds(), exitCode: null, duration: null, message: 'no numbers' };
+  const result = recordRelayedHeartbeat(db, {
+    ...fields,
+    signature: signRelayedHeartbeat(hashIngestToken(absent.token), fields),
+  });
+  assert.equal(result.ok, true);
+  const row = db.prepare('SELECT exit_code, duration_seconds FROM external_job_runs WHERE job_id = ?')
+    .get(absent.job.id);
+  // Number(null) is 0, which would have turned "not reported" into "exit 0".
+  assert.equal(row.exit_code, null);
+  assert.equal(row.duration_seconds, null);
+});
+
 check('heartbeats delivered over HTTP keep working without a source reference', () => {
   const plain = createExternalJob(db, { name: 'Plain', slug: 'plain-job' });
   recordHeartbeat(db, 'plain-job', plain.token, { exit_code: 0 });

@@ -37,6 +37,14 @@ export function normaliseSlug(value) {
   return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-').slice(0, 64);
 }
 
+// Number(null) is 0, so an explicitly absent value would otherwise be recorded
+// as a real zero — and "no exit code reported" would read as success.
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function latestRun(db, jobId, statuses) {
   const placeholders = statuses.map(() => '?').join(', ');
   return db.prepare(`
@@ -205,13 +213,12 @@ function insertHeartbeat(db, job, payload) {
     return { slug: job.slug, status: null, duplicate: true };
   }
 
-  const exitCode = Number.isFinite(Number(payload.exit_code)) ? Number(payload.exit_code) : null;
+  const exitCode = optionalNumber(payload.exit_code);
   const status = VALID_STATUSES.includes(payload.status)
     ? payload.status
     : (exitCode === null || exitCode === 0 ? 'completed' : 'failed');
-  const duration = Number.isFinite(Number(payload.duration_seconds))
-    ? Math.max(0, Math.round(Number(payload.duration_seconds)))
-    : null;
+  const reportedDuration = optionalNumber(payload.duration_seconds);
+  const duration = reportedDuration === null ? null : Math.max(0, Math.round(reportedDuration));
   const message = payload.message ? String(payload.message).slice(0, MAX_MESSAGE_LENGTH) : null;
 
   const previous = latestRun(db, job.id, ['completed', 'failed']);
