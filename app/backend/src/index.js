@@ -30,6 +30,7 @@ import { executeSsdBackup, stopActiveRsyncProcesses } from './services/rsync.js'
 import { executeHyperBackup, notifyPeersOfShutdown } from './services/hyperBackup.js';
 import { executeRcloneJob, stopActiveRcloneProcesses } from './services/rclone.js';
 import { startMetricsPoller, stopMetricsPoller } from './services/docker.js';
+import { startNtfyRelay, stopNtfyRelay } from './services/ntfyRelay.js';
 import { startDriveMonitor, stopDriveMonitor } from './services/driveMonitor.js';
 import { startImport, stopActiveImportProcesses } from './services/immichImport.js';
 import { startTempCleanup, stopTempCleanup } from './services/deltaVersion.js';
@@ -199,6 +200,7 @@ const mainServer = app.listen(runtimeConfig.mainPort, () => {
   startMetricsPoller();
   startTempCleanup();
   startRunFileRetention();
+  startNtfyRelay();
 
   // Start drive monitor for media import — auto-import on attach if configured
   startDriveMonitor((driveRow) => {
@@ -253,6 +255,7 @@ async function shutdown(signal, exitCode = 0) {
   const serverClose = Promise.allSettled([closeServer(mainServer), closeServer(peerServer)]);
   stopAllJobs();
   stopRunFileRetention();
+  stopNtfyRelay();
   stopMetricsPoller();
   stopDriveMonitor();
   stopTempCleanup();

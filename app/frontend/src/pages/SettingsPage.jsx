@@ -1474,6 +1474,44 @@ export default function SettingsPage() {
                   </div>
                 </>
               )}
+              <hr className="settings-divider" />
+              <div className="form-group">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={settings.ntfy_bridge_enabled === 'true'}
+                    onChange={e => update('ntfy_bridge_enabled', e.target.checked ? 'true' : 'false')}
+                  />
+                  Collect heartbeats from a topic
+                </label>
+                <span className="form-hint">
+                  For hosts that cannot reach RedMan. They leave a signed line on a separate
+                  topic and RedMan picks it up on its own outbound polls.
+                </span>
+              </div>
+              {settings.ntfy_bridge_enabled === 'true' && (
+                <>
+                  <div className="form-group">
+                    <label>Heartbeat topic</label>
+                    <input
+                      value={settings.ntfy_bridge_topic || ''}
+                      onChange={e => update('ntfy_bridge_topic', e.target.value)}
+                      placeholder="redman-heartbeats"
+                    />
+                    <span className="form-hint">Must differ from the notification topic above</span>
+                  </div>
+                  <div className="form-group">
+                    <label>Poll interval (seconds)</label>
+                    <input
+                      type="number"
+                      min="15"
+                      max="3600"
+                      value={settings.ntfy_bridge_poll_seconds || '60'}
+                      onChange={e => update('ntfy_bridge_poll_seconds', e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
             </div>
             <div className="modal-footer">
               <button type="button" className="btn btn-primary" onClick={() => setShowNtfyConfig(false)}>Done</button>

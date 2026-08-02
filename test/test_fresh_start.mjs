@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { LATEST_SCHEMA_VERSION } from '../app/backend/src/migrations.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const root = resolve(testDir, '..');
@@ -62,7 +63,7 @@ try {
   ];
 
   for (const table of requiredTables) assert(tables.includes(table), `Missing table: ${table}`);
-    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 30);
+    assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, LATEST_SCHEMA_VERSION);
   db.close();
 
   console.log('Fresh database startup: 2 idempotent starts passed');

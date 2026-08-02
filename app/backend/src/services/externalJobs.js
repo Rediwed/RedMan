@@ -4,7 +4,7 @@
 // The health model deliberately mirrors services/jobHealth.js so the dashboard
 // can render RedMan-owned and external jobs with one vocabulary.
 
-import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
+import { randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { nextCronOccurrence } from './schedulePolicy.js';
 import { parseDbTime } from './jobHealth.js';
 import { recordEvent } from './events.js';
@@ -12,6 +12,7 @@ import { recordEvent } from './events.js';
 const TOKEN_BYTES = 32;
 const MAX_MESSAGE_LENGTH = 500;
 const VALID_STATUSES = ['completed', 'failed', 'running'];
+const RELAY_MAX_AGE_SECONDS = 3600;
 
 export function generateIngestToken() {
   return randomBytes(TOKEN_BYTES).toString('base64url');
@@ -186,12 +187,21 @@ export function regenerateIngestToken(db, id) {
 }
 
 /**
- * Record one heartbeat. Returns null when the slug is unknown or the token does
- * not match, so callers cannot distinguish the two cases.
+ * Write a heartbeat for a job whose sender has already been authenticated.
+ *
+ * Authentication lives entirely in the callers, so there is no argument here
+ * that could switch it off.
+ *
+ * A payload may carry `source_ref`, the identity of the message that delivered
+ * it. A relay has to re-read an overlapping window to survive a missed poll, so
+ * the same heartbeat arrives more than once by design; the reference is what
+ * makes recording it idempotent.
  */
-export function recordHeartbeat(db, slug, token, payload = {}) {
-  const job = db.prepare('SELECT * FROM external_jobs WHERE slug = ?').get(normaliseSlug(slug));
-  if (!job || !ingestTokenMatches(token, job.ingest_token_hash)) return null;
+function insertHeartbeat(db, job, payload) {
+  const sourceRef = payload.source_ref ? String(payload.source_ref).slice(0, 128) : null;
+  if (sourceRef && db.prepare('SELECT 1 FROM external_job_runs WHERE source_ref = ?').get(sourceRef)) {
+    return { slug: job.slug, status: null, duplicate: true };
+  }
 
   const exitCode = Number.isFinite(Number(payload.exit_code)) ? Number(payload.exit_code) : null;
   const status = VALID_STATUSES.includes(payload.status)
@@ -204,13 +214,22 @@ export function recordHeartbeat(db, slug, token, payload = {}) {
 
   const previous = latestRun(db, job.id, ['completed', 'failed']);
 
-  db.transaction(() => {
-    db.prepare(`
-      INSERT INTO external_job_runs (job_id, status, exit_code, duration_seconds, message)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(job.id, status, exitCode, duration, message);
-    db.prepare("UPDATE external_jobs SET last_reported_at = datetime('now') WHERE id = ?").run(job.id);
-  })();
+  try {
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO external_job_runs (job_id, status, exit_code, duration_seconds, message, source_ref)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(job.id, status, exitCode, duration, message, sourceRef);
+      db.prepare("UPDATE external_jobs SET last_reported_at = datetime('now') WHERE id = ?").run(job.id);
+    })();
+  } catch (err) {
+    // The unique index is the real guard: two overlapping polls can both clear
+    // the check above, and only one of them may be allowed to write.
+    if (sourceRef && String(err.code || '').includes('SQLITE_CONSTRAINT')) {
+      return { slug: job.slug, status: null, duplicate: true };
+    }
+    throw err;
+  }
 
   // Only transitions are logged; a job reporting success every hour should not
   // fill the timeline with identical entries.
@@ -231,6 +250,89 @@ export function recordHeartbeat(db, slug, token, payload = {}) {
   }
 
   return { slug: job.slug, status };
+}
+
+/**
+ * Record one heartbeat presented with a bearer token. Returns null when the slug
+ * is unknown or the token does not match, so callers cannot distinguish the two
+ * cases.
+ */
+export function recordHeartbeat(db, slug, token, payload = {}) {
+  const job = db.prepare('SELECT * FROM external_jobs WHERE slug = ?').get(normaliseSlug(slug));
+  if (!job || !ingestTokenMatches(token, job.ingest_token_hash)) return null;
+  return insertHeartbeat(db, job, payload);
+}
+
+// ── Relayed heartbeats ─────────────────────────────────────────────
+//
+// A host that cannot reach RedMan leaves its message on a broker instead, and
+// RedMan collects it outbound. That inverts the trust model: the broker is not
+// ours, and anyone able to publish to the topic could otherwise claim a failing
+// job succeeded. So the payload is signed rather than carrying a bearer token,
+// which would be exposed to every reader of the topic.
+//
+// The key is the stored token hash, which both sides can derive: the reporting
+// host holds the token, RedMan holds its hash. Nothing secret travels over the
+// broker, and no new column is needed. The trade-off is that the hash stops
+// being a pure verifier — anyone who can read RedMan's database could forge a
+// heartbeat — which is acceptable for a monitoring channel, and unremarkable
+// next to what else that database holds.
+
+const RELAY_FIELD_SEPARATOR = '\n';
+
+export function relaySigningPayload({ slug, ts, exitCode, duration, message }) {
+  return [
+    normaliseSlug(slug),
+    String(ts ?? ''),
+    exitCode === null || exitCode === undefined ? '' : String(exitCode),
+    duration === null || duration === undefined ? '' : String(duration),
+    message ?? '',
+  ].join(RELAY_FIELD_SEPARATOR);
+}
+
+export function signRelayedHeartbeat(secretHash, fields) {
+  return createHmac('sha256', secretHash).update(relaySigningPayload(fields), 'utf8').digest('hex');
+}
+
+function signatureMatches(expectedHex, candidateHex) {
+  if (typeof candidateHex !== 'string' || !/^[0-9a-f]+$/i.test(candidateHex)) return false;
+  const expected = Buffer.from(expectedHex, 'hex');
+  const candidate = Buffer.from(candidateHex.toLowerCase(), 'hex');
+  if (expected.length !== candidate.length) return false;
+  return timingSafeEqual(expected, candidate);
+}
+
+/**
+ * Verify and record a heartbeat that reached us through a broker.
+ *
+ * The reason codes are for local diagnosis only. Unlike the HTTP endpoint there
+ * is nobody to withhold them from: whoever published the message never sees
+ * this result.
+ */
+export function recordRelayedHeartbeat(db, fields, { now = new Date(), maxAgeSeconds = RELAY_MAX_AGE_SECONDS } = {}) {
+  const slug = normaliseSlug(fields.slug);
+  const job = db.prepare('SELECT * FROM external_jobs WHERE slug = ?').get(slug);
+  if (!job) return { ok: false, reason: 'unknown-job', slug };
+
+  const ts = Number(fields.ts);
+  if (!Number.isFinite(ts)) return { ok: false, reason: 'bad-timestamp', slug };
+  // A signature stays valid forever, so age is what stops an old message from
+  // being replayed onto the topic to mask a job that has since stopped running.
+  const ageSeconds = Math.abs(Math.floor(now.getTime() / 1000) - ts);
+  if (ageSeconds > maxAgeSeconds) return { ok: false, reason: 'stale', slug, ageSeconds };
+
+  const expected = signRelayedHeartbeat(job.ingest_token_hash, fields);
+  if (!signatureMatches(expected, fields.signature)) return { ok: false, reason: 'bad-signature', slug };
+
+  const recorded = insertHeartbeat(db, job, {
+    exit_code: fields.exitCode,
+    duration_seconds: fields.duration,
+    message: fields.message,
+    source_ref: fields.sourceRef,
+  });
+
+  if (recorded.duplicate) return { ok: true, duplicate: true, slug };
+  return { ok: true, duplicate: false, slug, status: recorded.status };
 }
 
 export function listExternalJobRuns(db, { jobId = null, page = 1, limit = 50 } = {}) {

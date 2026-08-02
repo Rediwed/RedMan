@@ -970,7 +970,30 @@ const migrations = [
       console.log('[migration-30] Added event history table');
     }
   },
+  {
+    version: 31,
+    description: 'Let a heartbeat carry the identity of the message that delivered it',
+    up(db) {
+      // ALTER TABLE ADD COLUMN is metadata-only in SQLite, so this stays bounded
+      // however much run history is retained.
+      const columns = db.prepare('PRAGMA table_info(external_job_runs)').all().map(column => column.name);
+      if (!columns.includes('source_ref')) {
+        db.exec('ALTER TABLE external_job_runs ADD COLUMN source_ref TEXT');
+      }
+      // Partial index: heartbeats delivered over HTTP leave source_ref NULL and
+      // are unaffected, while a relayed message can only ever be recorded once.
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_external_job_runs_source_ref
+          ON external_job_runs(source_ref) WHERE source_ref IS NOT NULL;
+      `);
+      console.log('[migration-31] Added relayed heartbeat de-duplication');
+    }
+  },
 ];
+
+// Derived rather than declared: a copy of this number kept somewhere else only
+// tells you what the schema was when someone last remembered to update it.
+export const LATEST_SCHEMA_VERSION = migrations[migrations.length - 1].version;
 
 /**
  * Run all pending migrations in order.
