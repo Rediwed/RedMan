@@ -176,18 +176,18 @@ check('a captured line re-published under a new broker id is still a duplicate',
   // The whole point: an attacker who cannot forge can still copy. Keying
   // de-duplication on the delivering message would let this reset the clock.
   const captured = signed({ ts: nowSeconds() - 30, message: 'captured off the topic' });
-  const genuine = recordRelayedHeartbeat(db, captured);
-  const reportedAfterGenuine = db.prepare('SELECT last_reported_at FROM external_jobs WHERE id = ?')
-    .get(job.id).last_reported_at;
+  const runsFor = () => db.prepare('SELECT COUNT(*) AS c FROM external_job_runs WHERE job_id = ?')
+    .get(job.id).c;
 
+  const genuine = recordRelayedHeartbeat(db, captured);
+  const afterGenuine = runsFor();
   const replayed = recordRelayedHeartbeat(db, { ...captured, sourceRef: 'ntfy:topic:a-brand-new-id' });
-  const reportedAfterReplay = db.prepare('SELECT last_reported_at FROM external_jobs WHERE id = ?')
-    .get(job.id).last_reported_at;
 
   assert.equal(genuine.duplicate, false);
   assert.equal(replayed.duplicate, true);
-  // The overdue clock must not have moved: that is what the replay was for.
-  assert.equal(reportedAfterReplay, reportedAfterGenuine);
+  // No row written is what keeps the overdue clock where it was; comparing
+  // last_reported_at would pass either way inside the same second.
+  assert.equal(runsFor(), afterGenuine);
 });
 
 check('a later genuine run is not mistaken for a replay', () => {

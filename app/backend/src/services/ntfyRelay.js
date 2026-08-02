@@ -106,8 +106,14 @@ export function parseRelayMessage(text) {
  */
 async function readCapped(res, maxBytes) {
   const declared = Number(res.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > maxBytes) return null;
-  if (!res.body) return null;
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    // Without this the connection is only released once the body is collected,
+    // so a broker declaring an oversize length every poll accumulates sockets.
+    await res.body?.cancel();
+    return null;
+  }
+  // An empty body is a valid answer and must not read as an oversize one.
+  if (!res.body) return '';
 
   const reader = res.body.getReader();
   const chunks = [];
@@ -272,7 +278,7 @@ export function startNtfyRelay() {
     console.log('[ntfy-relay] Not configured; no heartbeats will be collected.');
     return null;
   }
-  console.log(`[ntfy-relay] Polling ${settings.ntfy_bridge_topic} every ${pollIntervalMs(settings) / 1000}s`);
+  console.log(`[ntfy-relay] Polling every ${pollIntervalMs(settings) / 1000}s`);
   return schedule(START_DELAY_MS);
 }
 

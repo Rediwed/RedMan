@@ -739,15 +739,26 @@ topic instead and RedMan collects it on its own outbound polls. Enable it under
 redman-hb1 <slug> <unix-ts> <exit|-> <duration|-> <signature> <message>
 ```
 
-The signature is `HMAC-SHA256` over the first five fields joined by newlines,
-keyed with the SHA-256 of the job's ingest token — a value the reporting host can
-derive and RedMan already stores, so no secret ever crosses the broker. From a
-shell script:
+The signature is `HMAC-SHA256` over the five fields that precede it, joined by
+newlines and taken **exactly as they appear on the wire** — including the `-`
+that stands for an absent number. The key is the SHA-256 of the job's ingest
+token, a value the reporting host can derive and RedMan already stores, so no
+secret ever crosses the broker.
+
+One detail decides whether it verifies: the slug is signed as RedMan normalises
+it, meaning lower case with anything outside `a-z 0-9 . _ -` replaced by `-`.
+
+Because command substitution strips trailing newlines, pipe `printf` straight
+into `openssl` rather than storing the payload in a variable first:
 
 ```bash
+slug="$(printf '%s' "$slug" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._-' '-')"
 key="$(printf '%s' "$REDMAN_HEARTBEAT_TOKEN" | sha256sum | cut -d' ' -f1)"
-payload="$(printf '%s\n%s\n%s\n%s\n%s' "$slug" "$ts" "$code" "$SECONDS" "$msg")"
-sig="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$key" -hex | awk '{print $NF}')"
+sig="$(printf '%s\n%s\n%s\n%s\n%s' "$slug" "$ts" "$code" "$duration" "$message" \
+  | openssl dgst -sha256 -hmac "$key" -hex | awk '{print $NF}')"
+
+printf '%s %s %s %s %s %s %s' \
+  redman-hb1 "$slug" "$ts" "$code" "$duration" "$sig" "$message"
 ```
 
 **Choose a topic nobody can guess, and do not reuse the notification topic.**
@@ -759,7 +770,8 @@ exist and whether they are passing.
 
 Messages older than 15 minutes are refused, which is also how far back each poll
 reads. A missed poll or a restart therefore heals on the next round rather than
-leaving a permanent gap.
+leaving a permanent gap. The reporting host needs a clock within that tolerance;
+without NTP a drifting host has every heartbeat refused.
 
 ### Peer API (port 8091)
 

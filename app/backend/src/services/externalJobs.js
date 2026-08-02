@@ -281,13 +281,18 @@ export function recordHeartbeat(db, slug, token, payload = {}) {
 // next to what else that database holds.
 
 const RELAY_FIELD_SEPARATOR = '\n';
+// The wire format writes an absent number as a dash, and the signature covers
+// exactly what travels. Signing a different representation than the one sent is
+// a subtlety every sender has to remember, and forgetting it fails silently.
+const RELAY_ABSENT_FIELD = '-';
 
 export function relaySigningPayload({ slug, ts, exitCode, duration, message }) {
+  const optional = value => (value === null || value === undefined ? RELAY_ABSENT_FIELD : String(value));
   return [
     normaliseSlug(slug),
     String(ts ?? ''),
-    exitCode === null || exitCode === undefined ? '' : String(exitCode),
-    duration === null || duration === undefined ? '' : String(duration),
+    optional(exitCode),
+    optional(duration),
     message ?? '',
   ].join(RELAY_FIELD_SEPARATOR);
 }
