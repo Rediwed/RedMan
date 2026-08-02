@@ -10,6 +10,7 @@ Versioning scheme:
 ## [Unreleased]
 
 ### Added
+- [x] Added **External Jobs**, a single place to see whether schedules that RedMan does not run itself are still healthy. Host cron jobs, systemd timers, and container updaters on any machine report in with a one-line heartbeat, and RedMan compares each report against the schedule you declared for it. Because the check is time-based rather than message-based, a job that dies completely and sends nothing at all is exactly the case it catches — the gap in your monitoring that notifications can never close.
 - [x] Added optional bi-directional pairing. When connecting to a peer you can now offer it backup space on your own instance in the same request, so a single accept sets up both directions instead of repeating the entire pairing from the other side. The offer travels inside the signed handshake transcript, the receiver decides whether to take it up, and the reverse API key is derived from the same shared secret under a separate label so it is never transmitted.
 - [x] Added a copy button to the pairing identity fingerprint, so both operators can compare the exact string instead of retyping it from a screen. It falls back to a selection-based copy when the browser blocks the clipboard API, which is common on plain-HTTP LAN addresses.
 - [x] Added the hardened full runtime with explicit local/proxy authentication, protected peer credentials, restricted backup accounts, exact-path Docker proxies, and schema 27 migrations.

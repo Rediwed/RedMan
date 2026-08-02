@@ -3,7 +3,7 @@ import { nextCronOccurrence } from './schedulePolicy.js';
 // SQLite writes datetime('now') in UTC, but "YYYY-MM-DD HH:MM:SS" without a
 // zone is read as local time — which silently shifts every run by the host's
 // offset and makes a completed schedule look overdue.
-function parseDbTime(value) {
+export function parseDbTime(value) {
   if (typeof value !== 'string' || !value) return null;
   // Columns written with toISOString() already carry a zone; only the bare
   // SQLite form needs one appended.
