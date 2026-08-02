@@ -78,6 +78,16 @@ export const API_ROUTE_POLICIES = Object.freeze([
   policy(['GET', 'POST'], /^\/discovery\/(?:subnets|peers|immich|clear-cache)$/, PERMISSIONS.DISCOVERY),
   policy(['GET'], /^\/upgrade-readiness\/?$/, PERMISSIONS.READ),
   policy(['POST'], /^\/upgrade-readiness\/(?:backup|remediate|host-plan|final-config)$/, PERMISSIONS.SETTINGS),
+
+  // Heartbeat ingest is mounted before this middleware and carries its own
+  // per-job token, so it deliberately has no entry here.
+  policy(['GET'], /^\/external-jobs\/?$/, PERMISSIONS.READ),
+  policy(['GET'], /^\/external-jobs\/(?:runs|\d+)$/, PERMISSIONS.READ),
+  policy(['PUT', 'DELETE'], /^\/external-jobs\/\d+$/, PERMISSIONS.OPERATE),
+  // Creating a job mints its first token, so it is held to the same bar as
+  // regenerating one rather than treated as routine configuration.
+  policy(['POST'], /^\/external-jobs\/?$/, PERMISSIONS.SECRETS),
+  policy(['POST'], /^\/external-jobs\/\d+\/regenerate-token$/, PERMISSIONS.SECRETS),
 ]);
 
 export function getRoutePermission(method, pathname) {

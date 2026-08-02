@@ -8,6 +8,7 @@ import SsdBackupPage from './pages/SsdBackupPage.jsx';
 import HyperBackupPage from './pages/HyperBackupPage.jsx';
 import RclonePage from './pages/RclonePage.jsx';
 import MediaImportPage from './pages/MediaImportPage.jsx';
+import ExternalJobsPage from './pages/ExternalJobsPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import VersionBadge from './components/VersionBadge.jsx';
 import LoginPage from './pages/LoginPage.jsx';
@@ -47,6 +48,7 @@ function AuthenticatedApplication() {
             <Route path="/hyper-backup" element={<HyperBackupPage />} />
             <Route path="/rclone" element={<RclonePage />} />
             <Route path="/media-import" element={<MediaImportPage />} />
+            <Route path="/external-jobs" element={<ExternalJobsPage />} />
             <Route path="/account" element={<AccountPage />} />
             <Route path="/settings" element={auth.isAdmin ? <SettingsPage /> : <AccessDenied />} />
           </Routes>
