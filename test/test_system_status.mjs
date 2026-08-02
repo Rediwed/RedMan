@@ -61,6 +61,16 @@ await check('a paused job is neither healthy nor failing', async () => {
   assert.equal(find(board, 'external:sleeping').state, 'paused');
 });
 
+await check('a later success clears the failure reason from the summary', async () => {
+  const { token } = createExternalJob(db, { name: 'Recovered', slug: 'recovered' });
+  recordHeartbeat(db, 'recovered', token, { exit_code: 1, message: 'transient failure' });
+  recordHeartbeat(db, 'recovered', token, { exit_code: 0 });
+  const item = find(await getSystemStatus(), 'external:recovered');
+  assert.equal(item.state, 'ok');
+  assert.equal(item.summary, 'Reported success',
+    'a healthy job must not display the message of a failure it already recovered from');
+});
+
 await check('the rollup reports the worst state present', async () => {
   const board = await getSystemStatus();
   assert.equal(board.overall, 'fail', 'a failing check must dominate the rollup');

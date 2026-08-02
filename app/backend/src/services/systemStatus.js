@@ -52,8 +52,11 @@ function backupChecks(now) {
       if (health.state === 'paused') summary = 'Schedule paused';
       else if (health.state === 'running') summary = 'Running now';
       else if (health.stale) { summary = 'Overdue since'; at = health.expectedAfterLastSuccess; }
-      else if (health.lastIssue) summary = health.lastIssue.error_message || `Last run ${health.lastIssue.status}`;
-      else if (!health.lastSuccess) summary = 'No successful run recorded';
+      // Only when the issue is the current reason: a failure that a later
+      // success already overtook must not be shown on a healthy job.
+      else if (state === 'fail' && health.lastIssue) {
+        summary = health.lastIssue.error_message || `Last run ${health.lastIssue.status}`;
+      } else if (!health.lastSuccess) summary = 'No successful run recorded';
 
       checks.push(check({
         id: `backup:${feature}:${row.id}`,
@@ -83,7 +86,9 @@ function externalJobChecks(now) {
     if (!job.enabled) summary = 'Watching paused';
     else if (h.neverReported) summary = 'Never reported in';
     else if (h.stale) { summary = 'No report since'; at = h.overdueSince; }
-    else if (h.lastIssue) summary = h.lastIssue.message || `Exit code ${h.lastIssue.exit_code ?? 'unknown'}`;
+    else if (state === 'fail' && h.lastIssue) {
+      summary = h.lastIssue.message || `Exit code ${h.lastIssue.exit_code ?? 'unknown'}`;
+    }
 
     return check({
       id: `external:${job.slug}`,
