@@ -121,14 +121,15 @@ async function containerChecks() {
     // exactly the case a reachability probe reports as fine.
     let state = 'ok';
     let summary = c.status;
-    // `restart: no` plus a clean exit is an on-demand container doing its job,
-    // not a fault. Flagging those permanently trains you to ignore the board.
-    const onDemand = c.restartPolicy === 'no' && / \(0\)/.test(c.status || '');
+    // A clean exit means the container finished or was stopped deliberately; a
+    // non-zero exit is unambiguously a fault. The restart policy would be the
+    // better signal, but the hardened socket proxy denies inspect on purpose.
+    const cleanExit = c.exitCode === 0;
 
     if (c.health === 'unhealthy') { state = 'fail'; summary = `Running but unhealthy — ${c.status}`; }
     else if (c.state === 'restarting') { state = 'warn'; summary = 'Restarting'; }
-    else if (c.state === 'exited' && onDemand) { state = 'paused'; summary = `On demand — ${c.status}`; }
-    else if (c.state === 'exited') { state = 'warn'; summary = c.status; }
+    else if (c.state === 'exited' && cleanExit) { state = 'paused'; summary = `Stopped — ${c.status}`; }
+    else if (c.state === 'exited') { state = 'warn'; summary = `Exited abnormally — ${c.status}`; }
     else if (c.state === 'paused') { state = 'paused'; summary = 'Paused'; }
     else if (c.health === 'starting') { state = 'unknown'; summary = 'Healthcheck starting'; }
     else if (c.state !== 'running') { state = 'unknown'; summary = c.status; }
@@ -140,7 +141,7 @@ async function containerChecks() {
       state,
       summary,
       link: '/',
-      detail: { image: c.image, state: c.state, health: c.health, restartPolicy: c.restartPolicy },
+      detail: { image: c.image, state: c.state, health: c.health, exitCode: c.exitCode },
     });
   });
 }

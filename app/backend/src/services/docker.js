@@ -44,18 +44,25 @@ function healthFromStatus(status) {
   return null; // no healthcheck defined for this container
 }
 
+// The hardened socket proxy denies /containers/{id}/json, so the exit code is
+// read from the list status string ("Exited (0) 6 days ago") instead. Widening
+// the proxy would expose every container's environment, secrets included.
+function exitCodeFromStatus(status) {
+  const match = /^Exited \((\d+)\)/.exec(String(status || ''));
+  return match ? Number(match[1]) : null;
+}
+
 export async function listContainers() {
   try {
-    const client = getDockerClient();
-    const containers = await client.listContainers({ all: true });
-    const mapped = containers.map(c => ({
+    const containers = await getDockerClient().listContainers({ all: true });
+    return containers.map(c => ({
       id: c.Id.slice(0, 12),
       name: c.Names[0]?.replace(/^\//, '') || c.Id.slice(0, 12),
       image: c.Image,
       state: c.State,
       status: c.Status,
       health: healthFromStatus(c.Status),
-      restartPolicy: null,
+      exitCode: exitCodeFromStatus(c.Status),
       created: new Date(c.Created * 1000).toISOString(),
       ports: c.Ports.map(p => ({
         private: p.PrivatePort,
@@ -63,21 +70,6 @@ export async function listContainers() {
         type: p.Type,
       })),
     }));
-
-    // The restart policy is the operator's declaration of intent, and it is the
-    // only way to tell a deliberately on-demand container from one that died.
-    // The list API omits it, so inspect only what is not running — normally a
-    // handful of containers, and none at all on a healthy host.
-    await Promise.all(mapped
-      .filter(c => c.state !== 'running')
-      .map(async (c) => {
-        try {
-          const info = await client.getContainer(c.id).inspect();
-          c.restartPolicy = info.HostConfig?.RestartPolicy?.Name || 'no';
-        } catch { /* container vanished between list and inspect */ }
-      }));
-
-    return mapped;
   } catch (err) {
     console.error('[docker] Failed to list containers:', err.message);
     return [];
