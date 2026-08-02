@@ -25,6 +25,7 @@ const REAL = {
   lockedVault: "error reading source directory: couldn't list files: invalidRequest: invalidResourceId: ObjectHandle is Invalid",
   heldBackFiles: 'not deleting files as there were IO errors',
   heldBackDirs: 'not deleting directories as there were IO errors',
+  tooSlow: ': upload chunks may be taking too long - try reducing --onedrive-chunk-size or decreasing --transfers',
 };
 
 check('the filesystem limit is stated, not guessed', () => {
@@ -50,6 +51,14 @@ check('held-back deletions are named as a consequence, not a cause', () => {
     assert.equal(cls.code, 'blocked-by-earlier-errors');
     assert.match(cls.explain, /safety/i);
   }
+});
+
+check('a throughput timeout is separated from a per-file failure', () => {
+  const cls = classifyRcloneError(REAL.tooSlow);
+  assert.equal(cls.code, 'transfer-too-slow');
+  // It moves around between runs, so it must not read as a broken file.
+  assert.match(cls.explain, /throughput/i);
+  assert.match(cls.remedy, /chunk size|transfers/i);
 });
 
 check('an unfamiliar error is reported as unrecognised, never guessed', () => {

@@ -44,6 +44,13 @@ const CLASSES = [
     remedy: 'Free space on the destination, or raise the quota.',
   },
   {
+    code: 'transfer-too-slow',
+    match: /chunks may be taking too long|deadline exceeded|context deadline/i,
+    title: 'Transfer too slow for the remote to accept',
+    explain: 'The remote closed the transfer because a chunk took longer than it allows. This is about throughput, not about the file itself, so it moves around between runs instead of failing on the same items.',
+    remedy: 'Lower the chunk size or the number of parallel transfers for this remote. rclone suggests --onedrive-chunk-size and --transfers.',
+  },
+  {
     code: 'blocked-by-earlier-errors',
     // rclone's own safety net: it refuses to delete when it could not read
     // everything, so this is a consequence of the errors above, not a cause.
