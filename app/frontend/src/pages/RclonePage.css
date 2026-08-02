@@ -304,3 +304,41 @@
 .wizard-success .test-result.failure {
   color: var(--color-text-muted);
 }
+
+/* ===== Failure diagnosis ===== */
+
+.run-diagnosis {
+  margin-top: var(--space-md);
+}
+
+.run-diagnosis-group {
+  padding: var(--space-md);
+  margin-bottom: var(--space-sm);
+  border-radius: var(--radius-md);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  font-size: 0.9rem;
+}
+
+.run-diagnosis-group h4 {
+  margin: 0 0 var(--space-xs);
+  color: var(--color-danger);
+  font-size: 0.95rem;
+}
+
+.run-diagnosis-group p {
+  margin: 0 0 var(--space-xs);
+  color: var(--color-text);
+}
+
+.run-diagnosis-remedy {
+  color: var(--color-text-muted) !important;
+}
+
+.run-diagnosis-examples {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-md);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  word-break: break-all;
+}

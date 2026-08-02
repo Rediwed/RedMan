@@ -1384,6 +1384,12 @@
       "getRelayStatus",
       "startNtfyRelay",
       "stopNtfyRelay"
+    ],
+    "rcloneDiagnostics": [
+      "MAX_FILENAME_BYTES",
+      "classifyRcloneError",
+      "summariseRcloneFailures",
+      "describeRcloneFailures"
     ]
   },
   "frontendApi": {

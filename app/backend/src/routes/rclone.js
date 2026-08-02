@@ -17,6 +17,7 @@ import {
   startClaimedRun,
 } from '../services/runLifecycle.js';
 import { validateCronExpression } from '../services/schedulePolicy.js';
+import { summariseRcloneFailures } from '../services/rcloneDiagnostics.js';
 import { notifyJobCancelled, shouldNotify } from '../services/notify.js';
 import { getJobHealth } from '../services/jobHealth.js';
 
@@ -235,6 +236,15 @@ router.get('/runs/:id', (req, res) => {
     getActiveRun: getActiveRcloneRun,
   });
   if (!run) return res.status(404).json({ error: 'Run not found' });
+  // Derived on read rather than stored, so runs that already failed get an
+  // explanation too — which is exactly when one is wanted.
+  if (run.files_failed > 0) {
+    const failures = db.prepare(`
+      SELECT file_path AS path, error FROM backup_run_files
+      WHERE run_id = ? AND action = 'error' LIMIT 5000
+    `).all(run.id);
+    run.diagnosis = summariseRcloneFailures(failures);
+  }
   res.json(run);
 });
 

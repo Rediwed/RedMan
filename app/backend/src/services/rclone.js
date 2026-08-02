@@ -9,6 +9,7 @@ import { claimBackupRun } from './runClaim.js';
 import { assertLocalSourceHasEntries, assertRemoteSourceHasEntries } from './sourceHealth.js';
 import { terminateChildProcesses } from './childProcessShutdown.js';
 import { appendOutputTail } from './rsyncOutput.js';
+import { describeRcloneFailures } from './rcloneDiagnostics.js';
 import { isWithinPrefix, localPathsOverlap, normalizePath, pathsOverlap } from '../middleware/validation.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './pathConfinement.js';
 import { storageConfig } from './storageConfig.js';
@@ -177,6 +178,11 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       for (const entry of entries) insertFile.run(entry.runId, entry.path, entry.action, entry.size, entry.error);
     });
     let fileBatch = [];
+    // Kept for the run summary. Bounded: only failures, and only what is needed
+    // to name the cause, so a run that fails on everything cannot grow this
+    // without limit.
+    const failures = [];
+    const MAX_TRACKED_FAILURES = 5_000;
     const flushFiles = () => {
       if (fileBatch.length === 0) return;
       insertAllFiles(fileBatch);
@@ -185,6 +191,9 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
     const logProcessor = createRcloneLogProcessor({
       onFileEntry(file) {
         fileBatch.push({ runId, path: file.path, action: file.action, size: file.size || 0, error: file.error || null });
+        if (file.action === 'error' && failures.length < MAX_TRACKED_FAILURES) {
+          failures.push({ path: file.path, error: file.error });
+        }
         if (fileBatch.length >= 1000) flushFiles();
       },
     });
@@ -242,7 +251,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       status,
       stats.filesTotal, stats.filesCopied, stats.filesFailed,
       stats.bytesTransferred, duration,
-      stats.filesFailed > 0 ? `${stats.filesFailed} file(s) failed` : null,
+      stats.filesFailed > 0 ? describeRcloneFailures(failures) || `${stats.filesFailed} file(s) failed` : null,
       runId,
     );
 

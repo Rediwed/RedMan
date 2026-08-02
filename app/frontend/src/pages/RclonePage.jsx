@@ -909,9 +909,25 @@ export default function RclonePage() {
                 <div className="run-stat"><span className="run-stat-label">Failed</span><span className={selectedRun.files_failed ? 'danger-text' : ''}>{selectedRun.files_failed || 0}</span></div>
                 <div className="run-stat"><span className="run-stat-label">Transferred</span><span>{formatBytes(selectedRun.bytes_transferred || 0)}</span></div>
               </div>
-              {selectedRun.status === 'failed' && (
+              {selectedRun.status === 'failed' && !selectedRun.diagnosis?.groups?.length && (
                 <div className="alert alert-error" style={{ marginTop: 'var(--space-md)', whiteSpace: 'pre-wrap' }}>
                   {selectedRun.error_message || 'Sync failed — no error details were recorded for this run.'}
+                </div>
+              )}
+              {selectedRun.diagnosis?.groups?.length > 0 && (
+                <div className="run-diagnosis">
+                  {selectedRun.diagnosis.groups.map(group => (
+                    <div key={group.code} className="run-diagnosis-group">
+                      <h4>{group.count} × {group.title}</h4>
+                      <p>{group.explain}</p>
+                      <p className="run-diagnosis-remedy">{group.remedy}</p>
+                      {group.examples?.length > 0 && (
+                        <ul className="run-diagnosis-examples">
+                          {group.examples.map((example, i) => <li key={i} className="mono-cell">{example}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
               {selectedRun.files?.length > 0 && (
