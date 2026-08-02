@@ -2,6 +2,7 @@
 // Supports per-event toggles, multiple auth types, and progress updates
 
 import db from '../db.js';
+import { recordEvent } from './events.js';
 
 // Browser SSE subscribers
 const browserSubscribers = new Map();
@@ -77,7 +78,10 @@ export function sendBrowser(type, title, body) {
   }
 }
 
-function sendQuiet(settings, eventKey, type, title, body, { priority, tags } = {}) {
+function sendQuiet(settings, eventKey, type, title, body, { priority, tags, subject, detail } = {}) {
+  // Recorded before the delivery gates: switching a channel off should cost you
+  // delivery, not the history of what happened.
+  recordEvent(type, { title, body, priority, subject, detail });
   if (isNtfyEnabled(settings, eventKey)) {
     sendNtfy(settings, body, { title, priority, tags }).catch(() => {});
   }
@@ -127,7 +131,7 @@ export function notifyJobStarted(feature, name) {
   const settings = getAllSettings();
   const title = `Job Started — ${name}`;
   const body = `Feature: ${feature}\nJob: ${name}`;
-  sendQuiet(settings, 'ntfy_on_job_start', 'job_started', title, body, { tags: 'rocket' });
+  sendQuiet(settings, 'ntfy_on_job_start', 'job_started', title, body, { tags: 'rocket', subject: name, detail: { feature } });
 }
 
 export function notifyJobCompleted(feature, name, stats = {}) {
@@ -137,7 +141,7 @@ export function notifyJobCompleted(feature, name, stats = {}) {
   if (stats.filesCopied !== undefined) lines.push(`Files: ${stats.filesCopied}`);
   if (stats.bytesTransferred !== undefined) lines.push(`Transferred: ${formatBytes(stats.bytesTransferred)}`);
   if (stats.duration !== undefined) lines.push(`Duration: ${formatDuration(stats.duration)}`);
-  sendQuiet(settings, 'ntfy_on_job_complete', 'job_completed', title, lines.join('\n'), { tags: 'white_check_mark' });
+  sendQuiet(settings, 'ntfy_on_job_complete', 'job_completed', title, lines.join('\n'), { tags: 'white_check_mark', subject: name, detail: { feature, ...stats } });
 }
 
 export function notifyJobPartial(feature, name, stats = {}) {
@@ -149,26 +153,28 @@ export function notifyJobPartial(feature, name, stats = {}) {
   if (stats.bytesTransferred !== undefined) lines.push(`Transferred: ${formatBytes(stats.bytesTransferred)}`);
   if (stats.duration !== undefined) lines.push(`Duration: ${formatDuration(stats.duration)}`);
   if (stats.errorMessage) lines.push(`Warning: ${stats.errorMessage}`);
-  sendQuiet(settings, 'ntfy_on_job_error', 'job_partial', title, lines.join('\n'), { priority: '4', tags: 'warning' });
+  sendQuiet(settings, 'ntfy_on_job_error', 'job_partial', title, lines.join('\n'), { priority: '4', tags: 'warning', subject: name, detail: { feature, ...stats } });
 }
 
 export function notifyJobError(feature, name, errorMsg) {
   const settings = getAllSettings();
   const title = `${feature}: ${name} — Failed`;
   const body = `Error: ${errorMsg || 'Unknown error'}`;
-  sendQuiet(settings, 'ntfy_on_job_error', 'job_error', title, body, { priority: '4', tags: 'x' });
+  sendQuiet(settings, 'ntfy_on_job_error', 'job_error', title, body, { priority: '4', tags: 'x', subject: name, detail: { feature } });
 }
 
 export function notifyJobCancelled(feature, name) {
   const settings = getAllSettings();
   const title = `${feature}: ${name} — Cancelled`;
-  sendQuiet(settings, 'ntfy_on_job_complete', 'job_cancelled', title, 'Job was cancelled by user', { tags: 'no_entry_sign' });
+  sendQuiet(settings, 'ntfy_on_job_complete', 'job_cancelled', title, 'Job was cancelled by user', { tags: 'no_entry_sign', subject: name, detail: { feature } });
 }
 
 export function notifyJobSkipped(feature, name, consecutiveSkips) {
   const settings = getAllSettings();
   const title = `⚠️ ${name} — Schedule too aggressive`;
   const body = `"${name}" has been skipped ${consecutiveSkips} times in a row because the previous run was still active. Consider adjusting the schedule.`;
+  // Bypasses sendQuiet, so it records its own event.
+  recordEvent('job_skipped', { title, body, subject: name, detail: { feature, consecutiveSkips } });
   // Always send to browser so it's visible in the UI
   sendBrowser('job_skipped', title, body);
   // Also send via ntfy using error channel (high priority)

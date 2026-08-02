@@ -10,7 +10,7 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
 import {
-  Activity, Plus, RefreshCw, Trash2, KeyRound, Copy, Check,
+  ListChecks, Plus, RefreshCw, Trash2, KeyRound, Copy, Check,
   AlertTriangle, Clock, Server, ChevronDown, ChevronRight, X,
 } from 'lucide-react';
 import './ExternalJobsPage.css';
@@ -148,7 +148,7 @@ export default function ExternalJobsPage() {
   return (
     <div className="external-jobs-page">
       <div className="page-header">
-        <h1><Activity size={24} /> External Jobs</h1>
+        <h1><ListChecks size={24} /> External Jobs</h1>
         <div className="page-header-actions">
           <button className="btn btn-ghost btn-sm" onClick={load}>
             <RefreshCw size={14} /> Refresh

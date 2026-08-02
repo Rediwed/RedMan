@@ -266,3 +266,14 @@ export const getExternalJobRuns = (jobId = null, page = 1, limit = 50) => {
   if (jobId) params.set('job_id', jobId);
   return fetchJSON(`/external-jobs/runs?${params}`);
 };
+
+// ===== Event history =====
+export const getEvents = (filters = {}, page = 1, limit = 50) => {
+  const params = new URLSearchParams({ page, limit });
+  for (const key of ['severity', 'category', 'type', 'since']) {
+    if (filters[key]) params.set(key, filters[key]);
+  }
+  return fetchJSON(`/events?${params}`);
+};
+export const getEventSummary = (since = '-24 hours') =>
+  fetchJSON(`/events/summary?since=${encodeURIComponent(since)}`);

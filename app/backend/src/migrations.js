@@ -947,6 +947,29 @@ const migrations = [
       console.log('[migration-29] Added external job heartbeat tables');
     }
   },
+  {
+    version: 30,
+    description: 'Persist notifiable events so the UI has a history, not just a live feed',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL,
+          category TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          subject TEXT,
+          title TEXT NOT NULL,
+          body TEXT,
+          detail TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+        CREATE INDEX IF NOT EXISTS idx_events_severity_created ON events(severity, created_at);
+        CREATE INDEX IF NOT EXISTS idx_events_category_created ON events(category, created_at);
+      `);
+      console.log('[migration-30] Added event history table');
+    }
+  },
 ];
 
 /**

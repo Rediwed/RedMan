@@ -32,6 +32,7 @@ db.exec(`
     id INTEGER PRIMARY KEY, direction TEXT, status TEXT, error TEXT,
     expires_at TEXT, updated_at TEXT
   );
+  CREATE TABLE events (id INTEGER PRIMARY KEY, created_at TEXT);
   CREATE TABLE external_jobs (id INTEGER PRIMARY KEY);
   CREATE TABLE external_job_runs (
     id INTEGER PRIMARY KEY,
@@ -54,6 +55,8 @@ db.exec(`
   INSERT INTO auth_recovery_events VALUES (1, 'used', datetime('now', '-40 days'), datetime('now', '-40 days'));
   INSERT INTO pairing_requests VALUES (1, 'incoming', 'pending', NULL, datetime('now', '-1 minute'), datetime('now', '-1 minute'));
   INSERT INTO pairing_requests VALUES (2, 'incoming', 'expired', NULL, datetime('now', '-2 hours'), datetime('now', '-2 hours'));
+  INSERT INTO events VALUES (1, datetime('now', '-200 days'));
+  INSERT INTO events VALUES (2, datetime('now', '-1 days'));
   INSERT INTO external_jobs VALUES (1);
   INSERT INTO external_job_runs VALUES (1, 1, datetime('now', '-200 days'));
   INSERT INTO external_job_runs VALUES (2, 1, datetime('now', '-190 days'));
@@ -81,6 +84,7 @@ assert.deepEqual(removed, {
   pairingExpired: 1,
   pairingHistory: 1,
   externalRuns: 1,
+  events: 1,
 });
 assert.equal(db.prepare('SELECT COUNT(*) AS count FROM backup_runs').get().count, 1);
 assert.equal(db.prepare('SELECT COUNT(*) AS count FROM peer_audit_log').get().count, 1);

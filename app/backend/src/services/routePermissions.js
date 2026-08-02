@@ -88,6 +88,9 @@ export const API_ROUTE_POLICIES = Object.freeze([
   // regenerating one rather than treated as routine configuration.
   policy(['POST'], /^\/external-jobs\/?$/, PERMISSIONS.SECRETS),
   policy(['POST'], /^\/external-jobs\/\d+\/regenerate-token$/, PERMISSIONS.SECRETS),
+
+  policy(['GET'], /^\/events\/?$/, PERMISSIONS.READ),
+  policy(['GET'], /^\/events\/summary$/, PERMISSIONS.READ),
 ]);
 
 export function getRoutePermission(method, pathname) {

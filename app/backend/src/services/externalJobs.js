@@ -7,6 +7,7 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { nextCronOccurrence } from './schedulePolicy.js';
 import { parseDbTime } from './jobHealth.js';
+import { recordEvent } from './events.js';
 
 const TOKEN_BYTES = 32;
 const MAX_MESSAGE_LENGTH = 500;
@@ -201,6 +202,8 @@ export function recordHeartbeat(db, slug, token, payload = {}) {
     : null;
   const message = payload.message ? String(payload.message).slice(0, MAX_MESSAGE_LENGTH) : null;
 
+  const previous = latestRun(db, job.id, ['completed', 'failed']);
+
   db.transaction(() => {
     db.prepare(`
       INSERT INTO external_job_runs (job_id, status, exit_code, duration_seconds, message)
@@ -208,6 +211,24 @@ export function recordHeartbeat(db, slug, token, payload = {}) {
     `).run(job.id, status, exitCode, duration, message);
     db.prepare("UPDATE external_jobs SET last_reported_at = datetime('now') WHERE id = ?").run(job.id);
   })();
+
+  // Only transitions are logged; a job reporting success every hour should not
+  // fill the timeline with identical entries.
+  if (status === 'failed' && previous?.status !== 'failed') {
+    recordEvent('external_job_failed', {
+      title: `${job.name} — failed`,
+      body: message || `Exit code ${exitCode ?? 'unknown'}`,
+      subject: job.name,
+      detail: { slug: job.slug, host: job.host, exit_code: exitCode },
+    });
+  } else if (status === 'completed' && previous?.status === 'failed') {
+    recordEvent('external_job_recovered', {
+      title: `${job.name} — recovered`,
+      body: 'Reported success after a previous failure',
+      subject: job.name,
+      detail: { slug: job.slug, host: job.host },
+    });
+  }
 
   return { slug: job.slug, status };
 }

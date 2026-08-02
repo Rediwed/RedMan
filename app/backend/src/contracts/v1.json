@@ -594,6 +594,25 @@
       "POST /api/external-jobs/:id/regenerate-token": {
         "auth": true
       }
+    },
+    "events": {
+      "GET /api/events": {
+        "auth": true,
+        "query": [
+          "severity",
+          "category",
+          "type",
+          "since",
+          "page",
+          "limit"
+        ]
+      },
+      "GET /api/events/summary": {
+        "auth": true,
+        "query": [
+          "since"
+        ]
+      }
     }
   },
   "peerApi": {
@@ -977,6 +996,19 @@
         "message": "TEXT",
         "reported_at": "TEXT NOT NULL"
       }
+    },
+    "events": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "type": "TEXT NOT NULL",
+        "category": "TEXT NOT NULL",
+        "severity": "TEXT NOT NULL",
+        "subject": "TEXT",
+        "title": "TEXT NOT NULL",
+        "body": "TEXT",
+        "detail": "TEXT",
+        "created_at": "TEXT NOT NULL"
+      }
     }
   },
   "services": {
@@ -1320,6 +1352,13 @@
       "recordHeartbeat",
       "listExternalJobRuns",
       "pruneExternalJobRuns"
+    ],
+    "events": [
+      "SEVERITIES",
+      "recordEvent",
+      "listEvents",
+      "getEventSummary",
+      "listEventCategories"
     ]
   },
   "frontendApi": {
@@ -1449,7 +1488,9 @@
       "updateExternalJob",
       "deleteExternalJob",
       "regenerateExternalJobToken",
-      "getExternalJobRuns"
+      "getExternalJobRuns",
+      "getEvents",
+      "getEventSummary"
     ]
   }
 }
