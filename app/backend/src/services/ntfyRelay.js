@@ -274,11 +274,14 @@ export function startNtfyRelay() {
   stopNtfyRelay();
   stopped = false;
   const settings = readSettings();
+  // Scheduled even when unconfigured: each cycle re-reads the settings, so
+  // switching the relay on takes effect on the next poll rather than needing a
+  // restart to be noticed.
   if (!isRelayConfigured(settings)) {
-    console.log('[ntfy-relay] Not configured; no heartbeats will be collected.');
-    return null;
+    console.log('[ntfy-relay] Not configured; watching for it to be switched on.');
+  } else {
+    console.log(`[ntfy-relay] Polling every ${pollIntervalMs(settings) / 1000}s`);
   }
-  console.log(`[ntfy-relay] Polling every ${pollIntervalMs(settings) / 1000}s`);
   return schedule(START_DELAY_MS);
 }
 
