@@ -277,3 +277,6 @@ export const getEvents = (filters = {}, page = 1, limit = 50) => {
 };
 export const getEventSummary = (since = '-24 hours') =>
   fetchJSON(`/events/summary?since=${encodeURIComponent(since)}`);
+
+// ===== System status board =====
+export const getSystemStatus = () => fetchJSON('/status');

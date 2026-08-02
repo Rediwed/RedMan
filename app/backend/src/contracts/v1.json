@@ -613,6 +613,11 @@
           "since"
         ]
       }
+    },
+    "status": {
+      "GET /api/status": {
+        "auth": true
+      }
     }
   },
   "peerApi": {
@@ -1359,6 +1364,13 @@
       "listEvents",
       "getEventSummary",
       "listEventCategories"
+    ],
+    "systemStatus": [
+      "getSystemStatus"
+    ],
+    "peerConnectivity": [
+      "getPeerConnectivity",
+      "clearPeerConnectivityCache"
     ]
   },
   "frontendApi": {
@@ -1490,7 +1502,8 @@
       "regenerateExternalJobToken",
       "getExternalJobRuns",
       "getEvents",
-      "getEventSummary"
+      "getEventSummary",
+      "getSystemStatus"
     ]
   }
 }

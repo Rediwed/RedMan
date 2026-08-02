@@ -1,12 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getEvents, getEventSummary } from '../api/index.js';
+import { getEvents, getEventSummary, getSystemStatus } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, parseDbDate } from '../utils/dateFormat.js';
+import { Link } from 'react-router-dom';
 import {
   Activity, RefreshCw, AlertTriangle, XCircle, Info, Filter, ChevronDown, ChevronRight,
+  CheckCircle2, HelpCircle, PauseCircle,
 } from 'lucide-react';
 import './StatusPage.css';
+
+const STATE_META = {
+  fail: { icon: XCircle, className: 'st-fail', label: 'Failing' },
+  warn: { icon: AlertTriangle, className: 'st-warn', label: 'Attention' },
+  unknown: { icon: HelpCircle, className: 'st-unknown', label: 'Unknown' },
+  paused: { icon: PauseCircle, className: 'st-paused', label: 'Paused' },
+  ok: { icon: CheckCircle2, className: 'st-ok', label: 'Healthy' },
+};
 
 const WINDOWS = [
   { value: '-1 hours', label: 'Last hour' },
@@ -34,6 +44,7 @@ function relativeAge(value) {
 
 export default function StatusPage() {
   const { settings } = useSettings();
+  const [board, setBoard] = useState(null);
   const [summary, setSummary] = useState(null);
   const [data, setData] = useState({ events: [], total: 0 });
   const [filters, setFilters] = useState({ severity: '', category: '', since: '-24 hours' });
@@ -41,15 +52,18 @@ export default function StatusPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [openCategory, setOpenCategory] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [events, sum] = await Promise.all([
+      const [events, sum, status] = await Promise.all([
         getEvents(filters, page, 50),
         getEventSummary(filters.since),
+        getSystemStatus(),
       ]);
       setData(events);
       setSummary(sum);
+      setBoard(status);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -88,6 +102,84 @@ export default function StatusPage() {
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
+
+      {board && (
+        <section className="status-board">
+          <div className={`status-board-head ${STATE_META[board.overall].className}`}>
+            {(() => { const Icon = STATE_META[board.overall].icon; return <Icon size={20} />; })()}
+            <div>
+              <strong>
+                {board.overall === 'ok'
+                  ? 'Everything RedMan can see is healthy'
+                  : `${(board.counts.fail || 0) + (board.counts.warn || 0)} of ${
+                    Object.values(board.counts).reduce((a, b) => a + b, 0)} checks need attention`}
+              </strong>
+              <div className="status-board-counts">
+                {['fail', 'warn', 'unknown', 'paused', 'ok'].map(state =>
+                  board.counts[state]
+                    ? <span key={state} className={STATE_META[state].className}>
+                      {board.counts[state]} {STATE_META[state].label.toLowerCase()}
+                    </span>
+                    : null)}
+              </div>
+            </div>
+          </div>
+
+          {board.failedCollectors.length > 0 && (
+            <div className="alert alert-error status-collector-error">
+              Some checks could not run: {board.failedCollectors.map(f => f.collector).join(', ')}.
+              The rest of the board is still accurate.
+            </div>
+          )}
+
+          <div className="status-board-grid">
+            {board.categories.map(cat => {
+              const meta = STATE_META[cat.state];
+              const Icon = meta.icon;
+              const isOpen = openCategory === cat.name;
+              // Anything that is not plainly healthy stays visible when collapsed:
+              // hiding "unknown" behind an "all healthy" summary would be the
+              // false reassurance this board exists to remove.
+              const notable = cat.checks.filter(c => c.state !== 'ok');
+              const shown = isOpen ? cat.checks : notable;
+              return (
+                <div key={cat.name} className={`status-card ${meta.className}`}>
+                  <button className="status-card-head" onClick={() => setOpenCategory(isOpen ? null : cat.name)}>
+                    <Icon size={16} />
+                    <span className="status-card-title">{cat.name}</span>
+                    <span className="status-card-count">{cat.checks.length}</span>
+                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  {shown.length === 0 && !isOpen && (
+                    <div className="status-card-ok">All {cat.checks.length} healthy</div>
+                  )}
+                  {shown.map(item => {
+                    const cm = STATE_META[item.state];
+                    const CIcon = cm.icon;
+                    return (
+                      <div key={item.id} className={`status-check ${cm.className}`}>
+                        <CIcon size={13} />
+                        <div className="status-check-main">
+                          <div className="status-check-subject">
+                            {item.link
+                              ? <Link to={item.link}>{item.subject}</Link>
+                              : item.subject}
+                          </div>
+                          <div className="status-check-summary">
+                            {item.summary}{item.at ? ` ${formatDateTime(item.at, settings)}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      <h2 className="status-section-title">Recent activity</h2>
 
       <div className="status-summary">
         {['error', 'warning', 'info'].map(sev => {

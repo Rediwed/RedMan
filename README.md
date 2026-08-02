@@ -709,6 +709,7 @@ All feature routes are prefixed with `/api/` and pass through the selected authe
 | `/api/external-jobs/*` | External job registration, health, and run history (authenticated) |
 | `POST /api/external-jobs/heartbeat/:slug` | Heartbeat ingest for schedules on other hosts (per-job Bearer token, not a user session) |
 | `/api/events/*` | Event history and severity summary |
+| `GET /api/status` | Normalized status board across backups, external jobs, containers, and peers |
 
 #### External job heartbeats
 

@@ -23,6 +23,7 @@ import upgradeReadinessRoutes from './routes/upgradeReadiness.js';
 import discoveryRoutes from './routes/discovery.js';
 import externalJobRoutes, { heartbeatRouter as externalJobHeartbeatRouter } from './routes/externalJobs.js';
 import eventRoutes from './routes/events.js';
+import statusRoutes from './routes/status.js';
 import { createPeerApi } from './peerApi.js';
 import { startScheduler, registerExecutor, getActiveJobCount, getRunningJobCount, stopAllJobs, startRunFileRetention, stopRunFileRetention } from './services/scheduler.js';
 import { executeSsdBackup, stopActiveRsyncProcesses } from './services/rsync.js';
@@ -151,6 +152,7 @@ app.use('/api/upgrade-readiness', upgradeReadinessRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/external-jobs', externalJobRoutes);
 app.use('/api/events', eventRoutes);
+app.use('/api/status', statusRoutes);
 
 // In production, serve the built frontend
 const publicDir = join(__dirname, '..', 'public');

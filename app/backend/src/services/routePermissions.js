@@ -91,6 +91,7 @@ export const API_ROUTE_POLICIES = Object.freeze([
 
   policy(['GET'], /^\/events\/?$/, PERMISSIONS.READ),
   policy(['GET'], /^\/events\/summary$/, PERMISSIONS.READ),
+  policy(['GET'], /^\/status\/?$/, PERMISSIONS.READ),
 ]);
 
 export function getRoutePermission(method, pathname) {
