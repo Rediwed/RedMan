@@ -916,18 +916,38 @@ export default function RclonePage() {
               )}
               {selectedRun.diagnosis?.groups?.length > 0 && (
                 <div className="run-diagnosis">
-                  {selectedRun.diagnosis.groups.map(group => (
-                    <div key={group.code} className="run-diagnosis-group">
-                      <h4>{group.count} × {group.title}</h4>
-                      <p>{group.explain}</p>
-                      <p className="run-diagnosis-remedy">{group.remedy}</p>
-                      {group.examples?.length > 0 && (
-                        <ul className="run-diagnosis-examples">
-                          {group.examples.map((example, i) => <li key={i} className="mono-cell">{example}</li>)}
-                        </ul>
-                      )}
-                    </div>
-                  ))}
+                  {selectedRun.diagnosis.comparison?.unchanged && selectedRun.diagnosis.unchangedRuns > 0 && (
+                    <p className="run-diagnosis-note">
+                      Unchanged across the last {selectedRun.diagnosis.unchangedRuns + 1} runs
+                      {selectedRun.diagnosis.unchangedSince && <> — since {formatDateTime(selectedRun.diagnosis.unchangedSince, settings)}</>}.
+                      These files are still not backed up.
+                    </p>
+                  )}
+                  {selectedRun.diagnosis.groups.map(group => {
+                    const isNew = selectedRun.diagnosis.comparison?.newCodes?.includes(group.code);
+                    const changed = selectedRun.diagnosis.comparison?.changedCodes?.find(c => c.code === group.code);
+                    return (
+                      <div key={group.code} className={`run-diagnosis-group${isNew ? ' is-new' : ''}`}>
+                        <h4>
+                          {isNew && <span className="run-diagnosis-badge">New</span>}
+                          {group.count} × {group.title}
+                          {changed && <span className="run-diagnosis-delta"> (was {changed.from})</span>}
+                        </h4>
+                        <p>{group.explain}</p>
+                        <p className="run-diagnosis-remedy">{group.remedy}</p>
+                        {group.examples?.length > 0 && (
+                          <ul className="run-diagnosis-examples">
+                            {group.examples.map((example, i) => <li key={i} className="mono-cell">{example}</li>)}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {selectedRun.diagnosis.comparison?.resolvedCodes?.length > 0 && (
+                    <p className="run-diagnosis-note">
+                      No longer occurring: {selectedRun.diagnosis.comparison.resolvedCodes.join(', ')}.
+                    </p>
+                  )}
                 </div>
               )}
               {selectedRun.files?.length > 0 && (

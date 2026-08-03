@@ -9,7 +9,7 @@ import { claimBackupRun } from './runClaim.js';
 import { assertLocalSourceHasEntries, assertRemoteSourceHasEntries } from './sourceHealth.js';
 import { terminateChildProcesses } from './childProcessShutdown.js';
 import { appendOutputTail } from './rsyncOutput.js';
-import { describeRcloneFailures } from './rcloneDiagnostics.js';
+import { describeRcloneFailures, summariseRcloneFailures, compareFailureSummaries } from './rcloneDiagnostics.js';
 import { isWithinPrefix, localPathsOverlap, normalizePath, pathsOverlap } from '../middleware/validation.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './pathConfinement.js';
 import { storageConfig } from './storageConfig.js';
@@ -240,6 +240,27 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
         ? (stats.filesFailed > 0 ? 'partial' : 'completed')
         : stats.filesCopied > 0 ? 'partial' : 'failed';
 
+    // Compare against the previous run so a job that has been failing the same
+    // way for weeks cannot hide the one failure that is new tonight.
+    let comparison = null;
+    if (failures.length > 0) {
+      const previousRun = db.prepare(`
+        SELECT id FROM backup_runs
+        WHERE feature = 'rclone' AND config_id = ? AND id < ? AND status IN ('completed', 'partial', 'failed')
+        ORDER BY id DESC LIMIT 1
+      `).get(jobId, runId);
+      if (previousRun) {
+        const previousFailures = db.prepare(`
+          SELECT error, COUNT(*) AS count FROM backup_run_files
+          WHERE run_id = ? AND action = 'error' GROUP BY error
+        `).all(previousRun.id);
+        comparison = compareFailureSummaries(
+          summariseRcloneFailures(failures),
+          summariseRcloneFailures(previousFailures),
+        );
+      }
+    }
+
     db.prepare(`
       UPDATE backup_runs SET
         status = ?, completed_at = datetime('now'),
@@ -251,7 +272,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       status,
       stats.filesTotal, stats.filesCopied, stats.filesFailed,
       stats.bytesTransferred, duration,
-      stats.filesFailed > 0 ? describeRcloneFailures(failures) || `${stats.filesFailed} file(s) failed` : null,
+      stats.filesFailed > 0 ? describeRcloneFailures(failures, comparison) || `${stats.filesFailed} file(s) failed` : null,
       runId,
     );
 

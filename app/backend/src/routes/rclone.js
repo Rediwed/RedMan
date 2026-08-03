@@ -17,7 +17,7 @@ import {
   startClaimedRun,
 } from '../services/runLifecycle.js';
 import { validateCronExpression } from '../services/schedulePolicy.js';
-import { summariseRcloneFailures } from '../services/rcloneDiagnostics.js';
+import { summariseRcloneFailures, fingerprintFailures, compareFailureSummaries } from '../services/rcloneDiagnostics.js';
 import { notifyJobCancelled, shouldNotify } from '../services/notify.js';
 import { getJobHealth } from '../services/jobHealth.js';
 
@@ -228,6 +228,73 @@ router.get('/runs/:id/progress', (req, res) => {
 });
 
 // Get run detail (paginated file list for scale — defaults to first 1000)
+// How far back to look for the moment this failure pattern started. Bounded so
+// a job that has failed for a year cannot turn one page load into a table scan.
+const DIAGNOSIS_HISTORY_LIMIT = 30;
+
+// Errors carry the failing path, so distinct messages scale with failing files
+// rather than with causes. Only the largest groups can change a diagnosis, so
+// the query is capped to keep one page load off a multi-million-row result.
+const DIAGNOSIS_MAX_GROUPS = 2_000;
+
+// Aggregated in SQL rather than per file, so a run's failures never all have to
+// be materialised in Node.
+function failureCountsForRuns(runIds) {
+  if (runIds.length === 0) return new Map();
+  const placeholders = runIds.map(() => '?').join(', ');
+  const rows = db.prepare(`
+    SELECT run_id, error, MIN(file_path) AS path, COUNT(*) AS count
+    FROM backup_run_files
+    WHERE run_id IN (${placeholders}) AND action = 'error'
+    GROUP BY run_id, error
+    ORDER BY count DESC
+    LIMIT ?
+  `).all(...runIds, DIAGNOSIS_MAX_GROUPS);
+
+  const perRun = new Map();
+  for (const row of rows) {
+    if (!perRun.has(row.run_id)) perRun.set(row.run_id, []);
+    perRun.get(row.run_id).push(row);
+  }
+  return perRun;
+}
+
+function diagnoseRun(run) {
+  const history = db.prepare(`
+    SELECT id, started_at FROM backup_runs
+    WHERE feature = 'rclone' AND config_id = ? AND id < ? AND status IN ('completed', 'partial', 'failed')
+    ORDER BY id DESC LIMIT ?
+  `).all(run.config_id, run.id, DIAGNOSIS_HISTORY_LIMIT);
+
+  const counts = failureCountsForRuns([run.id, ...history.map(h => h.id)]);
+  const summary = summariseRcloneFailures(counts.get(run.id) || []);
+  const fingerprint = fingerprintFailures(summary);
+
+  const previous = history.length ? summariseRcloneFailures(counts.get(history[0].id) || []) : null;
+  const comparison = compareFailureSummaries(summary, previous);
+
+  // Walk back while the pattern holds, so the report can say how long this has
+  // been true instead of only that it is true.
+  let unchangedSince = null;
+  let unchangedRuns = 0;
+  if (comparison.unchanged) {
+    for (const older of history) {
+      if (fingerprintFailures(summariseRcloneFailures(counts.get(older.id) || [])) !== fingerprint) break;
+      unchangedSince = older.started_at;
+      unchangedRuns += 1;
+    }
+  }
+
+  return {
+    ...summary,
+    fingerprint,
+    comparison,
+    unchangedSince,
+    unchangedRuns,
+    historyTruncated: history.length === DIAGNOSIS_HISTORY_LIMIT,
+  };
+}
+
 router.get('/runs/:id', (req, res) => {
   const run = getRunDetail(db, {
     feature: 'rclone',
@@ -238,13 +305,7 @@ router.get('/runs/:id', (req, res) => {
   if (!run) return res.status(404).json({ error: 'Run not found' });
   // Derived on read rather than stored, so runs that already failed get an
   // explanation too — which is exactly when one is wanted.
-  if (run.files_failed > 0) {
-    const failures = db.prepare(`
-      SELECT file_path AS path, error FROM backup_run_files
-      WHERE run_id = ? AND action = 'error' LIMIT 5000
-    `).all(run.id);
-    run.diagnosis = summariseRcloneFailures(failures);
-  }
+  if (run.files_failed > 0) run.diagnosis = diagnoseRun(run);
   res.json(run);
 });
 

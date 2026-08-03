@@ -1389,7 +1389,9 @@
       "MAX_FILENAME_BYTES",
       "classifyRcloneError",
       "summariseRcloneFailures",
-      "describeRcloneFailures"
+      "describeRcloneFailures",
+      "fingerprintFailures",
+      "compareFailureSummaries"
     ]
   },
   "frontendApi": {

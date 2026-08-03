@@ -8,6 +8,8 @@ import {
   classifyRcloneError,
   summariseRcloneFailures,
   describeRcloneFailures,
+  fingerprintFailures,
+  compareFailureSummaries,
   MAX_FILENAME_BYTES,
 } from '../app/backend/src/services/rcloneDiagnostics.js';
 
@@ -113,6 +115,81 @@ check('examples are capped so one bad run cannot bloat the response', () => {
   const summary = summariseRcloneFailures(many);
   assert.equal(summary.groups[0].count, 500);
   assert.equal(summary.groups[0].examples.length, 3);
+});
+
+// ── Telling a chronic failure from a new one ───────────────────────
+
+check('pre-aggregated rows count the same as one entry per file', () => {
+  const perFile = summariseRcloneFailures(
+    Array.from({ length: 5 }, () => ({ error: REAL.nameTooLong })),
+  );
+  const aggregated = summariseRcloneFailures([{ error: REAL.nameTooLong, count: 5 }]);
+  assert.equal(perFile.total, aggregated.total);
+  assert.equal(fingerprintFailures(perFile), fingerprintFailures(aggregated));
+});
+
+check('the same failure two nights running has the same fingerprint', () => {
+  const night = () => summariseRcloneFailures([
+    { error: REAL.nameTooLong, count: 142 },
+    { error: REAL.lockedVault, count: 1 },
+  ]);
+  assert.equal(fingerprintFailures(night()), fingerprintFailures(night()));
+  assert.equal(compareFailureSummaries(night(), night()).unchanged, true);
+});
+
+check('a changed count is not mistaken for unchanged', () => {
+  const before = summariseRcloneFailures([{ error: REAL.nameTooLong, count: 142 }]);
+  const after = summariseRcloneFailures([{ error: REAL.nameTooLong, count: 143 }]);
+  const cmp = compareFailureSummaries(after, before);
+  assert.equal(cmp.unchanged, false);
+  assert.deepEqual(cmp.changedCodes, [{ code: 'name-too-long', from: 142, to: 143 }]);
+});
+
+check('a new cause hiding among chronic ones is surfaced', () => {
+  // The case this exists for: 142 known failures every night, and tonight one
+  // permission error appears among them.
+  const before = summariseRcloneFailures([{ error: REAL.nameTooLong, count: 142 }]);
+  const after = summariseRcloneFailures([
+    { error: REAL.nameTooLong, count: 142 },
+    { error: 'Failed to copy: permission denied', count: 1 },
+  ]);
+  const cmp = compareFailureSummaries(after, before);
+  assert.equal(cmp.unchanged, false);
+  assert.deepEqual(cmp.newCodes, ['permission-denied']);
+});
+
+check('a cause that stopped occurring is reported as resolved', () => {
+  const before = summariseRcloneFailures([
+    { error: REAL.nameTooLong, count: 142 },
+    { error: REAL.tooSlow, count: 1 },
+  ]);
+  const after = summariseRcloneFailures([{ error: REAL.nameTooLong, count: 142 }]);
+  const cmp = compareFailureSummaries(after, before);
+  assert.deepEqual(cmp.resolvedCodes, ['transfer-too-slow']);
+});
+
+check('the first failing run is marked as such, not as unchanged', () => {
+  const cmp = compareFailureSummaries(summariseRcloneFailures([{ error: REAL.nameTooLong }]), null);
+  assert.equal(cmp.firstSeen, true);
+  assert.equal(cmp.unchanged, false);
+});
+
+check('the summary line says whether anything changed', () => {
+  const before = summariseRcloneFailures([{ error: REAL.nameTooLong, count: 142 }]);
+  const failures = [{ error: REAL.nameTooLong, count: 142 }];
+
+  const same = describeRcloneFailures(failures, compareFailureSummaries(summariseRcloneFailures(failures), before));
+  assert.match(same, /Unchanged from the previous run/);
+
+  const worse = [...failures, { error: 'Failed to copy: permission denied', count: 1 }];
+  const changed = describeRcloneFailures(worse, compareFailureSummaries(summariseRcloneFailures(worse), before));
+  assert.match(changed, /NEW since the previous run: not allowed to read or write/);
+  // The chronic failures stay in the line: they have not gone away.
+  assert.match(changed, /142 name longer than the filesystem allows/);
+});
+
+check('a clean run has a fingerprint of its own', () => {
+  assert.equal(fingerprintFailures(summariseRcloneFailures([])), 'clean');
 });
 
 console.log(`\n${passed} rclone diagnosis checks passed`);

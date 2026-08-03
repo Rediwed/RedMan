@@ -73,13 +73,19 @@ export function classifyRcloneError(error) {
 /**
  * Group failed entries by cause.
  *
- * @param {Array<{path?: string, error?: string}>} failures
+ * Entries may carry a `count` so callers can pass pre-aggregated rows straight
+ * from SQL instead of materialising one object per failed file.
+ *
+ * @param {Array<{path?: string, error?: string, count?: number}>} failures
  * @returns {{total: number, groups: Array<{code, title, explain, remedy, count, examples}>}}
  */
 export function summariseRcloneFailures(failures = []) {
   const groups = new Map();
+  let total = 0;
 
   for (const failure of failures) {
+    const weight = Number.isFinite(Number(failure?.count)) ? Number(failure.count) : 1;
+    total += weight;
     const cls = classifyRcloneError(failure?.error);
     const code = cls?.code ?? 'unrecognised';
     if (!groups.has(code)) {
@@ -93,25 +99,80 @@ export function summariseRcloneFailures(failures = []) {
       });
     }
     const group = groups.get(code);
-    group.count += 1;
+    group.count += weight;
     if (group.examples.length < 3 && failure?.path) group.examples.push(failure.path);
   }
 
   return {
-    total: failures.length,
+    total,
     // Largest group first: that is the one worth acting on.
     groups: [...groups.values()].sort((a, b) => b.count - a.count),
   };
 }
 
 /**
+ * A stable identity for "how this run failed".
+ *
+ * Two runs that fail the same way in the same amounts share a fingerprint, so a
+ * job that has been stuck for weeks can be told apart from one that broke last
+ * night — without pretending the failures are gone.
+ */
+export function fingerprintFailures(summary) {
+  if (!summary?.groups?.length) return 'clean';
+  return summary.groups
+    .map(group => `${group.code}:${group.count}`)
+    .sort()
+    .join('|');
+}
+
+/**
+ * Compare this run's failures with the previous one.
+ *
+ * The point is not to suppress anything. A chronic failure stays a failure; it
+ * just stops drowning out the one that is new.
+ */
+export function compareFailureSummaries(current, previous) {
+  const currentGroups = new Map((current?.groups || []).map(g => [g.code, g.count]));
+  if (!previous) {
+    return { firstSeen: true, unchanged: false, newCodes: [], resolvedCodes: [], changedCodes: [] };
+  }
+  const previousGroups = new Map((previous.groups || []).map(g => [g.code, g.count]));
+
+  const newCodes = [...currentGroups.keys()].filter(code => !previousGroups.has(code));
+  const resolvedCodes = [...previousGroups.keys()].filter(code => !currentGroups.has(code));
+  const changedCodes = [...currentGroups.entries()]
+    .filter(([code, count]) => previousGroups.has(code) && previousGroups.get(code) !== count)
+    .map(([code, count]) => ({ code, from: previousGroups.get(code), to: count }));
+
+  return {
+    firstSeen: false,
+    unchanged: newCodes.length === 0 && resolvedCodes.length === 0 && changedCodes.length === 0,
+    newCodes,
+    resolvedCodes,
+    changedCodes,
+  };
+}
+
+/**
  * One line for `backup_runs.error_message`, naming the causes rather than only
  * counting them.
+ *
+ * With a comparison it also says whether anything actually changed, which is
+ * what separates "still stuck on the same 146" from "something broke tonight".
  */
-export function describeRcloneFailures(failures = []) {
+export function describeRcloneFailures(failures = [], comparison = null) {
   const summary = summariseRcloneFailures(failures);
   if (summary.total === 0) return null;
 
   const parts = summary.groups.map(group => `${group.count} ${group.title.toLowerCase()}`);
-  return `${summary.total} file(s) failed — ${parts.join('; ')}`;
+  let line = `${summary.total} file(s) failed — ${parts.join('; ')}`;
+
+  if (comparison?.newCodes?.length) {
+    const titles = comparison.newCodes
+      .map(code => summary.groups.find(g => g.code === code)?.title.toLowerCase() || code);
+    line += `. NEW since the previous run: ${titles.join(', ')}`;
+  } else if (comparison?.unchanged) {
+    line += '. Unchanged from the previous run';
+  }
+  return line;
 }
