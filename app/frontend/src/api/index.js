@@ -108,8 +108,13 @@ export const getSsdDownloadUrl = (configId, timestamp, path) =>
   `/api/ssd-backup/configs/${configId}/download?timestamp=${encodeURIComponent(timestamp)}&path=${encodeURIComponent(path)}`;
 export const getSsdPreviewUrl = (configId, timestamp, path) =>
   `/api/ssd-backup/configs/${configId}/download?timestamp=${encodeURIComponent(timestamp)}&path=${encodeURIComponent(path)}&inline=true`;
-export const restoreSsdFile = (configId, timestamp, path, verify = true) =>
-  postJSON(`/ssd-backup/configs/${configId}/restore`, { timestamp, path, verify });
+export const restoreSsdFile = (configId, timestamp, path, verify = true, destinationRoot = null) =>
+  postJSON(`/ssd-backup/configs/${configId}/restore`, {
+    timestamp,
+    path,
+    verify,
+    ...(destinationRoot ? { destination_root: destinationRoot } : {}),
+  });
 export const verifySsdVersions = (configId) =>
   postJSON(`/ssd-backup/configs/${configId}/verify-versions`, {});
 

@@ -291,17 +291,29 @@ export default function SsdBackupPage() {
   async function handleRestore(filePath) {
     const fullPath = browserPath ? `${browserPath}/${filePath}` : filePath;
     setConfirmError(null);
-    setRestoreTarget({ path: fullPath, timestamp: selectedSnapshot, verify: true });
+    setRestoreTarget({ path: fullPath, timestamp: selectedSnapshot, verify: true, mode: 'source', destinationRoot: '' });
   }
 
   async function confirmRestore() {
-    const { path, timestamp, verify } = restoreTarget;
+    const { path, timestamp, verify, mode, destinationRoot } = restoreTarget;
+    const drill = mode === 'drill';
+    if (drill && !destinationRoot.trim()) {
+      setConfirmError('Choose a folder to restore the copy into.');
+      return;
+    }
     setConfirming(true);
     setConfirmError(null);
     setRestoreStatus({ path, status: 'restoring' });
     try {
-      const result = await restoreSsdFile(browserConfig.id, timestamp, path, verify);
-      setRestoreStatus({ path, status: 'success', verified: result.verified, restoreEventId: result.restoreEventId });
+      const result = await restoreSsdFile(browserConfig.id, timestamp, path, verify, drill ? destinationRoot.trim() : null);
+      setRestoreStatus({
+        path,
+        status: 'success',
+        verified: result.verified,
+        restoreEventId: result.restoreEventId,
+        to: result.to,
+        overwroteSource: result.overwroteSource,
+      });
       setRestoreTarget(null);
     } catch (err) {
       setRestoreStatus({ path, status: 'error', message: err.message });
@@ -589,12 +601,54 @@ export default function SsdBackupPage() {
       )}
 
       {restoreTarget && (
-        <ConfirmDialog title="Restore file" confirmLabel="Restore and overwrite" destructive busy={confirming} error={confirmError} onClose={() => setRestoreTarget(null)} onConfirm={confirmRestore}>
+        <ConfirmDialog
+          title={restoreTarget.mode === 'drill' ? 'Restore a copy' : 'Restore file'}
+          confirmLabel={restoreTarget.mode === 'drill' ? 'Restore copy' : 'Restore and overwrite'}
+          destructive={restoreTarget.mode !== 'drill'}
+          busy={confirming}
+          error={confirmError}
+          onClose={() => setRestoreTarget(null)}
+          onConfirm={confirmRestore}
+        >
+          <div className="restore-mode-choice" role="radiogroup" aria-label="Restore destination">
+            <label className="toggle-label-sm">
+              <input
+                type="radio"
+                name="restore-mode"
+                checked={restoreTarget.mode === 'source'}
+                onChange={() => setRestoreTarget({ ...restoreTarget, mode: 'source' })}
+              />
+              Back to the original location (overwrites the current file)
+            </label>
+            <label className="toggle-label-sm">
+              <input
+                type="radio"
+                name="restore-mode"
+                checked={restoreTarget.mode === 'drill'}
+                onChange={() => setRestoreTarget({ ...restoreTarget, mode: 'drill' })}
+              />
+              Into another folder — proves recovery without touching your data
+            </label>
+          </div>
+          {restoreTarget.mode === 'drill' && (
+            <div className="form-group">
+              <label>Restore folder</label>
+              <PathPicker
+                value={restoreTarget.destinationRoot}
+                onChange={value => setRestoreTarget({ ...restoreTarget, destinationRoot: value })}
+                placeholder="/mnt/user/restore-drill"
+              />
+            </div>
+          )}
           <dl className="restore-confirm-details">
             <dt>Selected revision</dt><dd>{restoreTarget.timestamp}</dd>
             <dt>Snapshot file</dt><dd><code>{browserConfig?.dest_path}/{restoreTarget.path}</code></dd>
-            <dt>Restore destination</dt><dd><code>{browserConfig?.source_path}/{restoreTarget.path}</code></dd>
-            <dt>Overwrite</dt><dd>Yes, the current destination file will be replaced</dd>
+            <dt>Restore destination</dt>
+            <dd><code>{(restoreTarget.mode === 'drill' ? (restoreTarget.destinationRoot.trim() || '…') : browserConfig?.source_path)}/{restoreTarget.path}</code></dd>
+            <dt>Overwrite</dt>
+            <dd>{restoreTarget.mode === 'drill'
+              ? 'No, your source files are left untouched'
+              : 'Yes, the current destination file will be replaced'}</dd>
           </dl>
           <label className="toggle-label-sm">
             <input type="checkbox" checked={restoreTarget.verify} onChange={event => setRestoreTarget({ ...restoreTarget, verify: event.target.checked })} />
@@ -815,7 +869,7 @@ export default function SsdBackupPage() {
               {restoreStatus && (
                 <div className={`alert ${restoreStatus.status === 'success' ? 'alert-success' : restoreStatus.status === 'error' ? 'alert-error' : 'alert-info'}`}>
                   {restoreStatus.status === 'restoring' && `Restoring ${restoreStatus.path}...`}
-                  {restoreStatus.status === 'success' && `Restored ${restoreStatus.path} successfully${restoreStatus.verified ? ' and verified byte-for-byte' : ' without byte verification'}`}
+                  {restoreStatus.status === 'success' && `${restoreStatus.overwroteSource ? 'Restored' : 'Restored a copy of'} ${restoreStatus.path} to ${restoreStatus.to}${restoreStatus.verified ? ' and verified byte-for-byte' : ' without byte verification'}`}
                   {restoreStatus.status === 'error' && `Failed to restore: ${restoreStatus.message}`}
                 </div>
               )}

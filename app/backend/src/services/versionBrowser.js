@@ -14,10 +14,12 @@ import { getOrCreateSnapshotSummary, readSnapshotSummary } from './snapshotSumma
 import {
   normalizeSnapshotRelativePath,
   prepareRestoreDestination,
+  resolveAlternateRestoreRoot,
   resolveExistingSnapshotPath,
   resolveSnapshotRoot,
   validateSnapshotTimestamp,
 } from './snapshotPathPolicy.js';
+import { storageConfig } from './storageConfig.js';
 
 /**
  * List all available snapshots (version timestamps) for a config.
@@ -305,12 +307,18 @@ function hashFile(filePath) {
   });
 }
 
-export async function restoreFile(configId, timestamp, filePath, { verify = true } = {}) {
+export async function restoreFile(configId, timestamp, filePath, { verify = true, destinationRoot = null } = {}) {
   const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(configId);
   if (!config) throw new Error('Config not found');
 
   validateSnapshotTimestamp(timestamp);
-  const restore = prepareRestoreDestination(config.source_path, filePath);
+  const restoreRoot = destinationRoot
+    ? resolveAlternateRestoreRoot(destinationRoot, {
+      snapshotRoot: config.dest_path,
+      allowedRoots: [...storageConfig.roots, storageConfig.mediaRoot],
+    })
+    : config.source_path;
+  const restore = prepareRestoreDestination(restoreRoot, filePath);
   const restoreDest = restore.path;
   filePath = restore.relativePath;
   const event = db.prepare(`
@@ -339,7 +347,13 @@ export async function restoreFile(configId, timestamp, filePath, { verify = true
     db.prepare(`
       UPDATE restore_events SET status = ?, verified_at = ?, completed_at = datetime('now') WHERE id = ?
     `).run(verified ? 'verified' : 'completed', verified ? new Date().toISOString() : null, eventId);
-    return { restored: filePath, to: restoreDest, verified, restoreEventId: eventId };
+    return {
+      restored: filePath,
+      to: restoreDest,
+      verified,
+      restoreEventId: eventId,
+      overwroteSource: !destinationRoot,
+    };
   } catch (err) {
     db.prepare(`
       UPDATE restore_events SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?

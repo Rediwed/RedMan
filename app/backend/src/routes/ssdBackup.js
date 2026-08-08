@@ -393,13 +393,16 @@ router.get('/configs/:id/download', async (req, res) => {
   }
 });
 
-// Restore a file from a snapshot to the source location
+// Restore a file from a snapshot, to the source location or to a drill folder
 router.post('/configs/:id/restore', async (req, res) => {
-  const { timestamp, path: filePath, verify = true } = req.body;
+  const { timestamp, path: filePath, verify = true, destination_root: destinationRoot = null } = req.body;
   if (!timestamp || !filePath) return res.status(400).json({ error: 'timestamp and path are required' });
 
   try {
-    const result = await restoreFile(parseInt(req.params.id), timestamp, filePath, { verify: verify !== false });
+    const result = await restoreFile(parseInt(req.params.id), timestamp, filePath, {
+      verify: verify !== false,
+      destinationRoot: destinationRoot || null,
+    });
     res.json(result);
   } catch (err) {
     res.status(err.status || (err.message.includes('not found') ? 404 : 500)).json({ error: err.message });
