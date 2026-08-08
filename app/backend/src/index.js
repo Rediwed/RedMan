@@ -35,6 +35,7 @@ import { startDriveMonitor, stopDriveMonitor } from './services/driveMonitor.js'
 import { startImport, stopActiveImportProcesses } from './services/immichImport.js';
 import { startTempCleanup, stopTempCleanup } from './services/deltaVersion.js';
 import { stopActiveVersionVerifications } from './services/versionVerification.js';
+import { stopActiveRestoreDrills } from './services/restoreDrill.js';
 import { getRuntimeResourceBudget } from './services/resourceBudget.js';
 import db from './db.js';
 
@@ -272,6 +273,7 @@ async function shutdown(signal, exitCode = 0) {
     stopActiveRcloneProcesses(10000),
     stopActiveImportProcesses(10000),
     stopActiveVersionVerifications(),
+    stopActiveRestoreDrills(),
   ]);
   for (const result of processResults) {
     if (result.status === 'fulfilled' && result.value.forced > 0) {

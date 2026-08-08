@@ -51,7 +51,7 @@ Back up SSDs to the array with point-in-time versioning.
 - **Incremental snapshot accounting** — file counts and byte totals are persisted per snapshot; legacy scans have explicit entry/time budgets and cache an unavailable marker instead of blocking requests
 - **Version browser** — browse, preview, download, and restore files from any snapshot
 - **Verified restore audit** — restores copy and SHA-256 verify a same-directory temporary file before atomic replacement, recording the exact snapshot, destination, and outcome
-- **Restore drill** — restore any revision into a different folder instead of over the original, so recovery can be proven and audited without overwriting live data
+- **Restore drill** — restore a single file or a whole folder into a different destination instead of over the original, so recovery can be proven and audited without overwriting live data. A folder drill runs as a tracked, cancellable job with progress and a free-space pre-flight check.
 - **Backup health cards** — show last success, latest issue, next run, overdue state, and last verified restore without treating a completed copy as proof of recovery
 - **Inline preview** — view text, images, video, and PDF files directly in the browser
 - **Pre-flight checks** — validates source/dest accessibility and disk space before starting
@@ -93,6 +93,7 @@ Set any tier to 0 to disable. Falls back to legacy `retention_days` for backward
 | Download | Download any file (deltas transparently reconstructed) |
 | Restore | Confirm exact snapshot/source/destination overwrite, restore, and optionally verify bytes with SHA-256 |
 | Restore drill | Restore a copy into another folder — same verification and audit trail, source files untouched |
+| Test restore | Restore the whole open folder into a scratch destination as a background run, with progress and cancellation |
 
 **Previewable types:** `.txt`, `.md`, `.json`, `.csv`, `.xml`, `.html`, `.js`, `.py`, `.sh`, `.yml`, `.jpg`, `.png`, `.gif`, `.webp`, `.svg`, `.mp4`, `.webm`, `.mov`, `.pdf`
 

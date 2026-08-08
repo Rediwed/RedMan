@@ -307,30 +307,18 @@ function hashFile(filePath) {
   });
 }
 
-export async function restoreFile(configId, timestamp, filePath, { verify = true, destinationRoot = null } = {}) {
-  const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(configId);
-  if (!config) throw new Error('Config not found');
-
-  validateSnapshotTimestamp(timestamp);
-  const restoreRoot = destinationRoot
-    ? resolveAlternateRestoreRoot(destinationRoot, {
-      snapshotRoot: config.dest_path,
-      allowedRoots: [...storageConfig.roots, storageConfig.mediaRoot],
-    })
-    : config.source_path;
-  const restore = prepareRestoreDestination(restoreRoot, filePath);
-  const restoreDest = restore.path;
-  filePath = restore.relativePath;
-  const event = db.prepare(`
-    INSERT INTO restore_events (config_id, snapshot_timestamp, file_path, restored_to)
-    VALUES (?, ?, ?, ?)
-  `).run(configId, timestamp, filePath, restoreDest);
-  const eventId = Number(event.lastInsertRowid);
-  let resolved;
+/**
+ * Copy one snapshot revision into an already-validated destination.
+ * Verification runs against a temporary file so a mismatch leaves the
+ * destination untouched rather than half-written.
+ */
+export async function materializeRestoredFile(configId, timestamp, prepared, { verify = true } = {}) {
+  const restoreDest = prepared.path;
   const restoreTemporary = join(dirname(restoreDest), `.${randomBytes(8).toString('hex')}.${process.pid}.redman-restore`);
+  let resolved;
 
   try {
-    resolved = await resolveFilePath(configId, timestamp, filePath);
+    resolved = await resolveFilePath(configId, timestamp, prepared.relativePath);
     await copyFile(resolved.path, restoreTemporary);
 
     let verified = false;
@@ -342,15 +330,46 @@ export async function restoreFile(configId, timestamp, filePath, { verify = true
       if (expectedHash !== restoredHash) throw new Error('Restored file verification failed');
       verified = true;
     }
+    const info = await stat(restoreTemporary);
     await rename(restoreTemporary, restoreDest);
+    return { to: restoreDest, relativePath: prepared.relativePath, verified, bytes: info.size };
+  } finally {
+    await rm(restoreTemporary, { force: true }).catch(() => {});
+    if (resolved?.isTemp) await cleanupTempFile(resolved.path);
+  }
+}
 
+export async function restoreFile(configId, timestamp, filePath, { verify = true, destinationRoot = null } = {}) {
+  const config = db.prepare('SELECT * FROM ssd_backup_configs WHERE id = ?').get(configId);
+  if (!config) throw new Error('Config not found');
+
+  validateSnapshotTimestamp(timestamp);
+  const restoreRoot = destinationRoot
+    ? resolveAlternateRestoreRoot(destinationRoot, {
+      snapshotRoot: config.dest_path,
+      allowedRoots: [...storageConfig.roots, storageConfig.mediaRoot],
+    })
+    : config.source_path;
+  const prepared = prepareRestoreDestination(restoreRoot, filePath);
+  const event = db.prepare(`
+    INSERT INTO restore_events (config_id, snapshot_timestamp, file_path, restored_to)
+    VALUES (?, ?, ?, ?)
+  `).run(configId, timestamp, prepared.relativePath, prepared.path);
+  const eventId = Number(event.lastInsertRowid);
+
+  try {
+    const result = await materializeRestoredFile(configId, timestamp, prepared, { verify });
     db.prepare(`
       UPDATE restore_events SET status = ?, verified_at = ?, completed_at = datetime('now') WHERE id = ?
-    `).run(verified ? 'verified' : 'completed', verified ? new Date().toISOString() : null, eventId);
+    `).run(
+      result.verified ? 'verified' : 'completed',
+      result.verified ? new Date().toISOString() : null,
+      eventId,
+    );
     return {
-      restored: filePath,
-      to: restoreDest,
-      verified,
+      restored: result.relativePath,
+      to: result.to,
+      verified: result.verified,
       restoreEventId: eventId,
       overwroteSource: !destinationRoot,
     };
@@ -359,9 +378,6 @@ export async function restoreFile(configId, timestamp, filePath, { verify = true
       UPDATE restore_events SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?
     `).run(err.message, eventId);
     throw err;
-  } finally {
-    await rm(restoreTemporary, { force: true }).catch(() => {});
-    if (resolved?.isTemp) await cleanupTempFile(resolved.path);
   }
 }
 

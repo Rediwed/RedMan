@@ -3,6 +3,7 @@ import {
   getSsdConfigs, createSsdConfig, updateSsdConfig, deleteSsdConfig,
   triggerSsdBackup, cancelSsdBackup, getSsdRuns, getSsdRunDetail, getSsdRunProgress,
   getSsdSnapshots, browseSsdSnapshot, getSsdDownloadUrl, getSsdPreviewUrl, restoreSsdFile,
+  startSsdRestoreDrill, getSsdRestoreDrillRun, cancelSsdRestoreDrill,
 } from '../api/index.js';
 import {
   HardDrive, Play, Pencil, Trash2, ClipboardList, Check, X, AlertTriangle,
@@ -78,6 +79,8 @@ export default function SsdBackupPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [restoreTarget, setRestoreTarget] = useState(null);
+  const [drillTarget, setDrillTarget] = useState(null);
+  const [drillRun, setDrillRun] = useState(null);
   const [confirmError, setConfirmError] = useState(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -322,6 +325,45 @@ export default function SsdBackupPage() {
       setConfirming(false);
     }
   }
+
+  async function confirmDrill() {
+    const { timestamp, path, destinationRoot, verify } = drillTarget;
+    if (!destinationRoot.trim()) {
+      setConfirmError('Choose a folder to restore into.');
+      return;
+    }
+    setConfirming(true);
+    setConfirmError(null);
+    try {
+      const started = await startSsdRestoreDrill(browserConfig.id, timestamp, path, destinationRoot.trim(), verify);
+      setDrillTarget(null);
+      setDrillRun({ id: started.runId, status: 'running', destinationRoot: started.destinationRoot });
+    } catch (err) {
+      setConfirmError(err.message);
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  // A folder drill can run for a long time, so the page follows the run rather than the request.
+  useEffect(() => {
+    if (!drillRun || drillRun.status !== 'running') return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const run = await getSsdRestoreDrillRun(drillRun.id);
+        setDrillRun(current => ({
+          ...current,
+          status: run.status,
+          progress: run.liveProgress,
+          filesTotal: run.files_total,
+          filesCopied: run.files_copied,
+          filesFailed: run.files_failed,
+          error: run.error_message,
+        }));
+      } catch { /* a transient poll failure resolves on the next tick */ }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [drillRun]);
 
   function handleDownload(filePath) {
     const fullPath = browserPath ? `${browserPath}/${filePath}` : filePath;
@@ -657,6 +699,39 @@ export default function SsdBackupPage() {
         </ConfirmDialog>
       )}
 
+      {drillTarget && (
+        <ConfirmDialog
+          title="Test restore"
+          confirmLabel="Start test restore"
+          busy={confirming}
+          error={confirmError}
+          onClose={() => setDrillTarget(null)}
+          onConfirm={confirmDrill}
+        >
+          <p className="form-hint">
+            Restores this whole folder into a folder you choose, so you can check the backup really
+            comes back. Your live files are never touched.
+          </p>
+          <div className="form-group">
+            <label>Restore into</label>
+            <PathPicker
+              value={drillTarget.destinationRoot}
+              onChange={value => setDrillTarget({ ...drillTarget, destinationRoot: value })}
+              placeholder="/mnt/user/restore-drill"
+            />
+          </div>
+          <dl className="restore-confirm-details">
+            <dt>Selected revision</dt><dd>{drillTarget.timestamp}</dd>
+            <dt>Snapshot folder</dt><dd><code>{browserConfig?.dest_path}/{drillTarget.path || ''}</code></dd>
+            <dt>Overwrite</dt><dd>No, your source files are left untouched</dd>
+          </dl>
+          <label className="toggle-label-sm">
+            <input type="checkbox" checked={drillTarget.verify} onChange={event => setDrillTarget({ ...drillTarget, verify: event.target.checked })} />
+            Verify restored bytes with SHA-256
+          </label>
+        </ConfirmDialog>
+      )}
+
       {/* Run history */}
       <div className="runs-section">
         <div className="runs-header">
@@ -863,7 +938,34 @@ export default function SsdBackupPage() {
                     );
                   })}
                 </span>
+                {auth.isAdmin && selectedSnapshot && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setConfirmError(null);
+                      setDrillTarget({ timestamp: selectedSnapshot, path: browserPath, destinationRoot: '', verify: true });
+                    }}
+                    title="Restore this folder into a scratch folder to prove recovery works"
+                  >
+                    <ShieldCheck size={14} /> Test restore
+                  </button>
+                )}
               </div>
+
+              {drillRun && (
+                <div className={`alert ${drillRun.status === 'completed' ? 'alert-success' : drillRun.status === 'running' ? 'alert-info' : drillRun.status === 'partial' ? 'alert-warning' : 'alert-error'}`}>
+                  <span>
+                    {drillRun.status === 'running' && `Test restore running — ${drillRun.progress?.restored ?? 0} of ${drillRun.progress?.total ?? '?'} files into ${drillRun.destinationRoot}`}
+                    {drillRun.status === 'completed' && `Test restore verified ${drillRun.filesCopied} file${drillRun.filesCopied === 1 ? '' : 's'} into ${drillRun.destinationRoot}. Nothing live was changed.`}
+                    {drillRun.status === 'partial' && `Test restore recovered ${drillRun.filesCopied} file(s) but ${drillRun.filesFailed} failed.`}
+                    {drillRun.status === 'cancelled' && 'Test restore cancelled.'}
+                    {drillRun.status === 'failed' && `Test restore failed: ${drillRun.error}`}
+                  </span>
+                  {drillRun.status === 'running'
+                    ? <button className="btn btn-secondary btn-sm" onClick={() => cancelSsdRestoreDrill(drillRun.id)}>Cancel</button>
+                    : <button className="btn btn-ghost btn-sm" onClick={() => setDrillRun(null)}>Dismiss</button>}
+                </div>
+              )}
 
               {/* Restore status */}
               {restoreStatus && (

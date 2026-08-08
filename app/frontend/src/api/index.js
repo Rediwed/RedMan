@@ -115,6 +115,15 @@ export const restoreSsdFile = (configId, timestamp, path, verify = true, destina
     verify,
     ...(destinationRoot ? { destination_root: destinationRoot } : {}),
   });
+export const startSsdRestoreDrill = (configId, timestamp, path, destinationRoot, verify = true) =>
+  postJSON(`/ssd-backup/configs/${configId}/restore-drill`, {
+    timestamp,
+    path,
+    destination_root: destinationRoot,
+    verify,
+  });
+export const getSsdRestoreDrillRun = (runId) => fetchJSON(`/ssd-backup/restore-drill-runs/${runId}`);
+export const cancelSsdRestoreDrill = (runId) => postJSON(`/ssd-backup/restore-drill-runs/${runId}/cancel`, {});
 export const verifySsdVersions = (configId) =>
   postJSON(`/ssd-backup/configs/${configId}/verify-versions`, {});
 

@@ -18,6 +18,11 @@ import {
   getActiveVersionVerification,
   startVersionVerification,
 } from '../services/versionVerification.js';
+import {
+  cancelRestoreDrill,
+  getActiveRestoreDrill,
+  startRestoreDrill,
+} from '../services/restoreDrill.js';
 import { scheduleJob, removeJob, getJobSkipCount, isJobRunning } from '../services/scheduler.js';
 import { getShares, browsePath } from '../services/unraid.js';
 import { validateSsdBackupPaths, localPathsOverlap } from '../middleware/validation.js';
@@ -407,6 +412,36 @@ router.post('/configs/:id/restore', async (req, res) => {
   } catch (err) {
     res.status(err.status || (err.message.includes('not found') ? 404 : 500)).json({ error: err.message });
   }
+});
+
+// Restore a whole snapshot folder into a scratch destination, as a tracked run
+router.post('/configs/:id/restore-drill', (req, res) => {
+  const { timestamp, path = '', destination_root: destinationRoot, verify = true } = req.body;
+  if (!timestamp || !destinationRoot) {
+    return res.status(400).json({ error: 'timestamp and destination_root are required' });
+  }
+
+  try {
+    const result = startRestoreDrill(parseInt(req.params.id), {
+      timestamp,
+      path,
+      destinationRoot,
+      verify: verify !== false,
+    });
+    res.status(result.existing ? 200 : 202).json(result);
+  } catch (err) {
+    res.status(err.status || (err.message === 'Config not found' ? 404 : 500)).json({ error: err.message });
+  }
+});
+
+router.get('/restore-drill-runs/:id', (req, res) => {
+  const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'restore-drill'").get(req.params.id);
+  if (!run) return res.status(404).json({ error: 'Restore drill run not found' });
+  res.json({ ...run, liveProgress: getActiveRestoreDrill(run.id) });
+});
+
+router.post('/restore-drill-runs/:id/cancel', (req, res) => {
+  res.json({ cancelled: cancelRestoreDrill(req.params.id) });
 });
 
 // Verify delta chain integrity for a config

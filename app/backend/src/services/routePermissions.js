@@ -32,10 +32,12 @@ export const API_ROUTE_POLICIES = Object.freeze([
   policy(['GET'], /^\/ssd-backup\/runs\/\d+(?:\/progress)?$/, PERMISSIONS.READ),
   policy(['GET'], /^\/ssd-backup\/configs\/\d+\/(?:snapshots|browse|download)$/, PERMISSIONS.READ),
   policy(['GET'], /^\/ssd-backup\/verification-runs\/\d+$/, PERMISSIONS.READ),
+  policy(['GET'], /^\/ssd-backup\/restore-drill-runs\/\d+$/, PERMISSIONS.READ),
   policy(['POST', 'PUT'], /^\/ssd-backup\/configs(?:\/\d+)?$/, PERMISSIONS.OPERATE),
   policy(['DELETE'], /^\/ssd-backup\/configs\/\d+$/, PERMISSIONS.OPERATE),
   policy(['POST'], /^\/ssd-backup\/(?:configs\/\d+\/(?:run|prune|verify-versions)|runs\/\d+\/cancel|verification-runs\/\d+\/cancel)$/, PERMISSIONS.OPERATE),
   policy(['POST'], /^\/ssd-backup\/configs\/\d+\/restore$/, PERMISSIONS.RESTORE),
+  policy(['POST'], /^\/ssd-backup\/(?:configs\/\d+\/restore-drill|restore-drill-runs\/\d+\/cancel)$/, PERMISSIONS.RESTORE),
 
   policy(['GET'], /^\/hyper-backup\/(?:jobs|runs|remote-browse|remote-roots|remote-shares)\/?$/, PERMISSIONS.READ),
   policy(['GET'], /^\/hyper-backup\/(?:jobs|runs)\/\d+(?:\/progress)?$/, PERMISSIONS.READ),
