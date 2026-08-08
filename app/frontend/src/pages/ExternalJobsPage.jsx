@@ -57,6 +57,8 @@ export default function ExternalJobsPage() {
   const [expanded, setExpanded] = useState(null);
   const [runs, setRuns] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmRotate, setConfirmRotate] = useState(null);
+  const [rotating, setRotating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -93,7 +95,7 @@ export default function ExternalJobsPage() {
     event.preventDefault();
     try {
       const result = await createExternalJob(form);
-      setNewToken({ token: result.token, slug: result.job.slug });
+      setNewToken({ token: result.token, slug: result.job.slug, host: result.job.host, rotated: false });
       setForm(EMPTY_FORM);
       setShowForm(false);
       load();
@@ -107,9 +109,19 @@ export default function ExternalJobsPage() {
     load();
   }
 
+  // Guarded against a second click: rotating twice invalidates the token the
+  // first response is still on screen with.
   async function regenerate(job) {
-    const { token } = await regenerateExternalJobToken(job.id);
-    setNewToken({ token, slug: job.slug });
+    setRotating(true);
+    try {
+      const { token } = await regenerateExternalJobToken(job.id);
+      setNewToken({ token, slug: job.slug, host: job.host, rotated: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRotating(false);
+      setConfirmRotate(null);
+    }
   }
 
   async function remove(job) {
@@ -236,7 +248,8 @@ export default function ExternalJobsPage() {
                   <button className="btn btn-ghost btn-sm" onClick={() => toggleEnabled(job)}>
                     {job.enabled ? 'Pause' : 'Resume'}
                   </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => regenerate(job)} title="Regenerate token">
+                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRotate(job)}
+                    title="Rotate token — breaks the current one">
                     <KeyRound size={14} />
                   </button>
                   <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDelete(job)} title="Delete">
@@ -345,10 +358,17 @@ export default function ExternalJobsPage() {
           <div className="modal-body">
             <div className="alert alert-error ext-token-warning">
               This token is shown once. RedMan only stores its hash, so it cannot be recovered later.
+              {newToken.rotated && ' The previous token stopped working the moment this one was issued.'}
             </div>
             <div className="form-group">
               <label htmlFor="ext-token">Token</label>
               <input id="ext-token" readOnly value={newToken.token} onFocus={e => e.target.select()} />
+              <div className="form-hint">
+                RedMan cannot install this for you. Put it on {newToken.host || 'the reporting host'}
+                {' '}yourself, in whatever the job already uses to report: the call below, or the
+                config file a relay script reads its token from. Until you do,
+                {' '}<code>{newToken.slug}</code> is not reporting.
+              </div>
             </div>
             <div className="form-group">
               <div className="ext-snippet-head">
@@ -365,6 +385,22 @@ export default function ExternalJobsPage() {
             <button type="button" className="btn btn-primary" onClick={() => setNewToken(null)}>Done</button>
           </div>
         </DialogSurface>
+      )}
+
+      {confirmRotate && (
+        <ConfirmDialog
+          title="Rotate heartbeat token"
+          confirmLabel="Rotate"
+          destructive
+          busy={rotating}
+          onConfirm={() => regenerate(confirmRotate)}
+          onClose={() => setConfirmRotate(null)}
+        >
+          Issue a new token for &quot;{confirmRotate.name}&quot;? The current one stops working
+          immediately, and {confirmRotate.host || 'the host'} keeps reporting only once you have
+          installed the new token there yourself. Rotate only when you can do that now — an existing
+          token cannot be shown again.
+        </ConfirmDialog>
       )}
 
       {confirmDelete && (
