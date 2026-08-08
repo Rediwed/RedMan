@@ -43,16 +43,27 @@ async function enumerateSnapshotFiles(configId, timestamp, subPath, signal) {
   return { files, totalBytes };
 }
 
+/**
+ * Free bytes at a destination, or null when the filesystem cannot say.
+ * Unraid's shfs reports zeroes for user shares, and "unknown" must never be
+ * read as "full" — that would block every drill on the platform RedMan targets.
+ */
+export function availableBytes(stats) {
+  const blockSize = Number(stats?.bsize ?? 0);
+  const blocks = Number(stats?.bavail ?? 0);
+  if (!(blockSize > 0) || !(blocks > 0)) return null;
+  return blocks * blockSize;
+}
+
 async function assertRoomFor(totalBytes, destinationRoot) {
+  let available = null;
   try {
-    const stats = await statfs(destinationRoot);
-    const available = Number(stats.bavail) * Number(stats.bsize);
-    if (totalBytes > available) {
-      throw new Error(`Restore folder has ${Math.round(available / 1e6)} MB free but the snapshot needs ${Math.round(totalBytes / 1e6)} MB`);
-    }
-  } catch (err) {
-    // A filesystem that cannot report free space must not silently fill up.
-    if (err.message.startsWith('Restore folder has')) throw err;
+    available = availableBytes(await statfs(destinationRoot));
+  } catch {
+    available = null;
+  }
+  if (available !== null && totalBytes > available) {
+    throw new Error(`Restore folder has ${Math.round(available / 1e6)} MB free but the snapshot needs ${Math.round(totalBytes / 1e6)} MB`);
   }
 }
 
