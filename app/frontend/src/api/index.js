@@ -108,8 +108,22 @@ export const getSsdDownloadUrl = (configId, timestamp, path) =>
   `/api/ssd-backup/configs/${configId}/download?timestamp=${encodeURIComponent(timestamp)}&path=${encodeURIComponent(path)}`;
 export const getSsdPreviewUrl = (configId, timestamp, path) =>
   `/api/ssd-backup/configs/${configId}/download?timestamp=${encodeURIComponent(timestamp)}&path=${encodeURIComponent(path)}&inline=true`;
-export const restoreSsdFile = (configId, timestamp, path, verify = true) =>
-  postJSON(`/ssd-backup/configs/${configId}/restore`, { timestamp, path, verify });
+export const restoreSsdFile = (configId, timestamp, path, verify = true, destinationRoot = null) =>
+  postJSON(`/ssd-backup/configs/${configId}/restore`, {
+    timestamp,
+    path,
+    verify,
+    ...(destinationRoot ? { destination_root: destinationRoot } : {}),
+  });
+export const startSsdRestoreDrill = (configId, timestamp, path, destinationRoot, verify = true) =>
+  postJSON(`/ssd-backup/configs/${configId}/restore-drill`, {
+    timestamp,
+    path,
+    destination_root: destinationRoot,
+    verify,
+  });
+export const getSsdRestoreDrillRun = (runId) => fetchJSON(`/ssd-backup/restore-drill-runs/${runId}`);
+export const cancelSsdRestoreDrill = (runId) => postJSON(`/ssd-backup/restore-drill-runs/${runId}/cancel`, {});
 export const verifySsdVersions = (configId) =>
   postJSON(`/ssd-backup/configs/${configId}/verify-versions`, {});
 

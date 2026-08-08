@@ -1,6 +1,7 @@
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './pathConfinement.js';
+import { isWithinPrefix, localPathsOverlap, normalizePath } from '../middleware/validation.js';
 
 function invalid(message) {
   const error = new Error(message);
@@ -56,6 +57,29 @@ export function resolveExistingSnapshotPath(root, relativePath, { allowEmpty = f
 export function resolveSnapshotRoot(versionsDir, timestamp) {
   const validTimestamp = validateSnapshotTimestamp(timestamp);
   return resolveExistingSnapshotPath(versionsDir, validTimestamp);
+}
+
+/**
+ * Validate a restore folder other than the job's own source.
+ * Restoring somewhere harmless is the only way to prove recovery works without
+ * overwriting the live file you are trying to protect.
+ */
+export function resolveAlternateRestoreRoot(requestedRoot, { snapshotRoot, allowedRoots = [] } = {}) {
+  const normalized = normalizePath(String(requestedRoot ?? '').trim());
+  if (!normalized || normalized === '/' || !isAbsolute(normalized)) {
+    throw invalid('Restore folder must be an absolute path');
+  }
+  if (!allowedRoots.some(root => isWithinPrefix(normalized, root))) {
+    throw invalid('Restore folder is outside the folders RedMan may write to');
+  }
+  if (!existsSync(normalized) || !statSync(normalized).isDirectory()) {
+    throw invalid('Restore folder does not exist');
+  }
+  // Writing into the snapshot store would corrupt the history being restored from.
+  if (snapshotRoot && localPathsOverlap(normalized, snapshotRoot)) {
+    throw invalid('Restore folder overlaps the backup destination');
+  }
+  return normalized;
 }
 
 export function prepareRestoreDestination(sourceRoot, relativePath) {

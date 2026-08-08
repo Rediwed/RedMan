@@ -1,5 +1,5 @@
 {
-  "_comment": "RedMan v1.0.0 backward compatibility contract. DO NOT MODIFY — changes here must follow the migration process in migrations.js. This file is the source of truth for the test/test_backward_compat.mjs test suite.",
+  "_comment": "RedMan v1.0.0 backward compatibility contract. DO NOT MODIFY \u2014 changes here must follow the migration process in migrations.js. This file is the source of truth for the test/test_backward_compat.mjs test suite.",
   "version": "1.1.9",
   "api": {
     "health": {
@@ -143,6 +143,15 @@
         ]
       },
       "POST /api/ssd-backup/configs/:id/restore": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/configs/:id/restore-drill": {
+        "auth": true
+      },
+      "GET /api/ssd-backup/restore-drill-runs/:id": {
+        "auth": true
+      },
+      "POST /api/ssd-backup/restore-drill-runs/:id/cancel": {
         "auth": true
       },
       "POST /api/ssd-backup/configs/:id/verify-versions": {
@@ -1221,7 +1230,8 @@
       "browseSnapshot",
       "resolveFilePath",
       "restoreFile",
-      "pruneVersions"
+      "pruneVersions",
+      "materializeRestoredFile"
     ],
     "deltaVersion": [
       "withConfigLock",
@@ -1392,6 +1402,12 @@
       "describeRcloneFailures",
       "fingerprintFailures",
       "compareFailureSummaries"
+    ],
+    "restoreDrill": [
+      "startRestoreDrill",
+      "cancelRestoreDrill",
+      "getActiveRestoreDrill",
+      "stopActiveRestoreDrills"
     ]
   },
   "frontendApi": {
@@ -1428,6 +1444,9 @@
       "getSsdDownloadUrl",
       "getSsdPreviewUrl",
       "restoreSsdFile",
+      "startSsdRestoreDrill",
+      "getSsdRestoreDrillRun",
+      "cancelSsdRestoreDrill",
       "verifySsdVersions",
       "getHyperJobs",
       "getHyperJob",
