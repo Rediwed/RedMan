@@ -135,6 +135,23 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.ext-job-issue-note {
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+/* The code stays available for anyone who needs it, without leading with it. */
+.ext-job-issue-code {
+  margin-left: auto;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  opacity: 0.7;
 }
 
 .ext-job-runs {

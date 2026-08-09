@@ -3,6 +3,8 @@ import { getEvents, getEventSummary, getSystemStatus } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, parseDbDate } from '../utils/dateFormat.js';
+import { splitBody } from '../utils/describe.js';
+import DetailStats from '../components/DetailStats.jsx';
 import { Link } from 'react-router-dom';
 import {
   Activity, RefreshCw, AlertTriangle, XCircle, Info, Filter, ChevronDown, ChevronRight,
@@ -200,7 +202,7 @@ export default function StatusPage() {
         })}
       </div>
 
-      {summary?.latestIssue && (
+      {summary?.latestIssue && !data.events.some(e => e.id === summary.latestIssue.id) && (
         <div className="status-latest">
           <AlertTriangle size={15} />
           <div>
@@ -208,7 +210,6 @@ export default function StatusPage() {
             <span className="status-latest-age">
               {relativeAge(summary.latestIssue.created_at)}
             </span>
-            {summary.latestIssue.body && <div className="status-latest-body">{summary.latestIssue.body}</div>}
           </div>
         </div>
       )}
@@ -246,24 +247,25 @@ export default function StatusPage() {
           const meta = SEVERITY_META[event.severity] || SEVERITY_META.info;
           const Icon = meta.icon;
           const isOpen = expanded === event.id;
+          const { lead, stats } = splitBody(event.body);
           const hasDetail = event.detail && Object.keys(event.detail).length > 0;
+          const hasMore = hasDetail || stats.length > 0;
           return (
             <div key={event.id} className={`status-event ${meta.className}`}>
               <div className="status-event-row">
                 <span className="status-event-icon"><Icon size={15} /></span>
                 <div className="status-event-main">
                   <div className="status-event-title">{event.title}</div>
-                  {event.body && <div className="status-event-body">{event.body}</div>}
+                  {lead && <div className="status-event-body">{lead}</div>}
                   <div className="status-event-meta">
                     <span className="status-chip">{event.category}</span>
-                    <span className="status-chip">{event.type}</span>
                     {event.subject && <span>{event.subject}</span>}
                   </div>
                 </div>
                 <div className="status-event-time" title={formatDateTime(event.created_at, settings)}>
                   {relativeAge(event.created_at)}
                 </div>
-                {hasDetail && (
+                {hasMore && (
                   <button
                     className="status-event-toggle"
                     onClick={() => setExpanded(isOpen ? null : event.id)}
@@ -274,8 +276,19 @@ export default function StatusPage() {
                   </button>
                 )}
               </div>
-              {isOpen && hasDetail && (
-                <pre className="status-event-detail">{JSON.stringify(event.detail, null, 2)}</pre>
+              {isOpen && hasMore && (
+                hasDetail
+                  ? <DetailStats detail={event.detail} />
+                  : (
+                    <dl className="detail-stats-grid">
+                      {stats.map(stat => (
+                        <div key={stat.label} className="detail-stat">
+                          <dt>{stat.label}</dt>
+                          <dd>{stat.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )
               )}
             </div>
           );

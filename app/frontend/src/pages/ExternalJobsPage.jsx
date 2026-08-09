@@ -6,6 +6,7 @@ import {
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, parseDbDate } from '../utils/dateFormat.js';
+import { describeFailure } from '../utils/describe.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
@@ -258,12 +259,24 @@ export default function ExternalJobsPage() {
                 </div>
               </div>
 
-              {job.health.lastIssue && (
-                <div className="ext-job-issue">
-                  <AlertTriangle size={13} /> last failure: exit {job.health.lastIssue.exit_code ?? '?'}
-                  {job.health.lastIssue.message ? ` — ${job.health.lastIssue.message}` : ''}
-                </div>
-              )}
+              {job.health.lastIssue && (() => {
+                const failure = describeFailure({
+                  exitCode: job.health.lastIssue.exit_code,
+                  message: job.health.lastIssue.message,
+                });
+                return (
+                  <div className="ext-job-issue">
+                    <AlertTriangle size={13} />
+                    <span>Last failure: {failure.headline}</span>
+                    {failure.note && <span className="ext-job-issue-note">{failure.note}</span>}
+                    {failure.code !== undefined && (
+                      <span className="ext-job-issue-code" title="Exit code the job reported">
+                        exit {failure.code}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
 
               {isOpen && (
                 <div className="ext-job-runs">
