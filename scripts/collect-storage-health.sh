@@ -256,6 +256,33 @@ done < <(findmnt -rno TARGET,FSTYPE --real 2>/dev/null | sort -u || true)
 TMP="$(mktemp "$OUTPUT.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
+# On Unraid a destination is written as /mnt/user/<share>, which is a union and
+# not a pool. Resolving which pool actually holds it needs the share table, so
+# it is done here rather than left to a reader that cannot see it.
+SHARES_INI=/var/local/emhttp/shares.ini
+SHARE_JSON="[]"
+if [[ -r "$SHARES_INI" ]]; then
+  SHARE_JSON="$(awk -F'=' '
+    /^\["/ { if (name != "") emit(); name = $0; gsub(/[]["]/, "", name); use=""; pool=""; cfg=""; next }
+    /^useCache=/  { use  = clean($2) }
+    /^cachePool=/ { pool = clean($2) }
+    /^hasCfg=/    { cfg  = clean($2) }
+    END { if (name != "") emit() }
+    function clean(v) { gsub(/"/, "", v); return v }
+    function emit(  pinned) {
+      pinned = (use == "only" && pool != "") ? "true" : "false"
+      printf "%s\t%s\t%s\t%s\n", name, pool, pinned, cfg
+    }
+  ' "$SHARES_INI" | jq -R -s -c '
+    [ split("\n")[] | select(length > 0) | split("\t")
+      | { name: .[0],
+          path: ("/mnt/user/" + .[0]),
+          pool: (if .[1] == "" then null else "/mnt/" + .[1] end),
+          pinned: (.[2] == "true"),
+          configured: (.[3] == "yes") } ]
+  ')"
+fi
+
 jq -n \
   --arg generatedAt "$STARTED_AT" \
   --arg host "$(hostname)" \
@@ -263,7 +290,8 @@ jq -n \
   --argjson woke "$($WAKE_SLEEPING && echo true || echo false)" \
   --argjson devices "$DEVICE_JSON" \
   --argjson pools "$POOL_JSON" \
-  '{schema:1, generatedAt:$generatedAt, host:$host, durationMs:$durationMs, wokeSleepingDisks:$woke, devices:$devices, pools:$pools}' \
+  --argjson shares "$SHARE_JSON" \
+  '{schema:1, generatedAt:$generatedAt, host:$host, durationMs:$durationMs, wokeSleepingDisks:$woke, devices:$devices, pools:$pools, shares:$shares}' \
   > "$TMP"
 
 chmod 0644 "$TMP"

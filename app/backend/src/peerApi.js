@@ -19,6 +19,7 @@ import { failRunningHyperRunsForPeer, getPeerOwnedHyperRun } from './services/pe
 import { assertLocalSourceHasEntries } from './services/sourceHealth.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './services/pathConfinement.js';
 import { getQuotaUsage, markQuotaUsageStale } from './services/quotaUsage.js';
+import { describeDestination } from './services/storageHealth.js';
 import { toRrsyncPath } from './services/sshKeyValidation.js';
 import { requirePeerHost, runtimeConfig } from './services/runtimeConfig.js';
 
@@ -331,8 +332,13 @@ export function createPeerApi() {
     const usage = await getQuotaUsage(confinedPrefix);
     const usedBytes = usage.usedBytes;
 
+    // Whether a destination can take the data and whether it is fit to keep it
+    // are the same question, so they are answered together rather than needing
+    // a second call the caller could skip.
+    const destination = describeDestination(confinedPrefix);
+
     logAudit.run(req.peer.id, req.peer.name, 'storage_check', JSON.stringify({
-      prefix, usedBytes, limitBytes,
+      prefix, usedBytes, limitBytes, destinationState: destination.state,
     }), req.peerIp);
 
     res.json({
@@ -348,6 +354,19 @@ export function createPeerApi() {
       stale: usage.stale === true,
       ageMs: usage.ageMs ?? null,
       usageUnavailable: usage.unavailableReason,
+      // Serial numbers stay on the host that owns the disks; a peer needs the
+      // verdict and the reason, not an inventory of someone else's hardware.
+      destination: {
+        state: destination.state,
+        reason: destination.reason,
+        spill: destination.spill ?? null,
+        profile: destination.profile ?? null,
+        redundant: destination.redundant ?? null,
+        diskCount: destination.devices.length,
+        disksNeedingAttention: destination.devices.filter(d => d.state !== 'ok').length,
+        measuredAt: destination.measuredAt,
+        stale: destination.stale,
+      },
     });
   });
 
