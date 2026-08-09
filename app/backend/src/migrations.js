@@ -989,6 +989,22 @@ const migrations = [
       console.log('[migration-31] Added relayed heartbeat de-duplication');
     }
   },
+  {
+    version: 32,
+    description: 'Let a media import source be a folder rather than only a removable drive',
+    up(db) {
+      const columns = db.prepare('PRAGMA table_info(media_drives)').all().map(column => column.name);
+      // Existing rows are all removable drives read as plain folders, so both
+      // defaults describe what the table already held.
+      if (!columns.includes('source_kind')) {
+        db.exec("ALTER TABLE media_drives ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'drive'");
+      }
+      if (!columns.includes('import_mode')) {
+        db.exec("ALTER TABLE media_drives ADD COLUMN import_mode TEXT NOT NULL DEFAULT 'folder'");
+      }
+      console.log('[migration-32] Added folder-backed media import sources');
+    }
+  },
 ];
 
 // Derived rather than declared: a copy of this number kept somewhere else only

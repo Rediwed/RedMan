@@ -1,8 +1,12 @@
 // Media Import routes — USB/SD card drive detection, scanning, and Immich import
 
 import { Router } from 'express';
+import { existsSync } from 'node:fs';
 import db from '../db.js';
 import { validateDeleteAfterImportSetting } from '../services/mediaDeletionPolicy.js';
+import {
+  FOLDER_SOURCE_KIND, validateFolderSourceInput, countTakeoutArchives,
+} from '../services/mediaImportSources.js';
 import { detectDrives, isDriveMounted, getConnectedDrives } from '../services/driveMonitor.js';
 import { startScan, getScanProgress, clearScan } from '../services/driveScanner.js';
 import {
@@ -55,7 +59,7 @@ router.get('/drives', (req, res) => {
 
 // List all known drives from DB (including disconnected)
 router.get('/drives/known', (req, res) => {
-  const drives = db.prepare('SELECT * FROM media_drives ORDER BY last_seen_at DESC').all();
+  const drives = db.prepare("SELECT * FROM media_drives WHERE source_kind = 'drive' ORDER BY last_seen_at DESC").all();
   const connected = getConnectedDrives();
   const connectedPaths = new Set(connected.map(d => d.mountPath));
 
@@ -87,7 +91,7 @@ router.get('/drives/:id', (req, res) => {
 
 // Update drive settings (name, auto_import, delete_after_import, eject_after_import)
 router.put('/drives/:id', (req, res) => {
-  const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(req.params.id);
+  const drive = db.prepare("SELECT * FROM media_drives WHERE id = ? AND source_kind = 'drive'").get(req.params.id);
   if (!drive) return res.status(404).json({ error: 'Drive not found' });
 
   const { name, auto_import, delete_after_import, eject_after_import } = req.body;
@@ -121,11 +125,88 @@ router.put('/drives/:id', (req, res) => {
   res.json(updated);
 });
 
+// ── Folder sources ────────────────────────────────────────────────
+
+router.get('/sources', (req, res) => {
+  const sources = db.prepare(`
+    SELECT * FROM media_drives WHERE source_kind = ? ORDER BY name COLLATE NOCASE
+  `).all(FOLDER_SOURCE_KIND);
+
+  res.json(sources.map(source => ({
+    ...source,
+    // A takeout that has not been downloaded yet is the common case; say so
+    // rather than failing at import time.
+    archive_count: source.import_mode === 'google-photos' ? countTakeoutArchives(source) : null,
+    available: existsSync(source.mount_path),
+  })));
+});
+
+router.post('/sources', (req, res) => {
+  let source;
+  try {
+    source = validateFolderSourceInput(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const clash = db.prepare('SELECT id FROM media_drives WHERE mount_path = ?').get(source.path);
+  if (clash) return res.status(409).json({ error: 'An import source already uses that path' });
+
+  const result = db.prepare(`
+    INSERT INTO media_drives (name, label, mount_path, source_kind, import_mode)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(source.name, source.name, source.path, FOLDER_SOURCE_KIND, source.importMode);
+
+  res.status(201).json(db.prepare('SELECT * FROM media_drives WHERE id = ?').get(result.lastInsertRowid));
+});
+
+router.put('/sources/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM media_drives WHERE id = ? AND source_kind = ?')
+    .get(req.params.id, FOLDER_SOURCE_KIND);
+  if (!existing) return res.status(404).json({ error: 'Import source not found' });
+
+  let source;
+  try {
+    source = validateFolderSourceInput({
+      name: req.body.name ?? existing.name,
+      path: req.body.path ?? existing.mount_path,
+      import_mode: req.body.import_mode ?? existing.import_mode,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const clash = db.prepare('SELECT id FROM media_drives WHERE mount_path = ? AND id != ?')
+    .get(source.path, existing.id);
+  if (clash) return res.status(409).json({ error: 'An import source already uses that path' });
+
+  db.prepare(`
+    UPDATE media_drives SET name = ?, label = ?, mount_path = ?, import_mode = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(source.name, source.name, source.path, source.importMode, existing.id);
+
+  res.json(db.prepare('SELECT * FROM media_drives WHERE id = ?').get(existing.id));
+});
+
+router.delete('/sources/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM media_drives WHERE id = ? AND source_kind = ?')
+    .get(req.params.id, FOLDER_SOURCE_KIND);
+  if (!existing) return res.status(404).json({ error: 'Import source not found' });
+  if (getActiveImportForSource(existing.id)) {
+    return res.status(409).json({ error: 'An import is still running on this source' });
+  }
+
+  // Removing the definition must not remove the evidence: past runs stay in
+  // history, which is why config_id is not a foreign key.
+  db.prepare('DELETE FROM media_drives WHERE id = ?').run(existing.id);
+  res.json({ deleted: true });
+});
+
 // ── Scanning ──────────────────────────────────────────────────────
 
 // Start an async scan of a drive
 router.post('/drives/:id/scan', (req, res) => {
-  const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(req.params.id);
+  const drive = db.prepare("SELECT * FROM media_drives WHERE id = ? AND source_kind = 'drive'").get(req.params.id);
   if (!drive) return res.status(404).json({ error: 'Drive not found' });
   if (!isDriveMounted(drive.mount_path)) {
     return res.status(400).json({ error: 'Drive is not currently connected' });
@@ -262,7 +343,7 @@ router.get('/runs/:id/files', (req, res) => {
 // ── Eject ─────────────────────────────────────────────────────────
 
 router.post('/drives/:id/eject', (req, res) => {
-  const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(req.params.id);
+  const drive = db.prepare("SELECT * FROM media_drives WHERE id = ? AND source_kind = 'drive'").get(req.params.id);
   if (!drive) return res.status(404).json({ error: 'Drive not found' });
   if (!isDriveMounted(drive.mount_path)) {
     return res.status(400).json({ error: 'Drive is not currently connected' });
@@ -292,16 +373,24 @@ router.get('/status', (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
+function getActiveImportForSource(sourceId) {
+  const running = db.prepare(`
+    SELECT id FROM backup_runs
+    WHERE feature = 'media-import' AND config_id = ? AND status = 'running'
+  `).get(sourceId);
+  return running ? getActiveImport(running.id) || running : null;
+}
+
 function findDriveInDb(drive) {
   if (drive.uuid) {
-    const row = db.prepare('SELECT * FROM media_drives WHERE uuid = ?').get(drive.uuid);
+    const row = db.prepare("SELECT * FROM media_drives WHERE uuid = ? AND source_kind = 'drive'").get(drive.uuid);
     if (row) return row;
   }
   if (drive.serial) {
-    const row = db.prepare('SELECT * FROM media_drives WHERE serial = ?').get(drive.serial);
+    const row = db.prepare("SELECT * FROM media_drives WHERE serial = ? AND source_kind = 'drive'").get(drive.serial);
     if (row) return row;
   }
-  return db.prepare('SELECT * FROM media_drives WHERE mount_path = ?').get(drive.mountPath);
+  return db.prepare("SELECT * FROM media_drives WHERE mount_path = ? AND source_kind = 'drive'").get(drive.mountPath);
 }
 
 export default router;

@@ -3,6 +3,7 @@ import {
   getMediaDrives, getKnownDrives, updateMediaDrive, scanDrive, getScanProgress,
   startDriveImport, cancelDriveImport, getImportProgress, ejectDrive, getMediaImportRuns,
   getMediaImportStatus, getMediaImportRunFiles,
+  getMediaImportSources, createMediaImportSource, deleteMediaImportSource,
 } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
@@ -11,10 +12,11 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import {
   Camera, HardDrive, Search, Upload, LogOut, RefreshCw,
   Image, Video, Folder, Clock, AlertTriangle, Info, CheckCircle, X,
-  FileCheck, FileX, Copy,
+  FileCheck, FileX, Copy, FolderPlus, Trash2, Package,
 } from 'lucide-react';
 import JobProgress from '../components/JobProgress.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import PathPicker from '../components/PathPicker.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import './MediaImportPage.css';
@@ -24,6 +26,9 @@ export default function MediaImportPage() {
   const { settings } = useSettings();
   const [drives, setDrives] = useState([]);
   const [knownDrives, setKnownDrives] = useState([]);
+  const [sources, setSources] = useState([]);
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
+  const [deleteSourceTarget, setDeleteSourceTarget] = useState(null);
   const [runs, setRuns] = useState([]);
   const [runsPage, setRunsPage] = useState(1);
   const [runsMeta, setRunsMeta] = useState({ total: 0, pages: 1 });
@@ -41,17 +46,19 @@ export default function MediaImportPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [d, k, r, s] = await Promise.all([
+      const [d, k, r, s, src] = await Promise.all([
         getMediaDrives(),
         getKnownDrives(),
         getMediaImportRuns(runsPage),
         getMediaImportStatus(),
+        getMediaImportSources(),
       ]);
       setDrives(d);
       setKnownDrives(k.filter(kd => !d.some(cd => cd.id === kd.id)));
       setRuns(r.runs);
       setRunsMeta({ total: r.total, pages: r.pages });
       setStatus(s);
+      setSources(src);
     } catch (err) {
       setActionResult({ type: 'error', message: err.message });
     }
@@ -170,6 +177,26 @@ export default function MediaImportPage() {
       setDeleteVerifiedTarget(null);
     }
   }
+
+  async function handleCreateSource(payload) {
+    await createMediaImportSource(payload);
+    setSourceDialogOpen(false);
+    setActionResult({ type: 'success', message: `Import source “${payload.name}” added.` });
+    refresh();
+  }
+
+  async function confirmDeleteSource() {
+    setConfirming(true);
+    try {
+      await deleteMediaImportSource(deleteSourceTarget.id);
+      setActionResult({ type: 'success', message: `Import source “${deleteSourceTarget.name}” removed. Its import history was kept.` });
+      setDeleteSourceTarget(null);
+      refresh();
+    } catch (err) {
+      setActionResult({ type: 'error', message: err.message });
+    }
+    setConfirming(false);
+  }
   async function openRunDetail(run, filterAction = null) {
     setDetailRun(run);
     setDetailFilter(filterAction);
@@ -245,7 +272,67 @@ export default function MediaImportPage() {
         )}
       </section>
 
-      {/* Import History */}
+      {/* Folder sources */}
+      <section>
+        <div className="section-header">
+          <h2 className="section-title"><Folder size={16} /> Import Sources</h2>
+          {auth.isAdmin && (
+            <button className="btn btn-secondary btn-sm" onClick={() => { setActionResult(null); setSourceDialogOpen(true); }}>
+              <FolderPlus size={14} /> Add Folder
+            </button>
+          )}
+        </div>
+        {sources.length === 0 ? (
+          <div className="card empty-state">
+            <Folder size={32} />
+            <p>No folder sources</p>
+            <span className="form-hint">
+              Add a folder to import photos that are already on this machine — including a downloaded Google Photos takeout.
+            </span>
+          </div>
+        ) : (
+          <div className="drive-grid">
+            {sources.map(source => (
+              <FolderSourceCard
+                key={source.id}
+                source={source}
+                activeImport={Object.values(activeImports).find(i => i.driveId === source.id)}
+                onCancel={() => {
+                  const entry = Object.entries(activeImports).find(([, i]) => i.driveId === source.id);
+                  if (entry) cancelDriveImport(parseInt(entry[0])).then(() => refresh());
+                }}
+                onImport={() => handleImport(source.id)}
+                onDelete={() => { setActionResult(null); setDeleteSourceTarget(source); }}
+                canManage={auth.isAdmin}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {sourceDialogOpen && (
+        <FolderSourceDialog
+          onClose={() => setSourceDialogOpen(false)}
+          onCreate={handleCreateSource}
+        />
+      )}
+
+      {deleteSourceTarget && (
+        <ConfirmDialog
+          title="Remove import source"
+          confirmLabel="Remove source"
+          destructive
+          busy={confirming}
+          onClose={() => setDeleteSourceTarget(null)}
+          onConfirm={confirmDeleteSource}
+        >
+          <p>Stop tracking <strong>{deleteSourceTarget.name}</strong> as an import source.</p>
+          <p className="form-hint">
+            Nothing is deleted from disk and the import history is kept. The folder can be added again later.
+          </p>
+        </ConfirmDialog>
+      )}
+
       {deleteVerifiedTarget && (
         <ConfirmDialog title="Enable verified-source deletion" confirmLabel="Enable deletion" destructive busy={confirming} error={actionResult?.type === 'error' ? actionResult.message : null} onClose={() => setDeleteVerifiedTarget(null)} onConfirm={confirmDeleteVerified}>
           <p>After a successful or partial import, RedMan may delete source files from <strong>{deleteVerifiedTarget.name || deleteVerifiedTarget.label}</strong>.</p>
@@ -513,6 +600,134 @@ function DriveCard({ drive, activeImport, onScan, onImport, onEject, ejectSuppor
         </button>
       </div>}
     </div>
+  );
+}
+
+function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, canManage }) {
+  const { settings } = useSettings();
+  const isImporting = !!activeImport;
+  const isTakeout = source.import_mode === 'google-photos';
+
+  return (
+    <div className="card drive-card">
+      <div className="drive-card-header">
+        <div className="drive-name-row">
+          {isTakeout ? <Package size={16} /> : <Folder size={16} />}
+          <span className="drive-name">{source.name}</span>
+        </div>
+        <span className={`drive-status ${source.available ? 'connected' : 'disconnected'}`}>
+          {source.available ? 'Available' : 'Missing'}
+        </span>
+      </div>
+
+      <div className="drive-meta">
+        <span><Folder size={13} /> {source.mount_path}</span>
+        <span>{isTakeout ? '📦 Google Photos takeout' : '📁 Plain folder'}</span>
+        {isTakeout && source.archive_count > 0 && (
+          <span>{source.archive_count.toLocaleString()} archive{source.archive_count === 1 ? '' : 's'}</span>
+        )}
+        {source.last_import_at && <span>Last import: {formatDateTime(source.last_import_at, settings)}</span>}
+      </div>
+
+      {isTakeout && source.available && source.archive_count === 0 && (
+        <div className="new-drive-hint">
+          <Info size={14} />
+          <span>No takeout archives here yet. Download them first — an Rclone job can pull them from Google Drive.</span>
+        </div>
+      )}
+
+      {isImporting && (
+        <JobProgress progress={activeImport} feature="media-import" onCancel={canManage ? onCancel : null} />
+      )}
+
+      {canManage && <div className="drive-actions">
+        <button className="btn btn-primary btn-sm" onClick={onImport} disabled={isImporting || !source.available}>
+          <Upload size={14} /> Import Now
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onDelete} disabled={isImporting}>
+          <Trash2 size={14} /> Remove
+        </button>
+      </div>}
+    </div>
+  );
+}
+
+function FolderSourceDialog({ onClose, onCreate }) {
+  const [name, setName] = useState('');
+  const [path, setPath] = useState('');
+  const [importMode, setImportMode] = useState('folder');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await onCreate({ name: name.trim(), path, import_mode: importMode });
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <DialogSurface ariaLabel="Add import source" onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="modal-header">
+          <h3>Add Import Source</h3>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="modal-body">
+          {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+          <div className="form-group">
+            <label htmlFor="source-name">Name</label>
+            <input
+              id="source-name"
+              type="text"
+              value={name}
+              maxLength={100}
+              onChange={event => setName(event.target.value)}
+              placeholder="Google Photos takeout"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Folder</label>
+            <PathPicker
+              label="Folder"
+              value={path}
+              onChange={setPath}
+              placeholder="/mnt/user/downloads/takeout"
+            />
+            <span className="form-hint">Must be inside a folder RedMan is allowed to read.</span>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="source-mode">Contents</label>
+            <select id="source-mode" value={importMode} onChange={event => setImportMode(event.target.value)}>
+              <option value="folder">Photos and videos</option>
+              <option value="google-photos">Google Photos takeout</option>
+            </select>
+            <span className="form-hint">
+              {importMode === 'google-photos'
+                ? 'Reads the takeout archives without unpacking them, and applies the dates, locations, and albums from their sidecar files.'
+                : 'Uploads the files as they are, using whatever each file carries in its own metadata.'}
+            </span>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim() || !path}>
+            {busy ? 'Adding...' : 'Add Source'}
+          </button>
+        </div>
+      </form>
+    </DialogSurface>
   );
 }
 

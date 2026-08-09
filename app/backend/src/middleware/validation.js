@@ -10,8 +10,9 @@ import { validatePrivatePeerBaseUrl } from '../services/peerUrlPolicy.js';
  */
 export function normalizePath(p) {
   if (!p || typeof p !== 'string') return null;
-  // Reject shell metacharacters + newlines that could be used for command injection
-  if (/[$`"\\|;&(){}\n\r]/.test(p)) return null;
+  // Reject shell metacharacters + newlines that could be used for command injection,
+  // and NUL, which truncates the path in any syscall that later receives it.
+  if (/[$`"\\|;&(){}\n\r\0]/.test(p)) return null;
   const normalized = posix.normalize(p);
   if (!normalized.startsWith('/')) return null;
   // Strip trailing slash (except for root '/')

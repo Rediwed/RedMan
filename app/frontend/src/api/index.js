@@ -236,6 +236,10 @@ export const getMediaImportRunFiles = (id, action) => {
 };
 export const testImmichConnection = () => postJSON('/media-import/test-immich', {});
 export const getMediaImportStatus = () => fetchJSON('/media-import/status');
+export const getMediaImportSources = () => fetchJSON('/media-import/sources');
+export const createMediaImportSource = (data) => postJSON('/media-import/sources', data);
+export const updateMediaImportSource = (id, data) => putJSON(`/media-import/sources/${id}`, data);
+export const deleteMediaImportSource = (id) => deleteJSON(`/media-import/sources/${id}`);
 
 // ===== Filesystem =====
 export const browseDirectory = (dir) => fetchJSON(`/filesystem/browse?dir=${encodeURIComponent(dir || '')}`);

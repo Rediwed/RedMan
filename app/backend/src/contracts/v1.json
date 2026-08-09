@@ -359,6 +359,18 @@
       },
       "GET /api/media-import/status": {
         "auth": true
+      },
+      "GET /api/media-import/sources": {
+        "auth": true
+      },
+      "POST /api/media-import/sources": {
+        "auth": true
+      },
+      "PUT /api/media-import/sources/:id": {
+        "auth": true
+      },
+      "DELETE /api/media-import/sources/:id": {
+        "auth": true
       }
     },
     "settings": {
@@ -825,6 +837,8 @@
         "first_seen_at": "TEXT",
         "last_seen_at": "TEXT",
         "last_import_at": "TEXT",
+        "source_kind": "TEXT",
+        "import_mode": "TEXT",
         "created_at": "TEXT",
         "updated_at": "TEXT"
       }
@@ -1222,6 +1236,11 @@
       "createImmichRetryDirectory",
       "removeImmichRetryDirectory"
     ],
+    "mediaImportSources": [
+      "validateFolderSourceInput",
+      "resolveImportSourcePaths",
+      "supportsDriveSideEffects"
+    ],
     "immichFailureSummary": [
       "summarizeImmichGoFailure"
     ],
@@ -1510,6 +1529,10 @@
       "getMediaImportRunFiles",
       "testImmichConnection",
       "getMediaImportStatus",
+      "getMediaImportSources",
+      "createMediaImportSource",
+      "updateMediaImportSource",
+      "deleteMediaImportSource",
       "browseDirectory",
       "getFilesystemRoots",
       "testNtfy",

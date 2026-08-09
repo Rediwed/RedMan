@@ -18,6 +18,18 @@
   gap: var(--space-md);
 }
 
+.media-import-page .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.media-import-page .section-header .section-title {
+  margin-bottom: 0;
+}
+
 .status-warning {
   display: flex;
   align-items: center;

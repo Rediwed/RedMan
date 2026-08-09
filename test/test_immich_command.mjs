@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, statSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildImmichUploadInvocation } from '../app/backend/src/services/immichCommand.js';
 import { createImmichRetryDirectory, removeImmichRetryDirectory } from '../app/backend/src/services/immichRetry.js';
+import {
+  resolveImportSourcePaths, countTakeoutArchives, supportsDriveSideEffects,
+  listTakeoutArchives, assertSourceReadable, validateFolderSourceInput,
+} from '../app/backend/src/services/mediaImportSources.js';
+import { normalizePath } from '../app/backend/src/middleware/validation.js';
 
 const apiKey = 'secret-immich-api-key';
 const invocation = buildImmichUploadInvocation({
@@ -19,6 +24,109 @@ assert.equal(invocation.args.some(argument => argument.startsWith('--api-key')),
 assert.equal(invocation.env.IMMICH_GO_UPLOAD_API_KEY, apiKey);
 assert.equal(invocation.args.at(-1), '/mnt/disks/camera');
 assert.throws(() => buildImmichUploadInvocation({}), /requires server/);
+
+// A takeout is read with a different immich-go command, and dropping
+// --include-unmatched silently skips every photo whose sidecar is missing.
+const takeout = buildImmichUploadInvocation({
+  serverUrl: 'http://192.168.50.20:2283',
+  apiKey,
+  logPath: '/app/backend/data/import-logs/run-2.log',
+  sourcePaths: ['/mnt/user/takeout/takeout-001.zip', '/mnt/user/takeout/takeout-002.zip'],
+  mode: 'google-photos',
+});
+assert.deepEqual(takeout.args.slice(0, 2), ['upload', 'from-google-photos']);
+assert.equal(takeout.args.includes('--include-unmatched'), true);
+assert.deepEqual(takeout.args.slice(-2), [
+  '/mnt/user/takeout/takeout-001.zip',
+  '/mnt/user/takeout/takeout-002.zip',
+]);
+assert.equal(takeout.args.some(argument => argument.includes(apiKey)), false);
+assert.equal(invocation.args.includes('--include-unmatched'), false);
+assert.throws(() => buildImmichUploadInvocation({
+  serverUrl: 'http://immich',
+  apiKey,
+  logPath: '/tmp/run.log',
+  sourcePath: '/mnt/user/takeout',
+  mode: 'from-google-photos',
+}), /Unsupported Immich upload mode/);
+
+// Archives are handed over in numeric order, since immich-go matches sidecars
+// across archive boundaries as it reads.
+const listing = () => ['takeout-010.zip', 'takeout-002.zip', 'notes.txt', 'takeout-001.ZIP']
+  .filter(name => name.toLowerCase().endsWith('.zip'));
+const takeoutSource = { mount_path: '/mnt/user/takeout', import_mode: 'google-photos' };
+assert.deepEqual(
+  resolveImportSourcePaths(takeoutSource, listing),
+  ['/mnt/user/takeout/takeout-001.ZIP', '/mnt/user/takeout/takeout-002.zip', '/mnt/user/takeout/takeout-010.zip'],
+);
+// The count comes from the same resolution as the upload, so an uppercase
+// extension cannot import fine while the UI reports nothing to import.
+assert.equal(countTakeoutArchives(takeoutSource, listing), 3);
+// An extracted takeout has no archives; the folder itself is the source.
+assert.deepEqual(resolveImportSourcePaths(takeoutSource, () => []), ['/mnt/user/takeout']);
+assert.equal(countTakeoutArchives(takeoutSource, () => []), 0);
+assert.deepEqual(
+  resolveImportSourcePaths({ mount_path: '/mnt/disks/camera', import_mode: 'folder' }, listing),
+  ['/mnt/disks/camera'],
+);
+assert.equal(countTakeoutArchives({ mount_path: '/mnt/disks/camera', import_mode: 'folder' }, listing), 0);
+
+// Deleting sources and ejecting hardware only apply to a removable drive.
+assert.equal(supportsDriveSideEffects({ source_kind: 'drive' }), true);
+assert.equal(supportsDriveSideEffects({ source_kind: 'folder' }), false);
+
+// A path carrying a NUL byte is refused by the validator itself rather than
+// relying on a downstream syscall to reject the truncated remainder.
+assert.equal(normalizePath('/mnt/user/takeout\0/etc'), null);
+
+const sandbox = mkdtempSync(join(tmpdir(), 'redman-media-source-test-'));
+const escape = mkdtempSync(join(tmpdir(), 'redman-outside-'));
+try {
+  const roots = { roots: [sandbox] };
+  const takeoutDir = join(sandbox, 'takeout');
+  mkdirSync(takeoutDir);
+  writeFileSync(join(takeoutDir, 'takeout-002.zip'), '');
+  writeFileSync(join(takeoutDir, 'takeout-001.zip'), '');
+  writeFileSync(join(takeoutDir, 'readme.txt'), '');
+  mkdirSync(join(takeoutDir, 'nested.zip'));
+
+  // A directory named like an archive is not one.
+  assert.deepEqual(listTakeoutArchives(takeoutDir).sort(), ['takeout-001.zip', 'takeout-002.zip']);
+  assert.deepEqual(listTakeoutArchives(join(sandbox, 'absent')), []);
+
+  const declared = validateFolderSourceInput({ name: 'Takeout', path: takeoutDir, import_mode: 'google-photos' }, roots);
+  assert.equal(declared.importMode, 'google-photos');
+
+  // A folder outside every root stays out, and so does a symlink pointing there.
+  const link = join(sandbox, 'link-out');
+  symlinkSync(escape, link);
+  assert.throws(
+    () => validateFolderSourceInput({ name: 'Escape', path: link, import_mode: 'folder' }, roots),
+    /storage roots/,
+  );
+
+  // The same check runs again at import time, because the folder that was
+  // declared can be replaced by a link to somewhere else afterwards.
+  const swapped = join(sandbox, 'swapped');
+  symlinkSync(escape, swapped);
+  assert.throws(
+    () => assertSourceReadable({ source_kind: 'folder', mount_path: swapped }, roots),
+    /resolves elsewhere/,
+  );
+  assert.throws(
+    () => assertSourceReadable({ source_kind: 'folder', mount_path: join(sandbox, 'gone') }, roots),
+    /no longer exists/,
+  );
+  assert.equal(assertSourceReadable({ source_kind: 'folder', mount_path: declared.path }, roots), declared.path);
+  // A removable drive is not held to the storage roots; it never was.
+  assert.equal(
+    assertSourceReadable({ source_kind: 'drive', mount_path: '/mnt/disks/camera' }, roots),
+    '/mnt/disks/camera',
+  );
+} finally {
+  await rm(sandbox, { recursive: true, force: true });
+  await rm(escape, { recursive: true, force: true });
+}
 
 const fixture = mkdtempSync(join(tmpdir(), 'redman-immich-retry-test-'));
 try {
@@ -35,4 +143,4 @@ try {
   await rm(fixture, { recursive: true, force: true });
 }
 
-console.log('Immich invocation and retry isolation: secret-safe args, unique mode-0700 directories, and scoped cleanup passed');
+console.log('Immich invocation and retry isolation: secret-safe args, takeout mode and ordering, unique mode-0700 directories, and scoped cleanup passed');
