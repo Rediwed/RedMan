@@ -153,13 +153,13 @@ function upsertDrive(drive) {
   let existing = null;
 
   if (drive.uuid) {
-    existing = db.prepare('SELECT * FROM media_drives WHERE uuid = ?').get(drive.uuid);
+    existing = db.prepare("SELECT * FROM media_drives WHERE uuid = ? AND source_kind = 'drive'").get(drive.uuid);
   }
   if (!existing && drive.serial) {
-    existing = db.prepare('SELECT * FROM media_drives WHERE serial = ?').get(drive.serial);
+    existing = db.prepare("SELECT * FROM media_drives WHERE serial = ? AND source_kind = 'drive'").get(drive.serial);
   }
   if (!existing) {
-    existing = db.prepare('SELECT * FROM media_drives WHERE mount_path = ?').get(drive.mountPath);
+    existing = db.prepare("SELECT * FROM media_drives WHERE mount_path = ? AND source_kind = 'drive'").get(drive.mountPath);
   }
 
   if (existing) {

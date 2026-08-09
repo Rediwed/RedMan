@@ -39,7 +39,9 @@ FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb836
 # Pinned immich-go version. Bump + re-verify checksums.txt when upgrading.
 # Upstream publishes a checksums.txt alongside each release; we verify the tarball
 # against it before extraction to mitigate supply-chain tampering.
-ARG IMMICH_GO_VERSION=v0.31.0
+# v0.32.0 is the first release that speaks the Immich V3 API; older builds fail
+# against a V3 server with an unparseable-response error.
+ARG IMMICH_GO_VERSION=v0.32.0
 
 # Install util-linux (lsblk, umount), rsync, openssh-client (ssh for rsync transport), librsync (rdiff for delta versioning), rclone (cloud remotes) and download+verify immich-go
 RUN apk add --no-cache util-linux curl rsync openssh-client librsync openssh-keygen rclone tzdata && \
