@@ -12,6 +12,7 @@ import { listContainers, isDockerAvailable } from './docker.js';
 import { getPeerConnectivity } from './peerConnectivity.js';
 import { getRelayStatus } from './ntfyRelay.js';
 import { listPoolHealth } from './storageHealth.js';
+import { getDestinationHealth } from './destinationHealth.js';
 
 // Ordered worst-first so a rollup is a simple minimum.
 const SEVERITY_ORDER = ['fail', 'warn', 'unknown', 'paused', 'ok'];
@@ -262,6 +263,26 @@ function storageChecks() {
   });
 }
 
+function destinationChecks() {
+  return getDestinationHealth().map(destination => check({
+    id: `destination:${destination.id}`,
+    category: 'Backup destinations',
+    subject: destination.name || destination.url,
+    state: destination.state === 'ok' ? 'ok' : destination.state,
+    summary: destination.spill || destination.reason || 'Fit to receive backups',
+    since: destination.measuredAt || null,
+    link: '/hyper-backup',
+    detail: {
+      profile: destination.profile ?? null,
+      redundant: destination.redundant ?? null,
+      disks: destination.diskCount ?? null,
+      disksNeedingAttention: destination.disksNeedingAttention ?? null,
+      measuredAt: destination.measuredAt ?? null,
+      askedAgoMs: destination.ageMs ?? null,
+    },
+  }));
+}
+
 function worst(states) {
   for (const level of SEVERITY_ORDER) {
     if (states.includes(level)) return level;
@@ -280,6 +301,7 @@ function worst(states) {
     { name: 'peers', run: peerChecks },
     { name: 'relay', run: async () => relayChecks(now) },
     { name: 'storage', run: async () => storageChecks() },
+    { name: 'destinations', run: async () => destinationChecks() },
   ];
 
   const settled = await Promise.allSettled(collectors.map(c => c.run()));

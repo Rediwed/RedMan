@@ -18,6 +18,7 @@ import {
 } from '../services/peerSecrets.js';
 import { reconcilePeerSshAuthorization } from '../services/peerSshAuthorization.js';
 import { getPeerConnectivity } from '../services/peerConnectivity.js';
+import { getDestinationHealth } from '../services/destinationHealth.js';
 const router = Router();
 
 function generateApiKey() {
@@ -165,6 +166,11 @@ router.post('/pair/sync', async (req, res) => {
 // Check connectivity to outgoing (destination) peers we push backups to
 router.get('/connectivity', async (req, res) => {
   res.json(await getPeerConnectivity());
+});
+
+// What each destination last said about the disks it would keep our data on
+router.get('/destination-health', (req, res) => {
+  res.json(getDestinationHealth());
 });
 
 // Get a single peer (key masked)

@@ -1,0 +1,27 @@
+.destination-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.destination-health-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.destination-health-layout {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.destination-health.dh-ok { color: var(--color-success); }
+.destination-health.dh-warn { color: var(--color-warning); }
+.destination-health.dh-fail { color: var(--color-danger); }
+.destination-health.dh-unknown { color: var(--color-text-muted); }
