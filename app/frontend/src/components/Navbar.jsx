@@ -1,7 +1,7 @@
 import { getPublicSettings } from '../api/index.js';
 import { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Camera, Settings, Menu, X, LogOut, UserRound, Activity, ListChecks } from 'lucide-react';
+import { LayoutDashboard, HardDrive, RefreshCw, Cloud, Camera, Settings, Menu, X, LogOut, UserRound, Activity } from 'lucide-react';
 import ConnectionStatus from './ConnectionStatus.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import './Navbar.css';
@@ -84,9 +84,6 @@ export default function Navbar() {
         </NavLink>
         <NavLink to="/media-import" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
           <Camera size={16} /> Media Import
-        </NavLink>
-        <NavLink to="/external-jobs" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
-          <ListChecks size={16} /> External Jobs
         </NavLink>
         <NavLink to="/status" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={() => setMenuOpen(false)}>
           <Activity size={16} /> Status

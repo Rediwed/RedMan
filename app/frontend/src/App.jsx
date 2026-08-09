@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SettingsProvider } from './contexts/SettingsContext.jsx';
 import Navbar from './components/Navbar.jsx';
 import PairingToast from './components/PairingToast.jsx';
@@ -8,7 +8,6 @@ import SsdBackupPage from './pages/SsdBackupPage.jsx';
 import HyperBackupPage from './pages/HyperBackupPage.jsx';
 import RclonePage from './pages/RclonePage.jsx';
 import MediaImportPage from './pages/MediaImportPage.jsx';
-import ExternalJobsPage from './pages/ExternalJobsPage.jsx';
 import StatusPage from './pages/StatusPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import VersionBadge from './components/VersionBadge.jsx';
@@ -49,7 +48,7 @@ function AuthenticatedApplication() {
             <Route path="/hyper-backup" element={<HyperBackupPage />} />
             <Route path="/rclone" element={<RclonePage />} />
             <Route path="/media-import" element={<MediaImportPage />} />
-            <Route path="/external-jobs" element={<ExternalJobsPage />} />
+            <Route path="/external-jobs" element={<Navigate to="/status?tab=jobs" replace />} />
             <Route path="/status" element={<StatusPage />} />
             <Route path="/account" element={<AccountPage />} />
             <Route path="/settings" element={auth.isAdmin ? <SettingsPage /> : <AccessDenied />} />

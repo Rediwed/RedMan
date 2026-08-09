@@ -84,10 +84,13 @@ function externalJobChecks(now) {
           : 'ok';
     let summary = 'Reported success';
     let at = null;
+    let failure = null;
     if (!job.enabled) summary = 'Watching paused';
     else if (h.neverReported) summary = 'Never reported in';
     else if (h.stale) { summary = 'No report since'; at = h.overdueSince; }
     else if (state === 'fail' && h.lastIssue) {
+      // The code travels as a fact; turning it into a sentence is the reader's side.
+      failure = { exitCode: h.lastIssue.exit_code ?? null, message: h.lastIssue.message || null };
       summary = h.lastIssue.message || `Exit code ${h.lastIssue.exit_code ?? 'unknown'}`;
     }
 
@@ -99,8 +102,8 @@ function externalJobChecks(now) {
       summary,
       at,
       since: job.last_reported_at,
-      link: '/external-jobs',
-      detail: { schedule: job.cron_expression, nextRun: h.nextRun },
+      link: '/status?tab=jobs',
+      detail: { schedule: job.cron_expression, nextRun: h.nextRun, failure },
     });
   });
 }

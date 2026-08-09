@@ -297,3 +297,51 @@
   font-size: 0.82rem;
   color: var(--color-text-muted);
 }
+
+.status-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  border-bottom: 1px solid var(--color-border);
+  margin: var(--space-lg) 0 var(--space-md);
+}
+
+.status-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.status-tab:hover {
+  color: var(--color-text);
+}
+
+.status-tab.is-active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-primary);
+}
+
+.status-tab-badge {
+  min-width: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-full);
+  background: var(--color-warning);
+  color: var(--color-bg);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.15rem;
+  text-align: center;
+}
+
+.ext-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-sm);
+}
