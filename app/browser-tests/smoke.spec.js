@@ -7,6 +7,7 @@ const routes = [
   ['/hyper-backup', 'Hyper Backup'],
   ['/rclone', 'Cloud Backup'],
   ['/media-import', 'Media Import'],
+  ['/status', 'Status'],
   ['/settings', 'Settings'],
   ['/account', 'Account'],
 ];
