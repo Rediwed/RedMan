@@ -129,6 +129,8 @@ DEPLOY_TARGETS=()
 DO_SEED=false
 INCLUDE_TEST=false
 FORCE=false
+WAIT_FOR_IDLE=0
+WAIT_POLL_SECONDS=60
 CHECK_ONLY=false
 PRINT_CONFIG=false
 CLEAR_BREAKGLASS_LATCH=false
@@ -144,17 +146,26 @@ while [[ $# -gt 0 ]]; do
     --seed)       DO_SEED=true; shift ;;
     --test)       INCLUDE_TEST=true; shift ;;
     --force)      FORCE=true; shift ;;
+    --wait-for-idle)
+      # Optional minutes; bare flag waits an hour.
+      if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+        WAIT_FOR_IDLE=$(( $2 * 60 )); shift 2
+      else
+        WAIT_FOR_IDLE=3600; shift
+      fi
+      ;;
     --check)      CHECK_ONLY=true; shift ;;
     --print-config) PRINT_CONFIG=true; shift ;;
     --clear-breakglass-latch) CLEAR_BREAKGLASS_LATCH=true; shift ;;
     --help|-h)
-      echo "Usage: ./deploy.sh --custom|--profile NAME [--profile NAME ...] [--seed] [--test] [--force] [--check] [--print-config] [--clear-breakglass-latch]"
+      echo "Usage: ./deploy.sh --custom|--profile NAME [--profile NAME ...] [--seed] [--test] [--force] [--wait-for-idle [MIN]] [--check] [--print-config] [--clear-breakglass-latch]"
       echo ""
       echo "  --custom      Deploy using REDMAN_DEPLOY_* environment variables"
       echo "  --profile N   Deploy a profile from .redman-deploy-profiles.sh (repeatable)"
       echo "  --seed        Reseed database after deploy (destructive!)"
       echo "  --test        Include test/ directory in sync"
       echo "  --force       Skip activity check and gracefully stop active jobs"
+      echo "  --wait-for-idle [MIN]  Wait for running jobs to finish on their own (default 60 min), then deploy"
       echo "  --check       Only check for active jobs, don't deploy"
       echo "  --print-config Validate and print non-secret target settings, then exit"
       echo "  --clear-breakglass-latch Explicitly clear the target's persistent safety latch"
@@ -387,6 +398,35 @@ check_activity() {
   fi
 
   return 1
+}
+
+# Waits for a target to finish what it is doing, rather than interrupting it.
+#
+# Deliberately not --force: that stops running jobs, which is the right tool
+# when a deploy cannot wait and the wrong one when it can. Nothing here ever
+# signals a job; it only asks again until the job ends on its own or the budget
+# runs out, so the worst case is a deploy that did not happen.
+wait_for_idle() {
+  local target=$1
+  local deadline=$(( $(date +%s) + WAIT_FOR_IDLE ))
+  local attempt=0
+
+  while :; do
+    if check_activity "$target"; then
+      [[ $attempt -gt 0 ]] && echo -e "  ${GREEN}Target went idle after $(( attempt * WAIT_POLL_SECONDS / 60 )) min${NC}"
+      return 0
+    fi
+
+    local remaining=$(( deadline - $(date +%s) ))
+    if [[ $remaining -le 0 ]]; then
+      echo -e "\n  ${RED}Still busy after $(( WAIT_FOR_IDLE / 60 )) min — giving up rather than interrupting it.${NC}"
+      return 1
+    fi
+
+    attempt=$(( attempt + 1 ))
+    echo -e "  ${YELLOW}Waiting for the job to finish — checking again in ${WAIT_POLL_SECONDS}s (${remaining}s of budget left)${NC}\n"
+    sleep "$WAIT_POLL_SECONDS"
+  done
 }
 
 # Gracefully stop active jobs via SIGTERM (triggers RedMan's shutdown handler)
@@ -748,9 +788,14 @@ deploy_target() {
 
   # Activity check
   if ! $FORCE; then
-    if ! check_activity "$target"; then
+    if [[ $WAIT_FOR_IDLE -gt 0 ]]; then
+      if ! wait_for_idle "$target"; then
+        echo -e "\n  ${RED}Deploy blocked — target never went idle.${NC}"
+        return 1
+      fi
+    elif ! check_activity "$target"; then
       echo -e "\n  ${RED}Deploy blocked — active jobs running.${NC}"
-      echo -e "  ${YELLOW}Use --force to gracefully stop jobs and deploy anyway.${NC}"
+      echo -e "  ${YELLOW}Use --wait-for-idle to deploy once they finish, or --force to stop them.${NC}"
       return 1
     fi
   else
