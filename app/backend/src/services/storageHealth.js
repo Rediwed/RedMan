@@ -165,8 +165,16 @@ export function describeDestination(destinationPath) {
     state = worse(state, 'warn');
   }
 
-  // A reading old enough to have been overtaken is not a reading to act on.
-  if (health.stale) state = worse(state, 'unknown');
+  // A reading old enough to have been overtaken is not a reading to act on --
+  // except when it was already bad, because disks do not recover on their own.
+  // Saying how old it is keeps that judgement visible instead of implied.
+  if (health.stale) {
+    state = worse(state, 'unknown');
+    const hours = health.ageMs ? Math.round(health.ageMs / 3_600_000) : null;
+    reason = hours
+      ? `${reason} (last measured ${hours} hours ago; the host has not reported since)`
+      : `${reason} (the host has not reported recently)`;
+  }
 
   return {
     state,
@@ -189,8 +197,7 @@ export function describeDestination(destinationPath) {
   };
 }
 
-/** Every pool the host reported, worst first, for the status board. */
-export function listPoolHealth() {
+/** Every pool the host reported, worst first, for the status board. */export function listPoolHealth() {
   const health = getStorageHealth();
   if (!health.available) return { available: false, reason: health.reason, pools: [] };
 

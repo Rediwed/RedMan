@@ -108,6 +108,7 @@ const validators = {
   docker_socket: dockerEndpoint,
   peer_api_port: integer(1, 65535),
   peer_api_url: peerApiUrl,
+  destination_health_enforcement: value => (String(value) === 'warn' ? 'warn' : 'refuse'),
   metrics_poll_interval: integer(10, 300),
   metrics_retention_hours: integer(1, 8760),
   immich_server_url: value => httpUrl(value, true),
