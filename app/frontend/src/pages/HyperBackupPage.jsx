@@ -3,10 +3,11 @@ import {
   getHyperJobs, createHyperJob, updateHyperJob, deleteHyperJob,
   triggerHyperBackup, cancelHyperBackup, getHyperRuns, getHyperRunDetail, getHyperRunProgress,
   getSshStatus, generateSshKey,
-  discoverPeers, initiatePairing, getPairingStatus, getPeers,
+  discoverPeers, initiatePairing, getPairingStatus, getPeers, getDestinationHealth,
 } from '../api/index.js';
 import { RefreshCw, Play, Pencil, Trash2, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Radar, Loader, ShieldCheck, ShieldAlert, X } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
+import DestinationHealthBadge from '../components/DestinationHealthBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
 import RemotePathPicker from '../components/RemotePathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
@@ -49,6 +50,7 @@ export default function HyperBackupPage() {
   const [deleteError, setDeleteError] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [destinations, setDestinations] = useState([]);
+  const [destinationHealth, setDestinationHealth] = useState([]);
   const [ssh, setSsh] = useState({ keyExists: false, publicKey: null });
   const [showPeerPicker, setShowPeerPicker] = useState(false);
   const [discoveredPeers, setDiscoveredPeers] = useState([]);
@@ -93,6 +95,9 @@ export default function HyperBackupPage() {
       setRuns(r);
       if (s) setSsh(s);
       if (p) setDestinations(p.outgoing || []);
+      // Never blocks the page: a destination that cannot answer is reported as
+      // unknown rather than left to hold up the jobs beside it.
+      getDestinationHealth().then(setDestinationHealth).catch(() => setDestinationHealth([]));
       detectRunning(r.runs);
     } catch (err) {
       setLoadError(err.message);
@@ -531,6 +536,16 @@ export default function HyperBackupPage() {
                   </code>
                 </div>
                 <div className="config-detail"><span className="detail-label">Schedule</span><span>{describeCron(j.cron_expression)}</span></div>
+                {(() => {
+                  const health = destinationHealth.find(d => d.url === j.remote_url);
+                  if (!health) return null;
+                  return (
+                    <div className="config-detail">
+                      <span className="detail-label">Destination disks</span>
+                      <DestinationHealthBadge health={health} />
+                    </div>
+                  );
+                })()}
               </div>
               <BackupHealth health={j.health} settings={settings} onOpenRun={viewRun} />
               <JobProgress progress={getProgressForConfig(j.id)} feature="hyper-backup" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(j.id); if (rid) cancelHyperBackup(rid).then(() => loadAll()); } : null} />

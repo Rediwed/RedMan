@@ -162,6 +162,7 @@ export const testSshConnection = (data) => postJSON('/settings/ssh/test', data);
 // ===== Authorized Peers =====
 export const getPeers = () => fetchJSON('/peers');
 export const getPeerConnectivity = () => fetchJSON('/peers/connectivity');
+export const getDestinationHealth = () => fetchJSON('/peers/destination-health');
 export const getPeer = (id) => fetchJSON(`/peers/${id}`);
 export const createPeer = (data) => postJSON('/peers', data);
 export const updatePeer = (id, data) => putJSON(`/peers/${id}`, data);

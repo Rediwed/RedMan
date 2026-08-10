@@ -3,7 +3,10 @@ import { getEvents, getEventSummary, getSystemStatus } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, parseDbDate } from '../utils/dateFormat.js';
-import { Link } from 'react-router-dom';
+import { splitBody, describeFailure } from '../utils/describe.js';
+import DetailStats from '../components/DetailStats.jsx';
+import ExternalJobsPage from './ExternalJobsPage.jsx';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Activity, RefreshCw, AlertTriangle, XCircle, Info, Filter, ChevronDown, ChevronRight,
   CheckCircle2, HelpCircle, PauseCircle,
@@ -31,6 +34,12 @@ const SEVERITY_META = {
   info: { icon: Info, className: 'sev-info', label: 'Info' },
 };
 
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'activity', label: 'Activity' },
+  { id: 'jobs', label: 'External jobs' },
+];
+
 function relativeAge(value) {
   const parsed = parseDbDate(value);
   if (!parsed) return '';
@@ -44,6 +53,8 @@ function relativeAge(value) {
 
 export default function StatusPage() {
   const { settings } = useSettings();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = TABS.some(t => t.id === searchParams.get('tab')) ? searchParams.get('tab') : 'overview';
   const [board, setBoard] = useState(null);
   const [summary, setSummary] = useState(null);
   const [data, setData] = useState({ events: [], total: 0 });
@@ -90,6 +101,14 @@ export default function StatusPage() {
   const counts = summary?.bySeverity || {};
   const totalPages = Math.max(1, Math.ceil(data.total / 50));
 
+  // A tab you have to open to discover something is wrong is a tab that hides it.
+  const jobCategory = board?.categories.find(c => c.name.toLowerCase().includes('external'));
+  const tabAttention = {
+    overview: (board?.counts.fail || 0) + (board?.counts.warn || 0),
+    activity: counts.error || 0,
+    jobs: jobCategory ? jobCategory.checks.filter(c => c.state === 'fail' || c.state === 'warn').length : 0,
+  };
+
   return (
     <div className="status-page">
       <div className="page-header">
@@ -131,7 +150,29 @@ export default function StatusPage() {
               The rest of the board is still accurate.
             </div>
           )}
+        </section>
+      )}
 
+      <nav className="status-tabs" role="tablist">
+        {TABS.map(t => {
+          const attention = tabAttention[t.id];
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              className={`status-tab${tab === t.id ? ' is-active' : ''}`}
+              onClick={() => setSearchParams(t.id === 'overview' ? {} : { tab: t.id }, { replace: true })}
+            >
+              {t.label}
+              {attention > 0 && <span className="status-tab-badge">{attention}</span>}
+            </button>
+          );
+        })}
+      </nav>
+
+      {tab === 'overview' && board && (
+        <section className="status-board">
           <div className="status-board-grid">
             {board.categories.map(cat => {
               const meta = STATE_META[cat.state];
@@ -156,6 +197,9 @@ export default function StatusPage() {
                   {shown.map(item => {
                     const cm = STATE_META[item.state];
                     const CIcon = cm.icon;
+                    const summary = item.detail?.failure
+                      ? describeFailure(item.detail.failure).headline
+                      : item.summary;
                     return (
                       <div key={item.id} className={`status-check ${cm.className}`}>
                         <CIcon size={13} />
@@ -166,7 +210,7 @@ export default function StatusPage() {
                               : item.subject}
                           </div>
                           <div className="status-check-summary">
-                            {item.summary}{item.at ? ` ${formatDateTime(item.at, settings)}` : ''}
+                            {summary}{item.at ? ` ${formatDateTime(item.at, settings)}` : ''}
                           </div>
                         </div>
                       </div>
@@ -179,8 +223,8 @@ export default function StatusPage() {
         </section>
       )}
 
-      <h2 className="status-section-title">Recent activity</h2>
-
+      {tab === 'activity' && (
+        <>
       <div className="status-summary">
         {['error', 'warning', 'info'].map(sev => {
           const meta = SEVERITY_META[sev];
@@ -200,7 +244,7 @@ export default function StatusPage() {
         })}
       </div>
 
-      {summary?.latestIssue && (
+      {summary?.latestIssue && !data.events.some(e => e.id === summary.latestIssue.id) && (
         <div className="status-latest">
           <AlertTriangle size={15} />
           <div>
@@ -208,7 +252,6 @@ export default function StatusPage() {
             <span className="status-latest-age">
               {relativeAge(summary.latestIssue.created_at)}
             </span>
-            {summary.latestIssue.body && <div className="status-latest-body">{summary.latestIssue.body}</div>}
           </div>
         </div>
       )}
@@ -246,24 +289,25 @@ export default function StatusPage() {
           const meta = SEVERITY_META[event.severity] || SEVERITY_META.info;
           const Icon = meta.icon;
           const isOpen = expanded === event.id;
+          const { lead, stats } = splitBody(event.body);
           const hasDetail = event.detail && Object.keys(event.detail).length > 0;
+          const hasMore = hasDetail || stats.length > 0;
           return (
             <div key={event.id} className={`status-event ${meta.className}`}>
               <div className="status-event-row">
                 <span className="status-event-icon"><Icon size={15} /></span>
                 <div className="status-event-main">
                   <div className="status-event-title">{event.title}</div>
-                  {event.body && <div className="status-event-body">{event.body}</div>}
+                  {lead && <div className="status-event-body">{lead}</div>}
                   <div className="status-event-meta">
                     <span className="status-chip">{event.category}</span>
-                    <span className="status-chip">{event.type}</span>
                     {event.subject && <span>{event.subject}</span>}
                   </div>
                 </div>
                 <div className="status-event-time" title={formatDateTime(event.created_at, settings)}>
                   {relativeAge(event.created_at)}
                 </div>
-                {hasDetail && (
+                {hasMore && (
                   <button
                     className="status-event-toggle"
                     onClick={() => setExpanded(isOpen ? null : event.id)}
@@ -274,8 +318,19 @@ export default function StatusPage() {
                   </button>
                 )}
               </div>
-              {isOpen && hasDetail && (
-                <pre className="status-event-detail">{JSON.stringify(event.detail, null, 2)}</pre>
+              {isOpen && hasMore && (
+                hasDetail
+                  ? <DetailStats detail={event.detail} />
+                  : (
+                    <dl className="detail-stats-grid">
+                      {stats.map(stat => (
+                        <div key={stat.label} className="detail-stat">
+                          <dt>{stat.label}</dt>
+                          <dd>{stat.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )
               )}
             </div>
           );
@@ -293,6 +348,10 @@ export default function StatusPage() {
           </button>
         </div>
       )}
+        </>
+      )}
+
+      {tab === 'jobs' && <ExternalJobsPage embedded />}
     </div>
   );
 }

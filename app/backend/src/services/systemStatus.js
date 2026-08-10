@@ -11,6 +11,8 @@ import { listExternalJobs } from './externalJobs.js';
 import { listContainers, isDockerAvailable } from './docker.js';
 import { getPeerConnectivity } from './peerConnectivity.js';
 import { getRelayStatus } from './ntfyRelay.js';
+import { listPoolHealth } from './storageHealth.js';
+import { getDestinationHealth } from './destinationHealth.js';
 
 // Ordered worst-first so a rollup is a simple minimum.
 const SEVERITY_ORDER = ['fail', 'warn', 'unknown', 'paused', 'ok'];
@@ -84,10 +86,13 @@ function externalJobChecks(now) {
           : 'ok';
     let summary = 'Reported success';
     let at = null;
+    let failure = null;
     if (!job.enabled) summary = 'Watching paused';
     else if (h.neverReported) summary = 'Never reported in';
     else if (h.stale) { summary = 'No report since'; at = h.overdueSince; }
     else if (state === 'fail' && h.lastIssue) {
+      // The code travels as a fact; turning it into a sentence is the reader's side.
+      failure = { exitCode: h.lastIssue.exit_code ?? null, message: h.lastIssue.message || null };
       summary = h.lastIssue.message || `Exit code ${h.lastIssue.exit_code ?? 'unknown'}`;
     }
 
@@ -99,8 +104,8 @@ function externalJobChecks(now) {
       summary,
       at,
       since: job.last_reported_at,
-      link: '/external-jobs',
-      detail: { schedule: job.cron_expression, nextRun: h.nextRun },
+      link: '/status?tab=jobs',
+      detail: { schedule: job.cron_expression, nextRun: h.nextRun, failure },
     });
   });
 }
@@ -217,6 +222,67 @@ function relayChecks(now) {
   })];
 }
 
+function storageChecks() {
+  const health = listPoolHealth();
+  if (!health.available) {
+    // Silent rather than unknown: a host that never installed the collector has
+    // nothing wrong with it, and a permanent "unknown" would train the reader
+    // to ignore the board.
+    return [];
+  }
+
+  return health.pools.map(pool => {
+    const attention = pool.devices.filter(d => d.state !== 'ok');
+    let summary;
+    if (pool.state === 'ok') {
+      summary = pool.redundant
+        ? `${pool.devices.length} disks healthy, ${pool.profile} survives losing one`
+        : `${pool.devices.length === 1 ? 'Disk' : 'Disks'} healthy, but no redundancy here`;
+    } else if (attention.length) {
+      summary = attention[0].reason || `A disk here reports ${attention[0].state}`;
+    } else {
+      summary = 'Disk health could not be established';
+    }
+
+    return check({
+      id: `storage:${pool.mount}`,
+      category: 'Storage',
+      subject: pool.mount,
+      state: pool.state,
+      summary,
+      since: health.measuredAt,
+      detail: {
+        profile: pool.profile,
+        redundant: pool.redundant,
+        disks: pool.devices.length,
+        disksNeedingAttention: attention.length,
+        measuredAt: health.measuredAt,
+        stale: health.stale,
+      },
+    });
+  });
+}
+
+function destinationChecks() {
+  return getDestinationHealth().map(destination => check({
+    id: `destination:${destination.id}`,
+    category: 'Backup destinations',
+    subject: destination.name || destination.url,
+    state: destination.state === 'ok' ? 'ok' : destination.state,
+    summary: destination.spill || destination.reason || 'Fit to receive backups',
+    since: destination.measuredAt || null,
+    link: '/hyper-backup',
+    detail: {
+      profile: destination.profile ?? null,
+      redundant: destination.redundant ?? null,
+      disks: destination.diskCount ?? null,
+      disksNeedingAttention: destination.disksNeedingAttention ?? null,
+      measuredAt: destination.measuredAt ?? null,
+      askedAgoMs: destination.ageMs ?? null,
+    },
+  }));
+}
+
 function worst(states) {
   for (const level of SEVERITY_ORDER) {
     if (states.includes(level)) return level;
@@ -227,14 +293,15 @@ function worst(states) {
 /**
  * Collect every subsystem check. Failures in one collector never take the board
  * down: a broken Docker socket should not hide backup health.
- */
-export async function getSystemStatus({ now = new Date() } = {}) {
+ */export async function getSystemStatus({ now = new Date() } = {}) {
   const collectors = [
     { name: 'backups', run: async () => backupChecks(now) },
     { name: 'external', run: async () => externalJobChecks(now) },
     { name: 'containers', run: containerChecks },
     { name: 'peers', run: peerChecks },
     { name: 'relay', run: async () => relayChecks(now) },
+    { name: 'storage', run: async () => storageChecks() },
+    { name: 'destinations', run: async () => destinationChecks() },
   ];
 
   const settled = await Promise.allSettled(collectors.map(c => c.run()));

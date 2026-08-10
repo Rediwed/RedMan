@@ -144,8 +144,8 @@ Events are recorded by `services/events.js` from inside `notify.js`'s `sendQuiet
 | `/hyper-backup` | `HyperBackupPage` | Hyper Backup |
 | `/rclone` | `RclonePage` | Rclone Sync |
 | `/media-import` | `MediaImportPage` | Media Import |
-| `/external-jobs` | `ExternalJobsPage` | External job heartbeats |
-| `/status` | `StatusPage` | Event history and severity summary |
+| `/external-jobs` | — | Redirects to `/status?tab=jobs` |
+| `/status` | `StatusPage` | Health board, event history, and external jobs (tabbed: Overview, Activity, External jobs) |
 | `/settings` | `SettingsPage` | Settings (tabbed: General, Notifications, Peers, Integrations, Infrastructure, Upgrade) |
 
 ### Frontend Patterns

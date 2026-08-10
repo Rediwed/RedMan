@@ -19,6 +19,7 @@ import { failRunningHyperRunsForPeer, getPeerOwnedHyperRun } from './services/pe
 import { assertLocalSourceHasEntries } from './services/sourceHealth.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './services/pathConfinement.js';
 import { getQuotaUsage, markQuotaUsageStale } from './services/quotaUsage.js';
+import { describeDestination } from './services/storageHealth.js';
 import { toRrsyncPath } from './services/sshKeyValidation.js';
 import { requirePeerHost, runtimeConfig } from './services/runtimeConfig.js';
 
@@ -238,6 +239,37 @@ export function createPeerApi() {
       }
     }
 
+    // Refusing on a failing destination is not about sparing it the writes. A
+    // push is an rsync that overwrites what is already there, so accepting one
+    // onto a disk that is dying trades the copy that still works for one that
+    // may not survive. Refusing keeps the older copy intact.
+    if (direction === 'push') {
+      const destination = describeDestination(normalizedPath);
+      if (destination.state === 'fail') {
+        const enforcement = db.prepare('SELECT value FROM settings WHERE key = ?')
+          .get('destination_health_enforcement')?.value;
+        logAudit.run(req.peer.id, req.peer.name, 'destination_unsafe', JSON.stringify({
+          remotePath: normalizedPath, reason: destination.reason,
+          profile: destination.profile, redundant: destination.redundant, runId,
+          enforced: enforcement !== 'warn',
+        }), req.peerIp);
+
+        if (enforcement !== 'warn') {
+          return res.status(409).json({
+            error: `Refusing to write here: ${destination.reason}. The copy already on this destination is left untouched.`,
+            destinationState: destination.state,
+            destinationReason: destination.reason,
+          });
+        }
+        console.warn(`[peer] Destination is unsafe (${destination.reason}) but enforcement is set to warn; accepting the backup`);
+      } else if (destination.state === 'warn') {
+        // Allowed on purpose: a warning is a reason to look, not to lose a night's backup.
+        logAudit.run(req.peer.id, req.peer.name, 'destination_degraded', JSON.stringify({
+          remotePath: normalizedPath, reason: destination.spill || destination.reason, runId,
+        }), req.peerIp);
+      }
+    }
+
     logAudit.run(req.peer.id, req.peer.name, 'backup_prepare', JSON.stringify({
       direction, remotePath: normalizedPath, runId,
     }), req.peerIp);
@@ -331,8 +363,13 @@ export function createPeerApi() {
     const usage = await getQuotaUsage(confinedPrefix);
     const usedBytes = usage.usedBytes;
 
+    // Whether a destination can take the data and whether it is fit to keep it
+    // are the same question, so they are answered together rather than needing
+    // a second call the caller could skip.
+    const destination = describeDestination(confinedPrefix);
+
     logAudit.run(req.peer.id, req.peer.name, 'storage_check', JSON.stringify({
-      prefix, usedBytes, limitBytes,
+      prefix, usedBytes, limitBytes, destinationState: destination.state,
     }), req.peerIp);
 
     res.json({
@@ -348,6 +385,19 @@ export function createPeerApi() {
       stale: usage.stale === true,
       ageMs: usage.ageMs ?? null,
       usageUnavailable: usage.unavailableReason,
+      // Serial numbers stay on the host that owns the disks; a peer needs the
+      // verdict and the reason, not an inventory of someone else's hardware.
+      destination: {
+        state: destination.state,
+        reason: destination.reason,
+        spill: destination.spill ?? null,
+        profile: destination.profile ?? null,
+        redundant: destination.redundant ?? null,
+        diskCount: destination.devices.length,
+        disksNeedingAttention: destination.devices.filter(d => d.state !== 'ok').length,
+        measuredAt: destination.measuredAt,
+        stale: destination.stale,
+      },
     });
   });
 

@@ -6,6 +6,7 @@ import {
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, parseDbDate } from '../utils/dateFormat.js';
+import { describeFailure } from '../utils/describe.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
@@ -45,7 +46,7 @@ function relativeAge(iso) {
   return `${Math.floor(hours / 24)} d ago`;
 }
 
-export default function ExternalJobsPage() {
+export default function ExternalJobsPage({ embedded = false }) {
   const { settings } = useSettings();
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -159,42 +160,53 @@ export default function ExternalJobsPage() {
 
   return (
     <div className="external-jobs-page">
-      <div className="page-header">
-        <h1><ListChecks size={24} /> External Jobs</h1>
-        <div className="page-header-actions">
-          <button className="btn btn-ghost btn-sm" onClick={load}>
-            <RefreshCw size={14} /> Refresh
-          </button>
+      {embedded ? (
+        <div className="ext-toolbar">
           <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>
             <Plus size={14} /> Register job
           </button>
         </div>
-      </div>
+      ) : (
+        <div className="page-header">
+          <h1><ListChecks size={24} /> External Jobs</h1>
+          <div className="page-header-actions">
+            <button className="btn btn-ghost btn-sm" onClick={load}>
+              <RefreshCw size={14} /> Refresh
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>
+              <Plus size={14} /> Register job
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      <div className="ext-summary">
-        <div className={`ext-summary-tile${counts.overdue ? ' is-alert' : ''}`}>
-          <span className="ext-summary-value">{counts.overdue || 0}</span>
-          <span className="ext-summary-label"><AlertTriangle size={13} /> Overdue</span>
+      {/* Embedded, the health banner above already counts these. */}
+      {!embedded && (
+        <div className="ext-summary">
+          <div className={`ext-summary-tile${counts.overdue ? ' is-alert' : ''}`}>
+            <span className="ext-summary-value">{counts.overdue || 0}</span>
+            <span className="ext-summary-label"><AlertTriangle size={13} /> Overdue</span>
+          </div>
+          <div className="ext-summary-tile">
+            <span className="ext-summary-value">{counts.healthy || 0}</span>
+            <span className="ext-summary-label">Healthy</span>
+          </div>
+          <div className="ext-summary-tile">
+            <span className="ext-summary-value">{counts.attention || 0}</span>
+            <span className="ext-summary-label">Needs attention</span>
+          </div>
+          <div className="ext-summary-tile">
+            <span className="ext-summary-value">{counts.unproven || 0}</span>
+            <span className="ext-summary-label">Awaiting first report</span>
+          </div>
+          <div className="ext-summary-tile">
+            <span className="ext-summary-value">{counts.paused || 0}</span>
+            <span className="ext-summary-label">Paused</span>
+          </div>
         </div>
-        <div className="ext-summary-tile">
-          <span className="ext-summary-value">{counts.healthy || 0}</span>
-          <span className="ext-summary-label">Healthy</span>
-        </div>
-        <div className="ext-summary-tile">
-          <span className="ext-summary-value">{counts.attention || 0}</span>
-          <span className="ext-summary-label">Needs attention</span>
-        </div>
-        <div className="ext-summary-tile">
-          <span className="ext-summary-value">{counts.unproven || 0}</span>
-          <span className="ext-summary-label">Awaiting first report</span>
-        </div>
-        <div className="ext-summary-tile">
-          <span className="ext-summary-value">{counts.paused || 0}</span>
-          <span className="ext-summary-label">Paused</span>
-        </div>
-      </div>
+      )}
 
       {loading && <div className="empty-state">Loading…</div>}
 
@@ -258,12 +270,24 @@ export default function ExternalJobsPage() {
                 </div>
               </div>
 
-              {job.health.lastIssue && (
-                <div className="ext-job-issue">
-                  <AlertTriangle size={13} /> last failure: exit {job.health.lastIssue.exit_code ?? '?'}
-                  {job.health.lastIssue.message ? ` — ${job.health.lastIssue.message}` : ''}
-                </div>
-              )}
+              {job.health.lastIssue && (() => {
+                const failure = describeFailure({
+                  exitCode: job.health.lastIssue.exit_code,
+                  message: job.health.lastIssue.message,
+                });
+                return (
+                  <div className="ext-job-issue">
+                    <AlertTriangle size={13} />
+                    <span>Last failure: {failure.headline}</span>
+                    {failure.note && <span className="ext-job-issue-note">{failure.note}</span>}
+                    {failure.code !== undefined && (
+                      <span className="ext-job-issue-code" title="Exit code the job reported">
+                        exit {failure.code}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
 
               {isOpen && (
                 <div className="ext-job-runs">

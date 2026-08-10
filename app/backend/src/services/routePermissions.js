@@ -76,7 +76,7 @@ export const API_ROUTE_POLICIES = Object.freeze([
   policy(['GET'], /^\/settings\/notifications\/stream$/, PERMISSIONS.READ),
 
   policy(['GET', 'POST'], /^\/peers\/?$/, PERMISSIONS.PEERS),
-  policy(['GET'], /^\/peers\/(?:connectivity|audit-log\/all|pair\/(?:incoming|history|status\/\d+)|\d+|\d+\/audit-log)$/, PERMISSIONS.PEERS),
+  policy(['GET'], /^\/peers\/(?:connectivity|destination-health|audit-log\/all|pair\/(?:incoming|history|status\/\d+)|\d+|\d+\/audit-log)$/, PERMISSIONS.PEERS),
   policy(['POST', 'PUT', 'DELETE'], /^\/peers\/(?:\d+|\d+\/regenerate-key|pair|pair\/sync|pair\/\d+(?:\/(?:accept|decline))?)$/, PERMISSIONS.PEERS),
 
   policy(['GET'], /^\/overview\/summary$/, PERMISSIONS.READ),
