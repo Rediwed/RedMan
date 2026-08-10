@@ -108,7 +108,7 @@ Sync to any rclone-supported cloud provider (Google Drive, S3, Backblaze B2, etc
 - Bisync resync handling
 - **Full remote lifecycle** — create, configure, test, update, and delete rclone remotes from the UI
 - **OneDrive auto-discovery** — resolves and stores the drive ID and type from the OAuth token required by current rclone versions
-- **Remote browsing** — list contents of configured remotes
+- **Remote browsing** — navigate a configured remote from the job form to pick a remote path that exists, instead of typing one and finding out on the first run
 
 ### Docker Monitoring
 Optional real-time container metrics and management.
@@ -124,6 +124,8 @@ Auto-detect USB/SD card drives and import to Immich.
 
 - Camera detection (Canon, GoPro, Apple, Sony, etc.)
 - Auto-import on drive attach
+- **Folder sources** — import from a folder inside RedMan's storage roots as well as from removable media, for photos that are already on the machine
+- **Google Photos takeout** — a folder source can be read as a takeout, so the archives are handed to immich-go unpacked-in-place and the dates, locations, and albums from their sidecar files survive the move
 - Optional verified cleanup: only files with per-run Immich success/duplicate evidence and unchanged size, mtime, and SHA-256 are deleted; failed, unknown, changed, or unsafe files remain
 - **Drive management** — rename and configure drives; ejection is shown only when an executable `MEDIA_EJECT_HELPER` host integration is configured, without granting `CAP_SYS_ADMIN`
 - **Scan & import progress** — real-time tracking of photo/video scanning and Immich uploads
@@ -707,7 +709,7 @@ All feature routes are prefixed with `/api/` and pass through the selected authe
 | `/api/overview/*` | Dashboard stats |
 | `/api/settings/*` | App settings, notifications, SSH key management, DB backup & recovery |
 | `/api/peers/*` | Authorized peer management, audit log |
-| `/api/media-import/*` | Drive detection and Immich import |
+| `/api/media-import/*` | Drive detection, folder sources, and Immich import |
 | `/api/filesystem/*` | Path browsing |
 | `/api/external-jobs/*` | External job registration, health, and run history (authenticated) |
 | `POST /api/external-jobs/heartbeat/:slug` | Heartbeat ingest for schedules on other hosts (per-job Bearer token, not a user session) |

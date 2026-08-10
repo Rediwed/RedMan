@@ -17,6 +17,7 @@ import {
 } from './mediaImportLedger.js';
 import { resolveExistingPathWithinPrefix } from './pathConfinement.js';
 import { buildImmichUploadInvocation } from './immichCommand.js';
+import { resolveImportSourcePaths, supportsDriveSideEffects, assertSourceReadable } from './mediaImportSources.js';
 import { terminateChildProcesses } from './childProcessShutdown.js';
 import { resolveMediaImportStatus } from './runStatus.js';
 import { createImmichRetryDirectory, removeImmichRetryDirectory } from './immichRetry.js';
@@ -96,6 +97,10 @@ export async function startImport(driveId) {
   const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(driveId);
   if (!drive) throw new Error(`Drive ${driveId} not found`);
 
+  // The stored path was proven safe when it was declared; a folder can be
+  // swapped for a symlink since, so it is proven again before anything reads it.
+  assertSourceReadable(drive);
+
   const serverUrl = getSetting('immich_server_url');
   const apiKey = getSetting('immich_api_key');
 
@@ -158,7 +163,8 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
       serverUrl,
       apiKey,
       logPath: primaryLogPath,
-      sourcePath: drive.mount_path,
+      sourcePaths: resolveImportSourcePaths(drive),
+      mode: drive.import_mode || 'folder',
     });
 
     const result = await spawnImmichGo(primaryInvocation.args, runId, progress, primaryInvocation.env, update => {
@@ -168,7 +174,9 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     // Retry failed files once — parse log for failed paths, symlink them into a temp dir
     const statusAfterInitialRun = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
     if (resolveMediaImportStatus(statusAfterInitialRun, result.exitCode, progress) !== 'cancelled'
-      && result.exitCode !== 0 && progress.errors > 0 && progress.uploaded > 0) {
+      && result.exitCode !== 0 && progress.errors > 0 && progress.uploaded > 0
+      // A failure inside a takeout archive has no file on disk to link to.
+      && (drive.import_mode || 'folder') === 'folder') {
       const failedPaths = getFailedPathsFromLog(primaryLogPath, drive.mount_path);
       if (failedPaths.length > 0 && failedPaths.length <= 50) {
         console.log(`[immich-import] Retrying ${failedPaths.length} failed file(s)...`);
@@ -259,7 +267,8 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
       notifyImportError(drive.name || drive.label, failureSummary);
     }
 
-    if ((status === 'completed' || status === 'partial') && drive.delete_after_import) {
+    if ((status === 'completed' || status === 'partial') && drive.delete_after_import
+      && supportsDriveSideEffects(drive)) {
       const deletion = await deleteVerifiedMediaSources(db, runId, drive.mount_path);
       await sendNotification(
         `Deleted ${deletion.deleted} verified file(s); preserved ${deletion.preserved} changed or unsafe file(s)`,
@@ -268,7 +277,8 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     }
 
     // Handle eject-after-import
-    if ((status === 'completed' || status === 'partial') && drive.eject_after_import) {
+    if ((status === 'completed' || status === 'partial') && drive.eject_after_import
+      && supportsDriveSideEffects(drive)) {
       console.log(`[immich-import] Ejecting drive ${drive.mount_path}`);
       const ejected = ejectDrive(drive.mount_path);
       if (ejected.ok) {

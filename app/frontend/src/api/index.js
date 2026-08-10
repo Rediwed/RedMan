@@ -190,7 +190,7 @@ export const createRcloneRemote = (data) => postJSON('/rclone/remotes', data);
 export const updateRcloneRemote = (name, params) => putJSON(`/rclone/remotes/${encodeURIComponent(name)}`, { params });
 export const deleteRcloneRemote = (name) => deleteJSON(`/rclone/remotes/${encodeURIComponent(name)}`);
 export const testRcloneRemote = (name) => postJSON(`/rclone/remotes/${encodeURIComponent(name)}/test`, {});
-export const browseRemote = (name, path = '') => fetchJSON(`/rclone/remote/${name}/ls?path=${encodeURIComponent(path)}`);
+export const browseRemote = (name, path = '') => fetchJSON(`/rclone/remote/${encodeURIComponent(name)}/ls?path=${encodeURIComponent(path)}`);
 export const getRcloneJobs = () => fetchJSON('/rclone/jobs');
 export const getRcloneJob = (id) => fetchJSON(`/rclone/jobs/${id}`);
 export const createRcloneJob = (data) => postJSON('/rclone/jobs', data);
@@ -237,6 +237,10 @@ export const getMediaImportRunFiles = (id, action) => {
 };
 export const testImmichConnection = () => postJSON('/media-import/test-immich', {});
 export const getMediaImportStatus = () => fetchJSON('/media-import/status');
+export const getMediaImportSources = () => fetchJSON('/media-import/sources');
+export const createMediaImportSource = (data) => postJSON('/media-import/sources', data);
+export const updateMediaImportSource = (id, data) => putJSON(`/media-import/sources/${id}`, data);
+export const deleteMediaImportSource = (id) => deleteJSON(`/media-import/sources/${id}`);
 
 // ===== Filesystem =====
 export const browseDirectory = (dir) => fetchJSON(`/filesystem/browse?dir=${encodeURIComponent(dir || '')}`);

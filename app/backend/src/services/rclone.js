@@ -47,6 +47,27 @@ export async function listRemotes() {
     .filter(l => l.length > 0);
 }
 
+// Browsing is an interactive path: it must answer or give up quickly, it must
+// not let a stuck cloud link pile up rclone processes on the host, and what it
+// tells the caller must not repeat whatever the credential layer printed.
+const BROWSE_TIMEOUT_MS = 20000;
+const MAX_CONCURRENT_BROWSES = 2;
+const MAX_BROWSE_ENTRIES = 1000;
+const REMOTE_LIST_CACHE_MS = 10000;
+
+let browsesInFlight = 0;
+let browseSequence = 0;
+let cachedRemoteNames = { at: 0, names: null };
+
+async function listRemotesCached() {
+  if (cachedRemoteNames.names && Date.now() - cachedRemoteNames.at < REMOTE_LIST_CACHE_MS) {
+    return cachedRemoteNames.names;
+  }
+  const names = await listRemotes();
+  cachedRemoteNames = { at: Date.now(), names };
+  return names;
+}
+
 // Browse a remote path
 export async function browseRemote(remoteName, remotePath = '') {
   // Validate remote name + path before invoking rclone. Args are passed as an
@@ -55,21 +76,47 @@ export async function browseRemote(remoteName, remotePath = '') {
   if (!isSafeRemoteName(remoteName)) {
     throw new Error('Invalid remote name');
   }
-  const remotes = await listRemotes();
+  const remotes = await listRemotesCached();
   if (!remotes.includes(remoteName)) {
     throw new Error(`Remote "${remoteName}" not found`);
   }
   if (typeof remotePath !== 'string' || /[\n\r\0]/.test(remotePath) || remotePath.includes('..')) {
     throw new Error('Invalid remote path');
   }
-  const target = remotePath ? `${remoteName}:${remotePath}` : `${remoteName}:`;
-  const result = await runRclone(['lsjson', target, '--dirs-only']);
-  if (result.exitCode !== 0) throw new Error(`rclone lsjson failed: ${result.stderr}`);
-  try {
-    return JSON.parse(result.stdout || '[]');
-  } catch {
-    return [];
+  if (browsesInFlight >= MAX_CONCURRENT_BROWSES) {
+    throw new Error('Too many listings in progress — try again in a moment');
   }
+
+  const target = remotePath ? `${remoteName}:${remotePath}` : `${remoteName}:`;
+  const processKey = `browse:${++browseSequence}`;
+  browsesInFlight += 1;
+  let result;
+  try {
+    result = await runRclone(['lsjson', target, '--dirs-only'], null, null, {
+      timeoutMs: BROWSE_TIMEOUT_MS,
+      processKey,
+    });
+  } finally {
+    browsesInFlight -= 1;
+  }
+
+  if (result.exitCode !== 0) {
+    // rclone's stderr names config paths, endpoints, buckets, and provider
+    // OAuth bodies. It belongs in the log, not in a response a viewer can read.
+    console.warn(`[rclone] lsjson failed for ${target}: ${result.stderr}`);
+    throw new Error(`Could not list "${target}" — the path may not exist, or the remote may be unreachable`);
+  }
+
+  let entries;
+  try {
+    entries = JSON.parse(result.stdout || '[]');
+  } catch {
+    // Output is kept as a bounded tail, so an enormous listing arrives as
+    // truncated JSON. Saying nothing would render as "no folders here".
+    throw new Error(`Listing for "${target}" was too large to read — open a more specific path`);
+  }
+  if (!Array.isArray(entries)) return [];
+  return entries.slice(0, MAX_BROWSE_ENTRIES);
 }
 
 async function assertRcloneRemoteHasEntries(remote) {
@@ -312,7 +359,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
   }
 }
 
-function runRclone(args, runId = null, onStderrLine = null) {
+function runRclone(args, runId = null, onStderrLine = null, options = {}) {
   return new Promise((resolve, reject) => {
     let proc;
     try {
@@ -324,12 +371,29 @@ function runRclone(args, runId = null, onStderrLine = null) {
       reject(new Error(`rclone is not installed or not accessible: ${err.message}`));
       return;
     }
-    if (runId) activeProcesses.set(runId, proc);
+    // Anything long-lived must be reachable at shutdown, whether or not it
+    // belongs to a tracked run.
+    const processKey = options.processKey ?? runId;
+    if (processKey !== null && processKey !== undefined) activeProcesses.set(processKey, proc);
     let stdout = '';
     let stderr = '';
     let stderrRemainder = '';
     let lineHandlerError = null;
-    const maxOutputBytes = runId ? 64 * 1024 : 1024 * 1024;
+    let timedOut = false;
+    const maxOutputBytes = options.maxOutputBytes ?? (runId ? 64 * 1024 : 1024 * 1024);
+
+    // A remote that never answers would otherwise hold the request and the
+    // child process open for as long as the process lives.
+    let killTimer = null;
+    const timeout = options.timeoutMs
+      ? setTimeout(() => {
+        timedOut = true;
+        proc.kill('SIGTERM');
+        killTimer = setTimeout(() => proc.kill('SIGKILL'), 5000);
+        killTimer.unref?.();
+      }, options.timeoutMs)
+      : null;
+    timeout?.unref?.();
 
     proc.stdout.on('data', d => { stdout = appendOutputTail(stdout, d.toString(), maxOutputBytes); });
     proc.stderr.on('data', d => {
@@ -348,12 +412,18 @@ function runRclone(args, runId = null, onStderrLine = null) {
     });
 
     proc.on('close', (exitCode) => {
-      if (runId) activeProcesses.delete(runId);
+      if (timeout) clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      if (processKey !== null && processKey !== undefined) activeProcesses.delete(processKey);
       if (stderrRemainder && onStderrLine && !lineHandlerError) {
         try { onStderrLine(stderrRemainder); } catch (err) { lineHandlerError = err; }
       }
       if (lineHandlerError) {
         reject(new Error(`Failed to process rclone output: ${lineHandlerError.message}`));
+        return;
+      }
+      if (timedOut) {
+        reject(new Error(`rclone timed out after ${Math.round(options.timeoutMs / 1000)}s`));
         return;
       }
       resolve({ exitCode, stdout, stderr });
