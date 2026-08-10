@@ -9,6 +9,7 @@ import useReconnect from '../hooks/useReconnect.js';
 import { Cloud, Play, Pencil, Trash2, ClipboardList, AlertTriangle, Plus, Plug, CheckCircle2, XCircle, Settings, Eye, EyeOff, Copy, ChevronRight, ChevronDown, ExternalLink, Loader2, Terminal } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge.jsx';
 import PathPicker from '../components/PathPicker.jsx';
+import RcloneRemotePathPicker from '../components/RcloneRemotePathPicker.jsx';
 import JobProgress from '../components/JobProgress.jsx';
 import SchedulePicker, { describeCron } from '../components/SchedulePicker.jsx';
 import useJobProgress from '../hooks/useJobProgress.js';
@@ -781,7 +782,18 @@ export default function RclonePage() {
 
                 <div className="form-group">
                   <label>Remote Path</label>
-                  <input value={form.remote_path} onChange={e => setForm({ ...form, remote_path: e.target.value })} required placeholder="Backups/Nextcloud" />
+                  <RcloneRemotePathPicker
+                    value={form.remote_path}
+                    onChange={v => setForm(f => ({ ...f, remote_path: v }))}
+                    remoteName={form.remote_name}
+                    placeholder="Backups/Nextcloud"
+                    required
+                  />
+                  <span className="form-hint">
+                    {form.remote_name
+                      ? 'Browse opens the remote itself, so you pick a folder that exists instead of finding out on the first run.'
+                      : 'Select a remote first to browse it.'}
+                  </span>
                 </div>
 
                 <div className="form-group">

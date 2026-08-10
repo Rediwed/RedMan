@@ -108,7 +108,7 @@ Sync to any rclone-supported cloud provider (Google Drive, S3, Backblaze B2, etc
 - Bisync resync handling
 - **Full remote lifecycle** — create, configure, test, update, and delete rclone remotes from the UI
 - **OneDrive auto-discovery** — resolves and stores the drive ID and type from the OAuth token required by current rclone versions
-- **Remote browsing** — list contents of configured remotes
+- **Remote browsing** — navigate a configured remote from the job form to pick a remote path that exists, instead of typing one and finding out on the first run
 
 ### Docker Monitoring
 Optional real-time container metrics and management.
