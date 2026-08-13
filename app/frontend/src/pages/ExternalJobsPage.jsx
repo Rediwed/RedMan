@@ -7,12 +7,14 @@ import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, parseDbDate } from '../utils/dateFormat.js';
 import { describeFailure } from '../utils/describe.js';
+import ActionMenu from '../components/ActionMenu.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
 import {
   ListChecks, Plus, RefreshCw, Trash2, KeyRound, Copy, Check,
   AlertTriangle, Clock, Server, ChevronDown, ChevronRight, X,
+  PauseCircle, PlayCircle,
 } from 'lucide-react';
 import './ExternalJobsPage.css';
 
@@ -257,16 +259,27 @@ export default function ExternalJobsPage({ embedded = false }) {
                   </div>
                 </div>
                 <div className="ext-job-actions">
-                  <button className="btn btn-ghost btn-sm" onClick={() => toggleEnabled(job)}>
-                    {job.enabled ? 'Pause' : 'Resume'}
-                  </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRotate(job)}
-                    title="Rotate token — breaks the current one">
-                    <KeyRound size={14} />
-                  </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDelete(job)} title="Delete">
-                    <Trash2 size={14} />
-                  </button>
+                  <ActionMenu
+                    label={`Actions for ${job.name}`}
+                    actions={[
+                      {
+                        label: job.enabled ? 'Pause watching' : 'Resume watching',
+                        icon: job.enabled ? PauseCircle : PlayCircle,
+                        onSelect: () => toggleEnabled(job),
+                      },
+                      {
+                        label: 'Rotate heartbeat token',
+                        icon: KeyRound,
+                        onSelect: () => setConfirmRotate(job),
+                      },
+                      {
+                        label: 'Delete job',
+                        icon: Trash2,
+                        destructive: true,
+                        onSelect: () => setConfirmDelete(job),
+                      },
+                    ]}
+                  />
                 </div>
               </div>
 

@@ -16,6 +16,7 @@ import { runtimeConfig } from './runtimeConfig.js';
 import { validateSshHost, validateSshPort, validateSshUser } from '../middleware/validation.js';
 import { validatePrivatePeerHost } from './peerUrlPolicy.js';
 import { fetchWithoutRedirect } from './httpPolicy.js';
+import { recordEvent } from './events.js';
 
 const IS_MAC = os.platform() === 'darwin';
 const activeRuns = new Map();
@@ -143,11 +144,26 @@ export async function executeHyperBackup(jobId, existingRunId = null) {
     }
 
     // Step 1: Call remote peer API to prepare
+    let peerRetries = 0;
     const prepareResult = await callPeerApi(binding.remoteUrl, remoteApiKey, 'POST', '/peer/backup/prepare', {
       direction: job.direction,
       remotePath: job.remote_path,
       runId,
+    }, {
+      onRetry: info => {
+        peerRetries += 1;
+        recordEvent('peer_call_retried', {
+          subject: job.name,
+          title: `${job.name}: retrying the peer that did not answer`,
+          body: info.message,
+          detail: { runId, attempt: info.attempt, of: info.attempts, retryInSeconds: info.waitMs / 1000 },
+        });
+      },
     });
+
+    if (peerRetries > 0) {
+      console.log(`[hyper-backup] Job ${job.id} reached its peer after ${peerRetries} retry(ies)`);
+    }
 
     if (!prepareResult.ok) {
       throw new Error(`Remote prepare failed: ${prepareResult.error || 'Unknown error'}`);
@@ -333,9 +349,11 @@ export async function notifyPeersOfShutdown() {
     notified.add(binding.remoteUrl);
 
     promises.push(
+      // No retries: this is a courtesy on the way out, and shutdown should not
+      // wait on a peer that is very likely going down with us.
       callPeerApi(binding.remoteUrl, decryptPeerApiKey(binding.apiKeyEncrypted), 'POST', '/peer/shutdown', {
         reason: 'graceful shutdown',
-      }).then(() => {
+      }, { attempts: 1 }).then(() => {
         console.log(`[shutdown] Notified peer at ${binding.remoteUrl}`);
       }).catch((err) => {
         console.warn(`[shutdown] Could not notify peer at ${binding.remoteUrl}: ${err.message}`);
@@ -350,9 +368,22 @@ export async function notifyPeersOfShutdown() {
   ]);
 }
 
-// Helper to call the peer API
-async function callPeerApi(baseUrl, apiKey, method, path, body = null) {
-  baseUrl = validatePrivatePeerBaseUrl(baseUrl);
+// Failures that mean "ask again later", separated from failures that mean
+// "the answer will be the same". A refused backup — quota exceeded, a
+// destination known to be dying, a rejected key — is a decision, and asking a
+// second time only wastes the peer's time and buries the reason.
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const PEER_RETRY_ATTEMPTS = 3;
+const PEER_RETRY_BASE_MS = 3000;
+
+class PeerCallError extends Error {
+  constructor(message, { retryable = false } = {}) {
+    super(message);
+    this.retryable = retryable;
+  }
+}
+
+async function callPeerApiOnce(baseUrl, apiKey, method, path, body) {
   const url = `${baseUrl}${path}`;
   const headers = {
     'Authorization': `Bearer ${apiKey}`,
@@ -366,43 +397,72 @@ async function callPeerApi(baseUrl, apiKey, method, path, body = null) {
   try {
     response = await fetchWithoutRedirect(url, options);
   } catch (err) {
-    // Network-level errors → friendly messages
+    // Nothing was answered, so nothing was decided: every one of these is worth
+    // asking again.
     const code = err.cause?.code || '';
     const msg = err.message || '';
+    const retryable = { retryable: true };
     if (code === 'ECONNREFUSED' || msg.includes('ECONNREFUSED')) {
-      throw new Error(`Remote peer is unreachable at ${baseUrl} — connection refused. Is the peer instance running?`);
+      throw new PeerCallError(`Remote peer is unreachable at ${baseUrl} — connection refused. Is the peer instance running?`, retryable);
     }
     if (code === 'ECONNRESET' || msg.includes('ECONNRESET')) {
-      throw new Error(`Connection to remote peer at ${baseUrl} was reset. The peer may have shut down.`);
+      throw new PeerCallError(`Connection to remote peer at ${baseUrl} was reset. The peer may have shut down.`, retryable);
     }
     if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT' || msg.includes('ETIMEDOUT')) {
-      throw new Error(`Connection to remote peer at ${baseUrl} timed out. Check network connectivity.`);
+      throw new PeerCallError(`Connection to remote peer at ${baseUrl} timed out. Check network connectivity.`, retryable);
     }
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || msg.includes('ENOTFOUND')) {
-      throw new Error(`Could not resolve hostname for ${baseUrl}. Check the remote URL.`);
+      throw new PeerCallError(`Could not resolve hostname for ${baseUrl}. Check the remote URL.`, retryable);
     }
     if (code === 'EHOSTUNREACH' || msg.includes('EHOSTUNREACH')) {
-      throw new Error(`Remote host at ${baseUrl} is unreachable. Check network connectivity.`);
+      throw new PeerCallError(`Remote host at ${baseUrl} is unreachable. Check network connectivity.`, retryable);
     }
-    throw new Error(`Failed to connect to remote peer at ${baseUrl}: ${code || msg}`);
+    throw new PeerCallError(`Failed to connect to remote peer at ${baseUrl}: ${code || msg}`, retryable);
   }
 
   let data;
   try {
     data = await response.json();
   } catch {
-    throw new Error(`Remote peer at ${baseUrl} returned an invalid response (HTTP ${response.status})`);
+    throw new PeerCallError(
+      `Remote peer at ${baseUrl} returned an invalid response (HTTP ${response.status})`,
+      { retryable: RETRYABLE_STATUS.has(response.status) },
+    );
   }
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new Error(`Authentication failed — the API key was rejected by the remote peer at ${baseUrl}`);
+      throw new PeerCallError(`Authentication failed — the API key was rejected by the remote peer at ${baseUrl}`);
     }
-    throw new Error(data.error || `Remote peer returned HTTP ${response.status}`);
+    throw new PeerCallError(
+      data.error || `Remote peer returned HTTP ${response.status}`,
+      { retryable: RETRYABLE_STATUS.has(response.status) },
+    );
   }
 
   return data;
 }
+
+// Helper to call the peer API
+async function callPeerApi(baseUrl, apiKey, method, path, body = null, { attempts = PEER_RETRY_ATTEMPTS, backoffMs = PEER_RETRY_BASE_MS, onRetry } = {}) {
+  baseUrl = validatePrivatePeerBaseUrl(baseUrl);
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await callPeerApiOnce(baseUrl, apiKey, method, path, body);
+    } catch (err) {
+      if (!err.retryable || attempt >= attempts) throw err;
+
+      const waitMs = backoffMs * (3 ** (attempt - 1));
+      console.warn(`[hyper-backup] ${path} failed (${err.message}); retrying in ${waitMs / 1000}s (attempt ${attempt + 1} of ${attempts})`);
+      onRetry?.({ attempt, attempts, waitMs, message: err.message, path });
+      await new Promise(resolve => { setTimeout(resolve, waitMs); });
+    }
+  }
+}
+
+// Exposed so the retry rules can be tested without standing up two instances.
+export const callPeerApiForTests = callPeerApi;
 
 // Build a user-friendly error message from rsync result
 function buildRsyncErrorMessage(result) {

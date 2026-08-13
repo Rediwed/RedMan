@@ -1,0 +1,63 @@
+.action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.action-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.action-menu-trigger:hover,
+.action-menu-trigger[aria-expanded='true'] {
+  border-color: var(--color-border);
+  color: var(--color-text);
+  background: var(--color-surface-alt);
+}
+
+.action-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.action-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.action-menu-item:hover,
+.action-menu-item:focus-visible {
+  background: var(--color-surface-alt);
+}
+
+.action-menu-item.is-destructive {
+  color: var(--color-danger);
+}
