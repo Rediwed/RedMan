@@ -28,6 +28,10 @@ const TYPE_META = {
   import_error: { category: 'media', severity: 'error' },
   external_job_failed: { category: 'external', severity: 'error' },
   external_job_recovered: { category: 'external', severity: 'info' },
+  // A retry that worked still says the link is degrading, so it is recorded
+  // rather than absorbed: silently recovering is how a failing peer stays
+  // invisible until the night it does not recover.
+  peer_call_retried: { category: 'backup', severity: 'warning' },
 };
 
 export const SEVERITIES = ['info', 'warning', 'error'];
