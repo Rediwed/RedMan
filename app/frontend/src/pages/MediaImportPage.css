@@ -186,6 +186,11 @@
   margin-top: var(--space-md);
 }
 
+.form-hint.source-submit-hint {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
 /* Drive toggles */
 .drive-toggles {
   display: flex;

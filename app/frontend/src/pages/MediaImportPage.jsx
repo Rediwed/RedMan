@@ -674,9 +674,19 @@ function FolderSourceDialog({ onClose, onCreate }) {
   const [remotes, setRemotes] = useState([]);
   const [remoteName, setRemoteName] = useState('');
   const [remotePath, setRemotePath] = useState('');
+  const [detectingTakeout, setDetectingTakeout] = useState(false);
+  const discoverySequence = useRef(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  const submitBlockedReason = busy ? null
+    : !name.trim() ? 'Enter a name to continue.'
+      : sourceKind === 'folder' && !path ? 'Select a folder to continue.'
+        : sourceKind === 'online' && !remoteName ? 'Select a Google Drive connection to continue.'
+          : sourceKind === 'online' && detectingTakeout ? 'Detecting the Takeout folder...'
+            : sourceKind === 'online' && !remotePath ? 'Takeout folder not detected. Use Browse under Advanced options to select it.'
+              : null;
 
   useEffect(() => {
     if (sourceKind !== 'online') return;
@@ -713,7 +723,9 @@ function FolderSourceDialog({ onClose, onCreate }) {
             <label htmlFor="source-kind">Source</label>
             <select id="source-kind" value={sourceKind} onChange={event => {
               const nextKind = event.target.value;
+              discoverySequence.current += 1;
               setSourceKind(nextKind);
+              setDetectingTakeout(false);
               if (nextKind === 'online') {
                 setImportMode('google-photos');
                 if (!name) setName('Google Photos takeout');
@@ -741,16 +753,26 @@ function FolderSourceDialog({ onClose, onCreate }) {
             <label htmlFor="source-remote">Google Drive connection</label>
             <select id="source-remote" value={remoteName} onChange={async event => {
               const nextRemote = event.target.value;
+              const ticket = ++discoverySequence.current;
               setRemoteName(nextRemote);
               setRemotePath('');
-              if (!nextRemote) return;
+              if (!nextRemote) {
+                setDetectingTakeout(false);
+                return;
+              }
               setError(null);
+              setDetectingTakeout(true);
               try {
                 const discovered = await discoverOnlineTakeout(nextRemote);
+                if (ticket !== discoverySequence.current) return;
+                if (!discovered.path) throw new Error('No Takeout folder was detected');
                 setRemotePath(discovered.path);
               } catch (err) {
+                if (ticket !== discoverySequence.current) return;
                 setError(`${err.message}. Browse the remote to select it manually.`);
                 setShowAdvanced(true);
+              } finally {
+                if (ticket === discoverySequence.current) setDetectingTakeout(false);
               }
             }} required>
               <option value="">Select a connected remote...</option>
@@ -808,10 +830,22 @@ function FolderSourceDialog({ onClose, onCreate }) {
                 : 'Uploads the files as they are, using whatever each file carries in its own metadata.'}
             </span>
           </div>}
+
+          {submitBlockedReason && !busy && (
+            <div id="source-submit-hint" className="form-hint source-submit-hint" role="status">
+              {submitBlockedReason}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim() || (sourceKind === 'folder' && !path) || (sourceKind === 'online' && (!remoteName || !remotePath))}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={busy || !!submitBlockedReason}
+            aria-describedby={submitBlockedReason ? 'source-submit-hint' : undefined}
+            title={submitBlockedReason || ''}
+          >
             {busy ? 'Adding...' : 'Add Source'}
           </button>
         </div>
