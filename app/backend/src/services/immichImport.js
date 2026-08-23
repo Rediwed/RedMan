@@ -319,7 +319,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
   }
 }
 
-function spawnImmichGo(args, runId, progress, envOverrides = {}, onProgress = null) {
+export function spawnImmichGo(args, runId, progress, envOverrides = {}, onProgress = null) {
   return new Promise((resolve, reject) => {
     const proc = spawn('immich-go', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -367,6 +367,20 @@ function spawnImmichGo(args, runId, progress, envOverrides = {}, onProgress = nu
       reject(new Error(`Failed to start immich-go: ${err.message}. Is it installed?`));
     });
   });
+}
+
+export async function uploadTakeoutArchive({ archivePath, runId, progress, logPath, onProgress }) {
+  const serverUrl = getSetting('immich_server_url');
+  const apiKey = getSetting('immich_api_key');
+  if (!serverUrl || !apiKey) throw new Error('Immich server URL and API key must be configured in Settings');
+  const invocation = buildImmichUploadInvocation({
+    serverUrl,
+    apiKey,
+    logPath,
+    sourcePath: archivePath,
+    mode: 'google-photos',
+  });
+  return spawnImmichGo(invocation.args, runId, progress, invocation.env, onProgress);
 }
 
 /**

@@ -1005,6 +1005,30 @@ const migrations = [
       console.log('[migration-32] Added folder-backed media import sources');
     }
   },
+  {
+    version: 33,
+    description: 'Add resumable online Google Photos import sources',
+    up(db) {
+      const columns = db.prepare('PRAGMA table_info(media_drives)').all().map(column => column.name);
+      if (!columns.includes('remote_name')) db.exec('ALTER TABLE media_drives ADD COLUMN remote_name TEXT');
+      if (!columns.includes('remote_path')) db.exec('ALTER TABLE media_drives ADD COLUMN remote_path TEXT');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS media_online_import_archives (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_id INTEGER NOT NULL REFERENCES media_drives(id) ON DELETE CASCADE,
+          remote_path TEXT NOT NULL,
+          remote_size INTEGER NOT NULL,
+          remote_modtime TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('completed')),
+          completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(source_id, remote_path, remote_size, remote_modtime)
+        );
+        CREATE INDEX IF NOT EXISTS idx_media_online_archives_source
+          ON media_online_import_archives(source_id);
+      `);
+      console.log('[migration-33] Added resumable online media imports');
+    }
+  },
 ];
 
 // Derived rather than declared: a copy of this number kept somewhere else only

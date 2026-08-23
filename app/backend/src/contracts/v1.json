@@ -371,6 +371,12 @@
       },
       "DELETE /api/media-import/sources/:id": {
         "auth": true
+      },
+      "GET /api/media-import/online-discover/:remoteName": {
+        "auth": true
+      },
+      "POST /api/media-import/online-sources": {
+        "auth": true
       }
     },
     "settings": {
@@ -839,6 +845,8 @@
         "last_import_at": "TEXT",
         "source_kind": "TEXT",
         "import_mode": "TEXT",
+        "remote_name": "TEXT",
+        "remote_path": "TEXT",
         "created_at": "TEXT",
         "updated_at": "TEXT"
       }
@@ -856,6 +864,17 @@
         "verified_at": "TEXT",
         "deleted_at": "TEXT",
         "deletion_error": "TEXT"
+      }
+    },
+    "media_online_import_archives": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY",
+        "source_id": "INTEGER NOT NULL",
+        "remote_path": "TEXT NOT NULL",
+        "remote_size": "INTEGER NOT NULL",
+        "remote_modtime": "TEXT NOT NULL",
+        "status": "TEXT NOT NULL",
+        "completed_at": "TEXT NOT NULL"
       }
     },
     "restore_events": {
@@ -1175,6 +1194,9 @@
       "getActiveRcloneRun",
       "listRemotes",
       "browseRemote",
+      "discoverRemoteTakeoutFolder",
+      "listRemoteTakeoutArchives",
+      "downloadRemoteFile",
       "validateRcloneJobInput",
       "executeRcloneJob",
       "createRcloneLogProcessor",
@@ -1228,6 +1250,7 @@
       "testImmichConnection",
       "isImmichGoAvailable",
       "startImport",
+      "uploadTakeoutArchive",
       "stopActiveImportProcesses",
       "isEjectSupported",
       "ejectDrive"
@@ -1240,6 +1263,15 @@
       "validateFolderSourceInput",
       "resolveImportSourcePaths",
       "supportsDriveSideEffects"
+    ],
+    "onlineMediaImport": [
+      "validateOnlineMediaSourceInput",
+      "defaultOnlineStagingPath",
+      "assertStagedArchiveSafe",
+      "requiredOnlineImportBytes",
+      "getActiveOnlineImport",
+      "cancelOnlineImport",
+      "startOnlineImport"
     ],
     "immichFailureSummary": [
       "summarizeImmichGoFailure"
@@ -1531,6 +1563,8 @@
       "getMediaImportStatus",
       "getMediaImportSources",
       "createMediaImportSource",
+      "createOnlineMediaImportSource",
+      "discoverOnlineTakeout",
       "updateMediaImportSource",
       "deleteMediaImportSource",
       "browseDirectory",

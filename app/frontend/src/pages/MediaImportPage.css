@@ -171,6 +171,21 @@
   color: var(--color-primary);
 }
 
+.online-import-advanced {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-sm);
+}
+
+.online-import-advanced-toggle {
+  padding-left: 0;
+}
+
+.online-import-advanced-fields {
+  display: grid;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
 /* Drive toggles */
 .drive-toggles {
   display: flex;

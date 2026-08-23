@@ -13,6 +13,10 @@ import {
   startImport, getActiveImport, cancelImport, testImmichConnection, isImmichGoAvailable,
   ejectDrive, isEjectSupported,
 } from '../services/immichImport.js';
+import {
+  cancelOnlineImport, getActiveOnlineImport, startOnlineImport, validateOnlineMediaSourceInput,
+} from '../services/onlineMediaImport.js';
+import { discoverRemoteTakeoutFolder, listRemoteTakeoutArchives } from '../services/rclone.js';
 import { notifyDriveScanStarted, notifyDriveScanCompleted, notifyJobCancelled } from '../services/notify.js';
 import { cancelFeatureRun } from '../services/runLifecycle.js';
 
@@ -129,16 +133,49 @@ router.put('/drives/:id', (req, res) => {
 
 router.get('/sources', (req, res) => {
   const sources = db.prepare(`
-    SELECT * FROM media_drives WHERE source_kind = ? ORDER BY name COLLATE NOCASE
-  `).all(FOLDER_SOURCE_KIND);
+    SELECT * FROM media_drives WHERE source_kind IN ('folder', 'online') ORDER BY name COLLATE NOCASE
+  `).all();
 
   res.json(sources.map(source => ({
     ...source,
     // A takeout that has not been downloaded yet is the common case; say so
     // rather than failing at import time.
-    archive_count: source.import_mode === 'google-photos' ? countTakeoutArchives(source) : null,
-    available: existsSync(source.mount_path),
+    archive_count: source.source_kind === 'folder' && source.import_mode === 'google-photos'
+      ? countTakeoutArchives(source) : null,
+    completed_archive_count: source.source_kind === 'online' ? db.prepare(`
+      SELECT COUNT(*) AS count FROM media_online_import_archives WHERE source_id = ?
+    `).get(source.id).count : null,
+    available: source.source_kind === 'online' || existsSync(source.mount_path),
   })));
+});
+
+router.get('/online-discover/:remoteName', async (req, res) => {
+  try {
+    res.json(await discoverRemoteTakeoutFolder(req.params.remoteName));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/online-sources', async (req, res) => {
+  let source;
+  try {
+    source = validateOnlineMediaSourceInput(req.body);
+    await listRemoteTakeoutArchives(source.remoteName, source.remotePath);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const clash = db.prepare("SELECT id FROM media_drives WHERE source_kind = 'online' AND remote_name = ? AND remote_path = ?")
+    .get(source.remoteName, source.remotePath);
+  if (clash) return res.status(409).json({ error: 'An online import source already uses that Google Drive folder' });
+  const stagingClash = db.prepare('SELECT id FROM media_drives WHERE mount_path = ?').get(source.stagingPath);
+  if (stagingClash) return res.status(409).json({ error: 'Another import source already uses that local staging folder' });
+
+  const result = db.prepare(`
+    INSERT INTO media_drives (name, label, mount_path, source_kind, import_mode, remote_name, remote_path)
+    VALUES (?, ?, ?, 'online', 'google-photos', ?, ?)
+  `).run(source.name, source.name, source.stagingPath, source.remoteName, source.remotePath);
+  res.status(201).json(db.prepare('SELECT * FROM media_drives WHERE id = ?').get(result.lastInsertRowid));
 });
 
 router.post('/sources', (req, res) => {
@@ -189,8 +226,8 @@ router.put('/sources/:id', (req, res) => {
 });
 
 router.delete('/sources/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM media_drives WHERE id = ? AND source_kind = ?')
-    .get(req.params.id, FOLDER_SOURCE_KIND);
+  const existing = db.prepare("SELECT * FROM media_drives WHERE id = ? AND source_kind IN ('folder', 'online')")
+    .get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Import source not found' });
   if (getActiveImportForSource(existing.id)) {
     return res.status(409).json({ error: 'An import is still running on this source' });
@@ -240,7 +277,10 @@ router.get('/drives/:id/scan', (req, res) => {
 // Start import from drive into Immich
 router.post('/drives/:id/import', async (req, res) => {
   try {
-    const result = await startImport(parseInt(req.params.id));
+    const source = db.prepare('SELECT source_kind FROM media_drives WHERE id = ?').get(req.params.id);
+    const result = source?.source_kind === 'online'
+      ? await startOnlineImport(parseInt(req.params.id))
+      : await startImport(parseInt(req.params.id));
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -249,7 +289,7 @@ router.post('/drives/:id/import', async (req, res) => {
 
 // Get import progress for a specific run
 router.get('/runs/:id/progress', (req, res) => {
-  const progress = getActiveImport(parseInt(req.params.id));
+  const progress = getActiveImport(parseInt(req.params.id)) || getActiveOnlineImport(parseInt(req.params.id));
   if (!progress) return res.json({ status: 'none' });
   res.json(progress);
 });
@@ -257,7 +297,10 @@ router.get('/runs/:id/progress', (req, res) => {
 // Cancel a running import
 router.post('/runs/:id/cancel', (req, res) => {
   const runId = parseInt(req.params.id);
-  const result = cancelFeatureRun(db, { feature: 'media-import', runId, cancelProcess: cancelImport });
+  const result = cancelFeatureRun(db, {
+    feature: 'media-import', runId,
+    cancelProcess: id => cancelOnlineImport(id) || cancelImport(id),
+  });
   if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
   const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(result.run.config_id);
   notifyJobCancelled('Media Import', drive?.name || drive?.label || `Drive ${result.run.config_id}`);
@@ -302,7 +345,7 @@ router.get('/runs/:id', (req, res) => {
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
   // Check for live progress
-  const progress = getActiveImport(run.id);
+  const progress = getActiveImport(run.id) || getActiveOnlineImport(run.id);
   if (progress) run.progress = progress;
 
   res.json(run);
@@ -378,7 +421,7 @@ function getActiveImportForSource(sourceId) {
     SELECT id FROM backup_runs
     WHERE feature = 'media-import' AND config_id = ? AND status = 'running'
   `).get(sourceId);
-  return running ? getActiveImport(running.id) || running : null;
+  return running ? getActiveImport(running.id) || getActiveOnlineImport(running.id) || running : null;
 }
 
 function findDriveInDb(drive) {

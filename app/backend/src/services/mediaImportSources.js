@@ -21,6 +21,10 @@ const MAX_NAME_LENGTH = 100;
 // with a million entries could hold up every other request.
 const MAX_SCANNED_ENTRIES = 5000;
 
+export function isTakeoutArchiveName(name) {
+  return /\.(?:zip|tgz|tar\.gz)$/i.test(String(name || ''));
+}
+
 function containedInStorageRoots(canonicalPath, config) {
   // The roots are compared in canonical form too: a root that is itself a
   // symlink would otherwise reject every legitimate path underneath it.
@@ -114,7 +118,7 @@ export function listTakeoutArchives(root) {
       scanned += 1;
       // On filesystems that do not report an entry type both checks are false,
       // so an unknown entry is kept rather than a real archive being dropped.
-      if (!entry.isDirectory() && !entry.isSymbolicLink() && entry.name.toLowerCase().endsWith('.zip')) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink() && isTakeoutArchiveName(entry.name)) {
         names.push(entry.name);
       }
       entry = dir.readSync();

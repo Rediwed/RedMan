@@ -63,11 +63,13 @@ export const API_ROUTE_POLICIES = Object.freeze([
   policy(['GET'], /^\/media-import\/drives\/(?:known|\d+)$/, PERMISSIONS.READ),
   policy(['GET'], /^\/media-import\/drives\/\d+\/scan$/, PERMISSIONS.READ),
   policy(['GET'], /^\/media-import\/runs\/\d+(?:\/(?:progress|files))?$/, PERMISSIONS.READ),
+  policy(['GET'], /^\/media-import\/online-discover\/[^/]+$/, PERMISSIONS.READ),
   policy(['PUT'], /^\/media-import\/drives\/\d+$/, PERMISSIONS.OPERATE),
   policy(['POST'], /^\/media-import\/(?:drives\/\d+\/(?:scan|import|eject)|runs\/\d+\/cancel|test-immich)$/, PERMISSIONS.OPERATE),
   // A folder source names a directory RedMan will read and upload, so it is
   // held to the same bar as running an import rather than to a read.
   policy(['POST'], /^\/media-import\/sources\/?$/, PERMISSIONS.OPERATE),
+  policy(['POST'], /^\/media-import\/online-sources\/?$/, PERMISSIONS.OPERATE),
   policy(['PUT', 'DELETE'], /^\/media-import\/sources\/\d+$/, PERMISSIONS.OPERATE),
 
   policy(['GET', 'PUT'], /^\/settings\/?$/, PERMISSIONS.SETTINGS),

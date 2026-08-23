@@ -38,6 +38,7 @@
     "path-to-regexp": "0.1.13",
     "picomatch": "4.0.5",
     "protobufjs": "7.6.5",
-    "shell-quote": "1.9.0"
+    "shell-quote": "1.9.0",
+    "ip-address": "10.5.0"
   }
 }

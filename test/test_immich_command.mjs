@@ -7,7 +7,7 @@ import { buildImmichUploadInvocation } from '../app/backend/src/services/immichC
 import { createImmichRetryDirectory, removeImmichRetryDirectory } from '../app/backend/src/services/immichRetry.js';
 import {
   resolveImportSourcePaths, countTakeoutArchives, supportsDriveSideEffects,
-  listTakeoutArchives, assertSourceReadable, validateFolderSourceInput,
+  isTakeoutArchiveName, listTakeoutArchives, assertSourceReadable, validateFolderSourceInput,
 } from '../app/backend/src/services/mediaImportSources.js';
 import { normalizePath } from '../app/backend/src/middleware/validation.js';
 
@@ -70,6 +70,10 @@ assert.deepEqual(
   ['/mnt/disks/camera'],
 );
 assert.equal(countTakeoutArchives({ mount_path: '/mnt/disks/camera', import_mode: 'folder' }, listing), 0);
+assert.equal(isTakeoutArchiveName('takeout-001.zip'), true);
+assert.equal(isTakeoutArchiveName('takeout-002.TGZ'), true);
+assert.equal(isTakeoutArchiveName('takeout-003.tar.gz'), true);
+assert.equal(isTakeoutArchiveName('takeout-004.tar'), false);
 
 // Deleting sources and ejecting hardware only apply to a removable drive.
 assert.equal(supportsDriveSideEffects({ source_kind: 'drive' }), true);
@@ -87,11 +91,15 @@ try {
   mkdirSync(takeoutDir);
   writeFileSync(join(takeoutDir, 'takeout-002.zip'), '');
   writeFileSync(join(takeoutDir, 'takeout-001.zip'), '');
+  writeFileSync(join(takeoutDir, 'takeout-003.tgz'), '');
+  writeFileSync(join(takeoutDir, 'takeout-004.tar.gz'), '');
   writeFileSync(join(takeoutDir, 'readme.txt'), '');
   mkdirSync(join(takeoutDir, 'nested.zip'));
 
   // A directory named like an archive is not one.
-  assert.deepEqual(listTakeoutArchives(takeoutDir).sort(), ['takeout-001.zip', 'takeout-002.zip']);
+  assert.deepEqual(listTakeoutArchives(takeoutDir).sort(), [
+    'takeout-001.zip', 'takeout-002.zip', 'takeout-003.tgz', 'takeout-004.tar.gz',
+  ]);
   assert.deepEqual(listTakeoutArchives(join(sandbox, 'absent')), []);
 
   const declared = validateFolderSourceInput({ name: 'Takeout', path: takeoutDir, import_mode: 'google-photos' }, roots);

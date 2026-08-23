@@ -3,7 +3,8 @@ import {
   getMediaDrives, getKnownDrives, updateMediaDrive, scanDrive, getScanProgress,
   startDriveImport, cancelDriveImport, getImportProgress, ejectDrive, getMediaImportRuns,
   getMediaImportStatus, getMediaImportRunFiles,
-  getMediaImportSources, createMediaImportSource, deleteMediaImportSource,
+  getMediaImportSources, createMediaImportSource, createOnlineMediaImportSource, deleteMediaImportSource,
+  discoverOnlineTakeout, getRcloneRemotes,
 } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
@@ -12,11 +13,12 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import {
   Camera, HardDrive, Search, Upload, LogOut, RefreshCw,
   Image, Video, Folder, Clock, AlertTriangle, Info, CheckCircle, X,
-  FileCheck, FileX, Copy, FolderPlus, Trash2, Package,
+  FileCheck, FileX, Copy, FolderPlus, Trash2, Package, Cloud,
 } from 'lucide-react';
 import JobProgress from '../components/JobProgress.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import PathPicker from '../components/PathPicker.jsx';
+import RcloneRemotePathPicker from '../components/RcloneRemotePathPicker.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import './MediaImportPage.css';
@@ -179,9 +181,16 @@ export default function MediaImportPage() {
   }
 
   async function handleCreateSource(payload) {
-    await createMediaImportSource(payload);
+    const source = payload.source_kind === 'online'
+      ? await createOnlineMediaImportSource(payload)
+      : await createMediaImportSource(payload);
     setSourceDialogOpen(false);
     setActionResult({ type: 'success', message: `Import source “${payload.name}” added.` });
+    if (payload.source_kind === 'online') {
+      const result = await startDriveImport(source.id);
+      setActiveImports(prev => ({ ...prev, [result.runId]: { status: 'running', phase: 'listing', driveId: source.id, percent: 0 } }));
+      setActionResult({ type: 'success', message: `Online import “${payload.name}” started.` });
+    }
     refresh();
   }
 
@@ -278,16 +287,16 @@ export default function MediaImportPage() {
           <h2 className="section-title"><Folder size={16} /> Import Sources</h2>
           {auth.isAdmin && (
             <button className="btn btn-secondary btn-sm" onClick={() => { setActionResult(null); setSourceDialogOpen(true); }}>
-              <FolderPlus size={14} /> Add Folder
+              <FolderPlus size={14} /> Add Source
             </button>
           )}
         </div>
         {sources.length === 0 ? (
           <div className="card empty-state">
             <Folder size={32} />
-            <p>No folder sources</p>
+            <p>No import sources</p>
             <span className="form-hint">
-              Add a folder to import photos that are already on this machine — including a downloaded Google Photos takeout.
+              Add a folder on this machine or import a Google Photos Takeout directly from Google Drive.
             </span>
           </div>
         ) : (
@@ -607,12 +616,13 @@ function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, 
   const { settings } = useSettings();
   const isImporting = !!activeImport;
   const isTakeout = source.import_mode === 'google-photos';
+  const isOnline = source.source_kind === 'online';
 
   return (
     <div className="card drive-card">
       <div className="drive-card-header">
         <div className="drive-name-row">
-          {isTakeout ? <Package size={16} /> : <Folder size={16} />}
+          {isOnline ? <Cloud size={16} /> : isTakeout ? <Package size={16} /> : <Folder size={16} />}
           <span className="drive-name">{source.name}</span>
         </div>
         <span className={`drive-status ${source.available ? 'connected' : 'disconnected'}`}>
@@ -621,15 +631,19 @@ function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, 
       </div>
 
       <div className="drive-meta">
-        <span><Folder size={13} /> {source.mount_path}</span>
-        <span>{isTakeout ? '📦 Google Photos takeout' : '📁 Plain folder'}</span>
+        <span><Folder size={13} /> {isOnline ? `${source.remote_name}:${source.remote_path}` : source.mount_path}</span>
+        <span>{isOnline ? 'Google Photos Takeout import' : isTakeout ? 'Google Photos takeout' : 'Plain folder'}</span>
+        {isOnline && <span>Staging: {source.mount_path}</span>}
+        {isOnline && source.completed_archive_count > 0 && (
+          <span>{source.completed_archive_count.toLocaleString()} archive{source.completed_archive_count === 1 ? '' : 's'} completed</span>
+        )}
         {isTakeout && source.archive_count > 0 && (
           <span>{source.archive_count.toLocaleString()} archive{source.archive_count === 1 ? '' : 's'}</span>
         )}
         {source.last_import_at && <span>Last import: {formatDateTime(source.last_import_at, settings)}</span>}
       </div>
 
-      {isTakeout && source.available && source.archive_count === 0 && (
+      {!isOnline && isTakeout && source.available && source.archive_count === 0 && (
         <div className="new-drive-hint">
           <Info size={14} />
           <span>No takeout archives here yet. Download them first — an Rclone job can pull them from Google Drive.</span>
@@ -653,18 +667,30 @@ function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, 
 }
 
 function FolderSourceDialog({ onClose, onCreate }) {
+  const [sourceKind, setSourceKind] = useState('folder');
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
   const [importMode, setImportMode] = useState('folder');
+  const [remotes, setRemotes] = useState([]);
+  const [remoteName, setRemoteName] = useState('');
+  const [remotePath, setRemotePath] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (sourceKind !== 'online') return;
+    getRcloneRemotes().then(setRemotes).catch(err => setError(err.message));
+  }, [sourceKind]);
 
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await onCreate({ name: name.trim(), path, import_mode: importMode });
+      await onCreate(sourceKind === 'online'
+        ? { name: name.trim(), source_kind: 'online', remote_name: remoteName, remote_path: remotePath }
+        : { name: name.trim(), path, import_mode: importMode });
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -684,6 +710,21 @@ function FolderSourceDialog({ onClose, onCreate }) {
           {error && <div className="alert alert-error" role="alert">{error}</div>}
 
           <div className="form-group">
+            <label htmlFor="source-kind">Source</label>
+            <select id="source-kind" value={sourceKind} onChange={event => {
+              const nextKind = event.target.value;
+              setSourceKind(nextKind);
+              if (nextKind === 'online') {
+                setImportMode('google-photos');
+                if (!name) setName('Google Photos takeout');
+              }
+            }}>
+              <option value="folder">Folder on this machine</option>
+              <option value="online">Google Photos Takeout import</option>
+            </select>
+          </div>
+
+          <div className="form-group">
             <label htmlFor="source-name">Name</label>
             <input
               id="source-name"
@@ -696,7 +737,29 @@ function FolderSourceDialog({ onClose, onCreate }) {
             />
           </div>
 
-          <div className="form-group">
+          {sourceKind === 'online' && <div className="form-group">
+            <label htmlFor="source-remote">Google Drive connection</label>
+            <select id="source-remote" value={remoteName} onChange={async event => {
+              const nextRemote = event.target.value;
+              setRemoteName(nextRemote);
+              setRemotePath('');
+              if (!nextRemote) return;
+              setError(null);
+              try {
+                const discovered = await discoverOnlineTakeout(nextRemote);
+                setRemotePath(discovered.path);
+              } catch (err) {
+                setError(`${err.message}. Browse the remote to select it manually.`);
+                setShowAdvanced(true);
+              }
+            }} required>
+              <option value="">Select a connected remote...</option>
+              {remotes.map(remote => <option key={remote} value={remote}>{remote}</option>)}
+            </select>
+            {remotes.length === 0 && <span className="form-hint">Connect Google Drive under Cloud Backup first.</span>}
+          </div>}
+
+          {sourceKind === 'folder' && <div className="form-group">
             <label>Folder</label>
             <PathPicker
               label="Folder"
@@ -705,9 +768,35 @@ function FolderSourceDialog({ onClose, onCreate }) {
               placeholder="/mnt/user/downloads/takeout"
             />
             <span className="form-hint">Must be inside a folder RedMan is allowed to read.</span>
-          </div>
+          </div>}
 
-          <div className="form-group">
+          {sourceKind === 'online' && <div className="online-import-advanced">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm online-import-advanced-toggle"
+              aria-expanded={showAdvanced}
+              onClick={() => setShowAdvanced(value => !value)}
+            >
+              Advanced options
+            </button>
+            {showAdvanced && <div className="online-import-advanced-fields">
+              <div className="form-group">
+                <label>Takeout folder</label>
+                <RcloneRemotePathPicker
+                  value={remotePath}
+                  onChange={setRemotePath}
+                  remoteName={remoteName}
+                  placeholder="Detected automatically"
+                  disabled={!remoteName}
+                  required
+                />
+                <span className="form-hint">Normally detected automatically after selecting Google Drive.</span>
+              </div>
+
+            </div>}
+          </div>}
+
+          {sourceKind === 'folder' && <div className="form-group">
             <label htmlFor="source-mode">Contents</label>
             <select id="source-mode" value={importMode} onChange={event => setImportMode(event.target.value)}>
               <option value="folder">Photos and videos</option>
@@ -718,11 +807,11 @@ function FolderSourceDialog({ onClose, onCreate }) {
                 ? 'Reads the takeout archives without unpacking them, and applies the dates, locations, and albums from their sidecar files.'
                 : 'Uploads the files as they are, using whatever each file carries in its own metadata.'}
             </span>
-          </div>
+          </div>}
         </div>
         <div className="modal-footer">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim() || !path}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim() || (sourceKind === 'folder' && !path) || (sourceKind === 'online' && (!remoteName || !remotePath))}>
             {busy ? 'Adding...' : 'Add Source'}
           </button>
         </div>

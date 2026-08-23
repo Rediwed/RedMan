@@ -21,6 +21,12 @@ function isSafeRemoteName(name) {
   return typeof name === 'string' && !name.startsWith('-') && /^[a-zA-Z0-9_-]+$/.test(name);
 }
 
+function assertSafeRemotePath(remotePath) {
+  if (typeof remotePath !== 'string' || /[\n\r\0]/.test(remotePath) || /(^|\/)\.\.(\/|$)/.test(remotePath)) {
+    throw new Error('Invalid remote path');
+  }
+}
+
 export function getActiveRcloneRun(runId) {
   return activeRuns.get(runId);
 }
@@ -32,6 +38,13 @@ export function cancelRcloneRun(runId) {
     return true;
   }
   return false;
+}
+
+export function cancelRcloneProcess(processKey) {
+  const proc = activeProcesses.get(processKey);
+  if (!proc) return false;
+  proc.kill('SIGTERM');
+  return true;
 }
 
 export async function stopActiveRcloneProcesses(timeoutMs = 10000) {
@@ -80,9 +93,7 @@ export async function browseRemote(remoteName, remotePath = '') {
   if (!remotes.includes(remoteName)) {
     throw new Error(`Remote "${remoteName}" not found`);
   }
-  if (typeof remotePath !== 'string' || /[\n\r\0]/.test(remotePath) || remotePath.includes('..')) {
-    throw new Error('Invalid remote path');
-  }
+  assertSafeRemotePath(remotePath);
   if (browsesInFlight >= MAX_CONCURRENT_BROWSES) {
     throw new Error('Too many listings in progress — try again in a moment');
   }
@@ -117,6 +128,64 @@ export async function browseRemote(remoteName, remotePath = '') {
   }
   if (!Array.isArray(entries)) return [];
   return entries.slice(0, MAX_BROWSE_ENTRIES);
+}
+
+export async function listRemoteTakeoutArchives(remoteName, remotePath = '') {
+  if (!isSafeRemoteName(remoteName)) throw new Error('Invalid remote name');
+  assertSafeRemotePath(remotePath);
+  const remotes = await listRemotesCached();
+  if (!remotes.includes(remoteName)) throw new Error(`Remote "${remoteName}" not found`);
+
+  const target = remotePath ? `${remoteName}:${remotePath}` : `${remoteName}:`;
+  const result = await runRclone([
+    'lsjson', target, '--recursive', '--files-only',
+    '--include', '*.zip', '--include', '*.ZIP',
+    '--include', '*.tgz', '--include', '*.TGZ',
+    '--include', '*.tar.gz', '--include', '*.TAR.GZ',
+  ], null, null, { timeoutMs: 60000, maxOutputBytes: 8 * 1024 * 1024 });
+  if (result.exitCode !== 0) throw new Error('Could not list Google Takeout archives on the remote');
+
+  let entries;
+  try {
+    entries = JSON.parse(result.stdout || '[]');
+  } catch {
+    throw new Error('The remote Takeout listing was too large or invalid');
+  }
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter(entry => !entry.IsDir && Number.isFinite(entry.Size) && entry.Size >= 0 && typeof entry.Path === 'string')
+    .map(entry => ({ path: entry.Path, size: entry.Size, modTime: String(entry.ModTime || '') }))
+    .sort((a, b) => a.path.localeCompare(b.path, 'en', { numeric: true }));
+}
+
+export async function discoverRemoteTakeoutFolder(remoteName) {
+  const archives = await listRemoteTakeoutArchives(remoteName, '');
+  if (archives.length === 0) throw new Error('No Google Takeout archives were found on this remote');
+  const counts = new Map();
+  for (const archive of archives) {
+    const parent = archive.path.includes('/') ? archive.path.slice(0, archive.path.lastIndexOf('/')) : '';
+    counts.set(parent, (counts.get(parent) || 0) + 1);
+  }
+  const [path, archiveCount] = [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], 'en', { numeric: true }))[0];
+  if (!path) throw new Error('Takeout archives were found at the remote root; select their folder manually');
+  return { path, archiveCount };
+}
+
+export async function downloadRemoteFile(remoteName, remotePath, localPath, expectedSize, processKey, onProgress = null) {
+  if (!isSafeRemoteName(remoteName)) throw new Error('Invalid remote name');
+  assertSafeRemotePath(remotePath);
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 0) throw new Error('Invalid expected remote file size');
+  const result = await runRclone([
+    'copyto', `${remoteName}:${remotePath}`, localPath,
+    '--stats-one-line', '--stats', '2s', '--transfers', '1', '--checkers', '1', '--retries', '2',
+    `--max-transfer=${expectedSize}`, '--cutoff-mode=hard',
+  ], null, line => {
+    const match = line.match(/([\d.]+\s*\w+)\s*\/\s*([\d.]+\s*\w+),\s*(\d+)%/);
+    if (match) onProgress?.({ bytesTransferred: parseRcloneSize(match[1]), percent: Number(match[3]) });
+  }, { processKey });
+  if (result.exitCode !== 0) throw new Error('Downloading the Takeout archive failed');
+  return result;
 }
 
 async function assertRcloneRemoteHasEntries(remote) {

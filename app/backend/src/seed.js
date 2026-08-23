@@ -7,6 +7,7 @@ const resetTables = [
   'auth_credentials',
   'auth_users',
   'restore_events',
+  'media_online_import_archives',
   'media_import_ledger',
   'backup_run_files',
   'backup_runs',
