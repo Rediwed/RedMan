@@ -1194,6 +1194,7 @@
       "getActiveRcloneRun",
       "listRemotes",
       "browseRemote",
+      "findTakeoutFolderCandidates",
       "discoverRemoteTakeoutFolder",
       "listRemoteTakeoutArchives",
       "downloadRemoteFile",

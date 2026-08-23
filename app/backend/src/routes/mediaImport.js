@@ -16,7 +16,7 @@ import {
 import {
   cancelOnlineImport, getActiveOnlineImport, startOnlineImport, validateOnlineMediaSourceInput,
 } from '../services/onlineMediaImport.js';
-import { discoverRemoteTakeoutFolder, listRemoteTakeoutArchives } from '../services/rclone.js';
+import { cancelRcloneProcess, discoverRemoteTakeoutFolder, listRemoteTakeoutArchives } from '../services/rclone.js';
 import { notifyDriveScanStarted, notifyDriveScanCompleted, notifyJobCancelled } from '../services/notify.js';
 import { cancelFeatureRun } from '../services/runLifecycle.js';
 
@@ -150,10 +150,17 @@ router.get('/sources', (req, res) => {
 });
 
 router.get('/online-discover/:remoteName', async (req, res) => {
+  const processKey = `takeout-discovery:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  const cancelIfAbandoned = () => {
+    if (!res.writableEnded) cancelRcloneProcess(processKey);
+  };
+  res.once('close', cancelIfAbandoned);
   try {
-    res.json(await discoverRemoteTakeoutFolder(req.params.remoteName));
+    res.json(await discoverRemoteTakeoutFolder(req.params.remoteName, { processKey }));
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    if (!res.headersSent) res.status(400).json({ error: err.message });
+  } finally {
+    res.off('close', cancelIfAbandoned);
   }
 });
 

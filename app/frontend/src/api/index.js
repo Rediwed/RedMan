@@ -239,7 +239,16 @@ export const testImmichConnection = () => postJSON('/media-import/test-immich', 
 export const getMediaImportStatus = () => fetchJSON('/media-import/status');
 export const getMediaImportSources = () => fetchJSON('/media-import/sources');
 export const createOnlineMediaImportSource = data => postJSON('/media-import/online-sources', data);
-export const discoverOnlineTakeout = remoteName => fetchJSON(`/media-import/online-discover/${encodeURIComponent(remoteName)}`);
+export async function discoverOnlineTakeout(remoteName) {
+  try {
+    return await fetchJSON(`/media-import/online-discover/${encodeURIComponent(remoteName)}`, {
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (error) {
+    if (error.name === 'TimeoutError') throw new Error('Takeout folder detection timed out');
+    throw error;
+  }
+}
 export const createMediaImportSource = (data) => postJSON('/media-import/sources', data);
 export const updateMediaImportSource = (id, data) => putJSON(`/media-import/sources/${id}`, data);
 export const deleteMediaImportSource = (id) => deleteJSON(`/media-import/sources/${id}`);

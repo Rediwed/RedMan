@@ -65,10 +65,13 @@ export async function listRemotes() {
 // tells the caller must not repeat whatever the credential layer printed.
 const BROWSE_TIMEOUT_MS = 20000;
 const MAX_CONCURRENT_BROWSES = 2;
+const MAX_CONCURRENT_TAKEOUT_DISCOVERIES = 2;
+const TAKEOUT_DISCOVERY_TIMEOUT_MS = 20000;
 const MAX_BROWSE_ENTRIES = 1000;
 const REMOTE_LIST_CACHE_MS = 10000;
 
 let browsesInFlight = 0;
+let takeoutDiscoveriesInFlight = 0;
 let browseSequence = 0;
 let cachedRemoteNames = { at: 0, names: null };
 
@@ -130,7 +133,7 @@ export async function browseRemote(remoteName, remotePath = '') {
   return entries.slice(0, MAX_BROWSE_ENTRIES);
 }
 
-export async function listRemoteTakeoutArchives(remoteName, remotePath = '') {
+export async function listRemoteTakeoutArchives(remoteName, remotePath = '', options = {}) {
   if (!isSafeRemoteName(remoteName)) throw new Error('Invalid remote name');
   assertSafeRemotePath(remotePath);
   const remotes = await listRemotesCached();
@@ -142,7 +145,11 @@ export async function listRemoteTakeoutArchives(remoteName, remotePath = '') {
     '--include', '*.zip', '--include', '*.ZIP',
     '--include', '*.tgz', '--include', '*.TGZ',
     '--include', '*.tar.gz', '--include', '*.TAR.GZ',
-  ], null, null, { timeoutMs: 60000, maxOutputBytes: 8 * 1024 * 1024 });
+  ], null, null, {
+    timeoutMs: options.timeoutMs || 60000,
+    maxOutputBytes: 8 * 1024 * 1024,
+    processKey: options.processKey,
+  });
   if (result.exitCode !== 0) throw new Error('Could not list Google Takeout archives on the remote');
 
   let entries;
@@ -158,18 +165,43 @@ export async function listRemoteTakeoutArchives(remoteName, remotePath = '') {
     .sort((a, b) => a.path.localeCompare(b.path, 'en', { numeric: true }));
 }
 
-export async function discoverRemoteTakeoutFolder(remoteName) {
-  const archives = await listRemoteTakeoutArchives(remoteName, '');
-  if (archives.length === 0) throw new Error('No Google Takeout archives were found on this remote');
-  const counts = new Map();
-  for (const archive of archives) {
-    const parent = archive.path.includes('/') ? archive.path.slice(0, archive.path.lastIndexOf('/')) : '';
-    counts.set(parent, (counts.get(parent) || 0) + 1);
+export function findTakeoutFolderCandidates(entries) {
+  const knownNames = new Set(['takeout', 'google takeout']);
+  return [...new Set((Array.isArray(entries) ? entries : [])
+    .filter(entry => entry?.IsDir && typeof entry.Name === 'string'
+      && entry.Name === entry.Name.trim()
+      && knownNames.has(entry.Name.toLowerCase()))
+    .map(entry => entry.Name))]
+    .slice(0, knownNames.size);
+}
+
+export async function discoverRemoteTakeoutFolder(remoteName, options = {}) {
+  if (takeoutDiscoveriesInFlight >= MAX_CONCURRENT_TAKEOUT_DISCOVERIES) {
+    throw new Error('Too many Takeout folder detections are already running');
   }
-  const [path, archiveCount] = [...counts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], 'en', { numeric: true }))[0];
-  if (!path) throw new Error('Takeout archives were found at the remote root; select their folder manually');
-  return { path, archiveCount };
+  const browse = options.browse || browseRemote;
+  const listArchives = options.listArchives || listRemoteTakeoutArchives;
+  const deadline = Date.now() + TAKEOUT_DISCOVERY_TIMEOUT_MS;
+  takeoutDiscoveriesInFlight += 1;
+  try {
+    const candidates = findTakeoutFolderCandidates(await browse(remoteName, ''));
+    if (candidates.length === 0) {
+      throw new Error('No Takeout folder was found at the top of this remote');
+    }
+
+    for (const path of candidates) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw new Error('Takeout folder detection timed out');
+      const archives = await listArchives(remoteName, path, {
+        timeoutMs: remainingMs,
+        processKey: options.processKey,
+      });
+      if (archives.length > 0) return { path, archiveCount: archives.length };
+    }
+    throw new Error('The Takeout folder does not contain supported archives');
+  } finally {
+    takeoutDiscoveriesInFlight -= 1;
+  }
 }
 
 export async function downloadRemoteFile(remoteName, remotePath, localPath, expectedSize, processKey, onProgress = null) {

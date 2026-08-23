@@ -9,6 +9,9 @@ import {
   resolveImportSourcePaths, countTakeoutArchives, supportsDriveSideEffects,
   isTakeoutArchiveName, listTakeoutArchives, assertSourceReadable, validateFolderSourceInput,
 } from '../app/backend/src/services/mediaImportSources.js';
+import {
+  discoverRemoteTakeoutFolder, findTakeoutFolderCandidates,
+} from '../app/backend/src/services/rclone.js';
 import { normalizePath } from '../app/backend/src/middleware/validation.js';
 
 const apiKey = 'secret-immich-api-key';
@@ -74,6 +77,34 @@ assert.equal(isTakeoutArchiveName('takeout-001.zip'), true);
 assert.equal(isTakeoutArchiveName('takeout-002.TGZ'), true);
 assert.equal(isTakeoutArchiveName('takeout-003.tar.gz'), true);
 assert.equal(isTakeoutArchiveName('takeout-004.tar'), false);
+assert.deepEqual(findTakeoutFolderCandidates([
+  { Name: 'Photos', IsDir: true },
+  { Name: 'Takeout', IsDir: true },
+  { Name: 'Takeout', IsDir: true },
+  { Name: 'Google Takeout', IsDir: true },
+  { Name: 'Takeout\n', IsDir: true },
+  { Name: 'takeout.zip', IsDir: false },
+]), ['Takeout', 'Google Takeout']);
+
+const discoveryCalls = [];
+assert.deepEqual(await discoverRemoteTakeoutFolder('gdrive', {
+  browse: async (remoteName, remotePath) => {
+    discoveryCalls.push(['browse', remoteName, remotePath]);
+    return [{ Name: 'Takeout', IsDir: true }, { Name: 'Other', IsDir: true }];
+  },
+  listArchives: async (remoteName, remotePath, options) => {
+    discoveryCalls.push(['archives', remoteName, remotePath, options.timeoutMs <= 20000, options.processKey]);
+    return [{ path: 'takeout-001.zip', size: 10 }];
+  },
+  processKey: 'test-discovery',
+}), { path: 'Takeout', archiveCount: 1 });
+assert.deepEqual(discoveryCalls, [
+  ['browse', 'gdrive', ''],
+  ['archives', 'gdrive', 'Takeout', true, 'test-discovery'],
+]);
+await assert.rejects(discoverRemoteTakeoutFolder('gdrive', {
+  browse: async () => [{ Name: 'Photos', IsDir: true }],
+}), /No Takeout folder was found/);
 
 // Deleting sources and ejecting hardware only apply to a removable drive.
 assert.equal(supportsDriveSideEffects({ source_kind: 'drive' }), true);
