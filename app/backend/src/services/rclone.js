@@ -175,16 +175,37 @@ export function findTakeoutFolderCandidates(entries) {
     .slice(0, knownNames.size);
 }
 
+export async function listRemoteRootDirectories(remoteName, options = {}) {
+  if (!isSafeRemoteName(remoteName)) throw new Error('Invalid remote name');
+  const remotes = await listRemotesCached();
+  if (!remotes.includes(remoteName)) throw new Error(`Remote "${remoteName}" not found`);
+  const result = await runRclone([
+    'lsf', `${remoteName}:`, '--dirs-only', '--max-depth', '1', '--format', 'p',
+  ], null, null, {
+    timeoutMs: options.timeoutMs || 10000,
+    processKey: options.processKey,
+  });
+  if (result.exitCode !== 0) throw new Error('Could not list folders on the remote');
+  return result.stdout.split('\n')
+    .map(path => path.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+    .slice(0, MAX_BROWSE_ENTRIES)
+    .map(Name => ({ Name, IsDir: true }));
+}
+
 export async function discoverRemoteTakeoutFolder(remoteName, options = {}) {
   if (takeoutDiscoveriesInFlight >= MAX_CONCURRENT_TAKEOUT_DISCOVERIES) {
     throw new Error('Too many Takeout folder detections are already running');
   }
-  const browse = options.browse || browseRemote;
+  const listDirectories = options.listDirectories || listRemoteRootDirectories;
   const listArchives = options.listArchives || listRemoteTakeoutArchives;
   const deadline = Date.now() + TAKEOUT_DISCOVERY_TIMEOUT_MS;
   takeoutDiscoveriesInFlight += 1;
   try {
-    const candidates = findTakeoutFolderCandidates(await browse(remoteName, ''));
+    const candidates = findTakeoutFolderCandidates(await listDirectories(remoteName, {
+      timeoutMs: Math.max(1, deadline - Date.now()),
+      processKey: options.processKey,
+    }));
     if (candidates.length === 0) {
       throw new Error('No Takeout folder was found at the top of this remote');
     }

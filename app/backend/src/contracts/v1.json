@@ -1195,6 +1195,7 @@
       "listRemotes",
       "browseRemote",
       "findTakeoutFolderCandidates",
+      "listRemoteRootDirectories",
       "discoverRemoteTakeoutFolder",
       "listRemoteTakeoutArchives",
       "downloadRemoteFile",

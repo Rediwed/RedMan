@@ -88,8 +88,8 @@ assert.deepEqual(findTakeoutFolderCandidates([
 
 const discoveryCalls = [];
 assert.deepEqual(await discoverRemoteTakeoutFolder('gdrive', {
-  browse: async (remoteName, remotePath) => {
-    discoveryCalls.push(['browse', remoteName, remotePath]);
+  listDirectories: async (remoteName, options) => {
+    discoveryCalls.push(['directories', remoteName, options.timeoutMs <= 20000, options.processKey]);
     return [{ Name: 'Takeout', IsDir: true }, { Name: 'Other', IsDir: true }];
   },
   listArchives: async (remoteName, remotePath, options) => {
@@ -99,11 +99,11 @@ assert.deepEqual(await discoverRemoteTakeoutFolder('gdrive', {
   processKey: 'test-discovery',
 }), { path: 'Takeout', archiveCount: 1 });
 assert.deepEqual(discoveryCalls, [
-  ['browse', 'gdrive', ''],
+  ['directories', 'gdrive', true, 'test-discovery'],
   ['archives', 'gdrive', 'Takeout', true, 'test-discovery'],
 ]);
 await assert.rejects(discoverRemoteTakeoutFolder('gdrive', {
-  browse: async () => [{ Name: 'Photos', IsDir: true }],
+  listDirectories: async () => [{ Name: 'Photos', IsDir: true }],
 }), /No Takeout folder was found/);
 
 // Deleting sources and ejecting hardware only apply to a removable drive.
