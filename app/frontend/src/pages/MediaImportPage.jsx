@@ -841,7 +841,7 @@ function FolderSourceDialog({ onClose, onCreate }) {
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button
             type="submit"
-            className="btn btn-primary"
+            className="btn btn-primary source-submit-button"
             disabled={busy || !!submitBlockedReason}
             aria-describedby={submitBlockedReason ? 'source-submit-hint' : undefined}
             title={submitBlockedReason || ''}

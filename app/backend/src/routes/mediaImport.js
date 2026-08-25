@@ -16,7 +16,7 @@ import {
 import {
   cancelOnlineImport, getActiveOnlineImport, startOnlineImport, validateOnlineMediaSourceInput,
 } from '../services/onlineMediaImport.js';
-import { cancelRcloneProcess, discoverRemoteTakeoutFolder, listRemoteTakeoutArchives } from '../services/rclone.js';
+import { cancelRcloneProcess, discoverRemoteTakeoutFolder } from '../services/rclone.js';
 import { notifyDriveScanStarted, notifyDriveScanCompleted, notifyJobCancelled } from '../services/notify.js';
 import { cancelFeatureRun } from '../services/runLifecycle.js';
 
@@ -168,7 +168,6 @@ router.post('/online-sources', async (req, res) => {
   let source;
   try {
     source = validateOnlineMediaSourceInput(req.body);
-    await listRemoteTakeoutArchives(source.remoteName, source.remotePath);
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }

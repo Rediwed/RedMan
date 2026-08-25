@@ -191,6 +191,11 @@
   font-weight: 600;
 }
 
+.source-submit-button {
+  justify-content: center;
+  min-width: 8.5rem;
+}
+
 /* Drive toggles */
 .drive-toggles {
   display: flex;
