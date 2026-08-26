@@ -27,6 +27,25 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+run_with_deadline() {
+  local seconds=$1
+  shift
+  "$@" &
+  local command_pid=$!
+  (
+    sleep "$seconds"
+    kill -TERM "$command_pid" 2>/dev/null || exit 0
+    sleep 5
+    kill -KILL "$command_pid" 2>/dev/null || true
+  ) &
+  local watchdog_pid=$!
+  local result=0
+  wait "$command_pid" || result=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  return "$result"
+}
+
 # ── Target definitions ──
 PROFILE_FILE="${REDMAN_DEPLOY_PROFILE_FILE:-$SCRIPT_DIR/.redman-deploy-profiles.sh}"
 if [[ -f "$PROFILE_FILE" ]]; then
@@ -591,6 +610,7 @@ preflight_target_resources() {
   target_config "$target"
   local ssh_host="$T_SSH"
   local docker_prefix="$T_DOCKER"
+  local privileged="${T_DOCKER:+$T_DOCKER }"
   local unraid_checks=""
 
   if [[ "$T_SETUP_SCRIPT" == "setup-unraid-backup-user.sh" ]]; then
@@ -598,13 +618,26 @@ preflight_target_resources() {
   fi
 
   echo -e "🩺 ${CYAN}Checking target resources...${NC}"
-  ssh -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$ssh_host" "set -e; \
+  run_with_deadline 35 ssh -o ConnectTimeout=8 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$ssh_host" "set -e; \
     $unraid_checks \
     available_kb=\$(awk '/MemAvailable:/ {print \$2}' /proc/meminfo); \
     [[ \"\$available_kb\" =~ ^[0-9]+$ && \"\$available_kb\" -ge $MIN_AVAILABLE_MEMORY_KB ]]; \
     d_state=\$(ps -eo state= | awk '\$1 ~ /^D/ {count++} END {print count+0}'); \
-    [[ \"\$d_state\" -eq 0 ]]; \
-    docker_free_kb=\$(df -Pk /var/lib/docker | awk 'NR==2 {print \$4}'); \
+    if [[ \"\$d_state\" -gt 0 ]]; then echo \"WARNING: \$d_state unrelated host task(s) in D-state; validating RedMan and Docker filesystems directly\" >&2; fi; \
+    probe_path() { \
+      probe=\$(${privileged}mktemp \"\$1/.redman-deploy-io.XXXXXX\"); \
+      cleanup_probe() { ${privileged}rm -f \"\$probe\" >/dev/null 2>&1 || true; }; \
+      trap cleanup_probe EXIT HUP INT TERM; \
+      ${privileged}dd if=/dev/zero of=\"\$probe\" bs=4096 count=1 conv=fsync status=none; \
+      cleanup_probe; trap - EXIT HUP INT TERM; \
+    }; \
+    probe_path '$T_DATA'; \
+    docker_root=\$(${docker_prefix} docker info --format '{{.DockerRootDir}}'); \
+    [[ \"\$docker_root\" =~ ^/[A-Za-z0-9._/-]+$ ]]; \
+    docker_root=\$(${privileged}readlink -f \"\$docker_root\"); \
+    [[ -d \"\$docker_root\" ]]; \
+    probe_path \"\$docker_root\"; \
+    docker_free_kb=\$(${privileged}df -Pk \"\$docker_root\" | awk 'NR==2 {print \$4}'); \
     [[ \"\$docker_free_kb\" =~ ^[0-9]+$ && \"\$docker_free_kb\" -ge $MIN_DOCKER_FREE_KB ]]; \
     timeout -k 2 10 ${docker_prefix} docker info >/dev/null"
 }
