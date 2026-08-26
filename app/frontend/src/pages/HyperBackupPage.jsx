@@ -513,6 +513,9 @@ export default function HyperBackupPage() {
         <div className="config-list">
           {jobs.map(j => (
             <div key={j.id} className="card config-card">
+              {(() => {
+                const liveProgress = getProgressForConfig(j.id);
+                return <>
               <div className="config-card-header">
                 <div>
                   <span className="config-name">{j.name}</span>
@@ -547,14 +550,17 @@ export default function HyperBackupPage() {
                   );
                 })()}
               </div>
-              <BackupHealth health={j.health} settings={settings} onOpenRun={viewRun} />
-              <JobProgress progress={getProgressForConfig(j.id)} feature="hyper-backup" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(j.id); if (rid) cancelHyperBackup(rid).then(() => loadAll()); } : null} />
+              {liveProgress
+                ? <JobProgress progress={liveProgress} feature="hyper-backup" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(j.id); if (rid) cancelHyperBackup(rid).then(() => loadAll()); } : null} />
+                : <BackupHealth health={j.health} settings={settings} onOpenRun={viewRun} />}
               {j.consecutive_skips > 0 && (
                 <div className="skip-warning">
                   <AlertTriangle size={14} />
                   <span>Schedule too aggressive — skipped {j.consecutive_skips} time{j.consecutive_skips > 1 ? 's' : ''} in a row (previous run still active)</span>
                 </div>
               )}
+                </>;
+              })()}
             </div>
           ))}
         </div>

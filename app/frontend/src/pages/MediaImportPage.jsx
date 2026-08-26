@@ -21,6 +21,7 @@ import PathPicker from '../components/PathPicker.jsx';
 import RcloneRemotePathPicker from '../components/RcloneRemotePathPicker.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import { isTerminalRunStatus } from '../utils/runStatus.js';
 import './MediaImportPage.css';
 
 export default function MediaImportPage() {
@@ -93,7 +94,7 @@ export default function MediaImportPage() {
       for (const runId of importRunIds) {
         try {
           const progress = await getImportProgress(runId);
-          if (progress.status === 'completed' || progress.status === 'failed' || progress.status === 'none') {
+          if (isTerminalRunStatus(progress.status) || progress.status === 'none') {
             setActiveImports(prev => {
               const next = { ...prev };
               delete next[runId];
@@ -633,10 +634,6 @@ function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, 
       <div className="drive-meta">
         <span><Folder size={13} /> {isOnline ? `${source.remote_name}:${source.remote_path}` : source.mount_path}</span>
         <span>{isOnline ? 'Google Photos Takeout import' : isTakeout ? 'Google Photos takeout' : 'Plain folder'}</span>
-        {isOnline && <span>Staging: {source.mount_path}</span>}
-        {isOnline && source.completed_archive_count > 0 && (
-          <span>{source.completed_archive_count.toLocaleString()} archive{source.completed_archive_count === 1 ? '' : 's'} completed</span>
-        )}
         {isTakeout && source.archive_count > 0 && (
           <span>{source.archive_count.toLocaleString()} archive{source.archive_count === 1 ? '' : 's'}</span>
         )}

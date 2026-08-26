@@ -132,7 +132,7 @@ export async function startOnlineImport(sourceId) {
   const progress = {
     runId, sourceId: source.id, driveId: source.id, status: 'running', phase: 'listing',
     archivesTotal: 0, archivesCompleted: 0, currentArchive: null, percent: 0,
-    assetsFound: 0, uploaded: 0, duplicates: 0, errors: 0, bytesTransferred: 0,
+    assetsFound: 0, scanned: 0, uploaded: 0, duplicates: 0, errors: 0, bytesTransferred: 0,
     startedAt: Date.now(),
   };
   activeOnlineImports.set(runId, progress);
@@ -144,7 +144,7 @@ export async function startOnlineImport(sourceId) {
 
 async function runOnlineImport(source, runId, progress) {
   const startedAt = Date.now();
-  let completedThisRun = 0;
+  const completedAssets = { scanned: 0, found: 0, uploaded: 0, duplicates: 0, errors: 0 };
   try {
     const archives = await listRemoteTakeoutArchives(source.remote_name, source.remote_path);
     if (archives.length === 0) throw new Error('No .zip, .tgz, or .tar.gz Takeout archives were found in this Google Drive folder');
@@ -202,16 +202,18 @@ async function runOnlineImport(source, runId, progress) {
       assertStagedArchiveSafe(finalPath, source.mount_path, archive.size);
       progress.phase = 'importing';
       progress.archivePercent = 0;
-      const archiveProgress = { assetsFound: 0, uploaded: 0, duplicates: 0, errors: 0, percent: 0 };
+      const archiveProgress = { assetsFound: 0, scanned: 0, uploaded: 0, duplicates: 0, errors: 0, percent: 0 };
       const logPath = join(dirname(db.name), 'import-logs', `run-${runId}-archive-${progress.archivesCompleted + 1}.log`);
       mkdirSync(dirname(logPath), { recursive: true });
       const upload = await uploadTakeoutArchive({
         archivePath: finalPath, runId, progress: archiveProgress, logPath,
         onProgress(update) {
           progress.archivePercent = update.percent;
-          progress.assetsFound = completedThisRun + update.assetsFound;
-          progress.uploaded = completedThisRun + update.uploaded;
-          progress.errors = update.errors;
+          progress.assetsFound = completedAssets.found + update.assetsFound;
+          progress.scanned = completedAssets.scanned + update.scanned;
+          progress.uploaded = completedAssets.uploaded + update.uploaded;
+          progress.duplicates = completedAssets.duplicates + update.duplicates;
+          progress.errors = completedAssets.errors + update.errors;
         },
       });
       if (upload.exitCode !== 0 || archiveProgress.errors > 0) {
@@ -227,11 +229,20 @@ async function runOnlineImport(source, runId, progress) {
         .run(runId, archive.path, 'imported', archive.size);
       source.mount_path = revalidateStagingPath(source.mount_path);
       assertStagedArchiveSafe(finalPath, source.mount_path, archive.size);
+      progress.phase = 'cleanup';
       unlinkSync(finalPath);
-      completedThisRun += archiveProgress.uploaded;
+      completedAssets.found += archiveProgress.assetsFound;
+      completedAssets.scanned += archiveProgress.scanned;
+      completedAssets.uploaded += archiveProgress.uploaded;
+      completedAssets.duplicates += archiveProgress.duplicates;
+      completedAssets.errors += archiveProgress.errors;
       progress.archivesCompleted += 1;
       progress.percent = Math.round((progress.archivesCompleted / progress.archivesTotal) * 100);
-      progress.uploaded = completedThisRun;
+      progress.assetsFound = completedAssets.found;
+      progress.scanned = completedAssets.scanned;
+      progress.uploaded = completedAssets.uploaded;
+      progress.duplicates = completedAssets.duplicates;
+      progress.errors = completedAssets.errors;
       progress.currentArchive = null;
     }
 

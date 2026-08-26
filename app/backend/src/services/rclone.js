@@ -305,7 +305,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
   }
 
   const startTime = Date.now();
-  activeRuns.set(runId, { status: 'running', progress: null, startedAt: startTime });
+  activeRuns.set(runId, { status: 'preparing', progress: null, startedAt: startTime });
   const notifications = createJobNotificationTracker({
     job, feature: 'Rclone Sync', name: job.name, runId, startedAt: startTime,
   });
@@ -336,6 +336,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       args = ['sync', remote, localPath, '-v'];
     }
     notifications.start();
+    activeRuns.set(runId, { status: 'transferring', progress: null, startedAt: startTime });
 
     args.push('--stats-one-line', '--stats', '2s', '--transfers', '16', '--checkers', '16', '--fast-list', '--retries', '1',
       '--drive-pacer-min-sleep', '10ms', '--drive-pacer-burst', '200');
@@ -375,7 +376,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       if (bytesMatch) {
         const current = activeRuns.get(runId) || {};
         const update = {
-          ...current, status: 'running', startedAt: startTime,
+          ...current, status: 'transferring', startedAt: startTime,
           bytesTransferred: parseRcloneSize(bytesMatch[1]),
           bytesTotal: parseRcloneSize(bytesMatch[2]),
           percent: parseInt(bytesMatch[3]),
@@ -394,6 +395,7 @@ export async function executeRcloneJob(jobId, existingRunId = null) {
       }
     });
     flushFiles();
+    activeRuns.set(runId, { ...(activeRuns.get(runId) || {}), status: 'completing', startedAt: startTime });
 
     const stats = logProcessor.stats;
 

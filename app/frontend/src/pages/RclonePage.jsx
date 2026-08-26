@@ -707,6 +707,9 @@ export default function RclonePage() {
         <div className="config-list">
           {jobs.map(j => (
             <div key={j.id} className="card config-card">
+              {(() => {
+                const liveProgress = getProgressForConfig(j.id);
+                return <>
               <div className="config-card-header">
                 <div>
                   <span className="config-name">{j.name}</span>
@@ -725,14 +728,17 @@ export default function RclonePage() {
                 <div className="config-detail"><span className="detail-label">Remote</span><code>{j.remote_name}:{j.remote_path}</code></div>
                 <div className="config-detail"><span className="detail-label">Schedule</span><span>{describeCron(j.cron_expression)}</span></div>
               </div>
-              <BackupHealth health={j.health} settings={settings} onOpenRun={viewRun} />
-              <JobProgress progress={getProgressForConfig(j.id)} feature="rclone" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(j.id); if (rid) cancelRcloneSync(rid).then(() => loadAll()); } : null} />
+              {liveProgress
+                ? <JobProgress progress={liveProgress} feature="rclone" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(j.id); if (rid) cancelRcloneSync(rid).then(() => loadAll()); } : null} />
+                : <BackupHealth health={j.health} settings={settings} onOpenRun={viewRun} />}
               {j.consecutive_skips > 0 && (
                 <div className="skip-warning">
                   <AlertTriangle size={14} />
                   <span>Schedule too aggressive — skipped {j.consecutive_skips} time{j.consecutive_skips > 1 ? 's' : ''} in a row (previous run still active)</span>
                 </div>
               )}
+                </>;
+              })()}
             </div>
           ))}
         </div>

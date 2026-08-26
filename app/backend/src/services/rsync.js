@@ -76,6 +76,7 @@ export async function executeSsdBackup(configId, existingRunId = null) {
   const cancellation = new AbortController();
   activeRunControllers.set(runId, cancellation);
   const progress = {
+    status: 'preparing',
     filesTotal: 0, filesCopied: 0, filesFailed: 0, bytesTransferred: 0,
     currentFile: null, startedAt: startTime,
     speed: null, percent: null, filesRemaining: null, eta: null,
@@ -214,7 +215,9 @@ export async function executeSsdBackup(configId, existingRunId = null) {
     const source = config.source_path.endsWith('/') ? config.source_path : config.source_path + '/';
     args.push(source, config.dest_path + '/');
 
+    progress.status = 'transferring';
     const result = await runRsync(args, runId, progress, update => notifications.progress(update));
+    progress.status = 'completing';
 
     // Determine status: exit code 23 = partial transfer (some attrs failed but data ok)
     // If any files failed we downgrade a clean exit to 'partial' so the UI reflects reality.

@@ -419,6 +419,9 @@ export default function SsdBackupPage() {
         <div className="config-list">
           {configs.map(c => (
             <div key={c.id} className="card config-card">
+              {(() => {
+                const liveProgress = getProgressForConfig(c.id);
+                return <>
               <div className="config-card-header">
                 <div>
                   <span className="config-name">{c.name}</span>
@@ -451,20 +454,25 @@ export default function SsdBackupPage() {
                   <span>{c.versioning_enabled ? <><Check size={14} className="inline-icon success" /> Yes</> : <><X size={14} className="inline-icon danger" /> No</>}</span>
                 </div>
               </div>
-              <BackupHealth
-                health={c.health}
-                settings={settings}
-                restoreSupported
-                onOpenRun={viewRun}
-                onOpenRestore={() => openBrowser(c, c.health?.lastVerifiedRestore?.snapshot_timestamp)}
-              />
-              <JobProgress progress={getProgressForConfig(c.id)} feature="ssd-backup" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(c.id); if (rid) cancelSsdBackup(rid).then(() => loadAll()); } : null} />
+              {liveProgress ? (
+                <JobProgress progress={liveProgress} feature="ssd-backup" onCancel={auth.isAdmin ? () => { const rid = getRunIdForConfig(c.id); if (rid) cancelSsdBackup(rid).then(() => loadAll()); } : null} />
+              ) : (
+                <BackupHealth
+                  health={c.health}
+                  settings={settings}
+                  restoreSupported
+                  onOpenRun={viewRun}
+                  onOpenRestore={() => openBrowser(c, c.health?.lastVerifiedRestore?.snapshot_timestamp)}
+                />
+              )}
               {c.consecutive_skips > 0 && (
                 <div className="skip-warning">
                   <AlertTriangle size={14} />
                   <span>Schedule too aggressive — skipped {c.consecutive_skips} time{c.consecutive_skips > 1 ? 's' : ''} in a row (previous run still active)</span>
                 </div>
               )}
+                </>;
+              })()}
             </div>
           ))}
         </div>

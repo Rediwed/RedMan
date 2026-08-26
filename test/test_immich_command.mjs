@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, statSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, statSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildImmichUploadInvocation } from '../app/backend/src/services/immichCommand.js';
+import { applyImmichLogProgress, watchImmichLogProgress } from '../app/backend/src/services/immichImport.js';
 import { createImmichRetryDirectory, removeImmichRetryDirectory } from '../app/backend/src/services/immichRetry.js';
 import {
   resolveImportSourcePaths, countTakeoutArchives, supportsDriveSideEffects,
@@ -27,6 +28,35 @@ assert.equal(invocation.args.some(argument => argument.startsWith('--api-key')),
 assert.equal(invocation.env.IMMICH_GO_UPLOAD_API_KEY, apiKey);
 assert.equal(invocation.args.at(-1), '/mnt/disks/camera');
 assert.throws(() => buildImmichUploadInvocation({}), /requires server/);
+
+const logProgress = { scanned: 0, uploaded: 0, duplicates: 0, errors: 0 };
+assert.equal(applyImmichLogProgress('INF uploaded successfully file=Takeout:a.jpg', logProgress), true);
+assert.equal(applyImmichLogProgress('INF server has duplicate file=Takeout:b.jpg', logProgress), true);
+assert.equal(applyImmichLogProgress('INF server asset upgraded file=Takeout:c.jpg', logProgress), true);
+assert.equal(applyImmichLogProgress('INF server has same file=Takeout:d.jpg', logProgress), true);
+assert.equal(applyImmichLogProgress('ERR upload failed file=Takeout:e.jpg error=network', logProgress), true);
+assert.equal(applyImmichLogProgress('ERR unrelated diagnostic without a file outcome', logProgress), false);
+assert.equal(applyImmichLogProgress('INF Upload errors: 5', logProgress), false);
+assert.equal(applyImmichLogProgress('INF unrelated message', logProgress), false);
+assert.deepEqual(logProgress, { scanned: 5, uploaded: 2, duplicates: 2, errors: 1 });
+
+const progressLogDir = mkdtempSync(join(tmpdir(), 'redman-progress-log-test-'));
+try {
+  const progressLog = join(progressLogDir, 'run.log');
+  writeFileSync(progressLog, '');
+  const watchedProgress = { scanned: 0, uploaded: 0, duplicates: 0, errors: 0 };
+  const stopWatching = watchImmichLogProgress(progressLog, watchedProgress);
+  const lines = Array.from({ length: 8_000 }, (_, index) => (
+    index % 2 === 0
+      ? `INF uploaded successfully file=Takeout:file-${index}.jpg\n`
+      : `INF server has duplicate file=Takeout:file-${index}.jpg\n`
+  ));
+  appendFileSync(progressLog, lines.join(''));
+  await stopWatching();
+  assert.deepEqual(watchedProgress, { scanned: 8_000, uploaded: 4_000, duplicates: 4_000, errors: 0 });
+} finally {
+  await rm(progressLogDir, { recursive: true, force: true });
+}
 
 // A takeout is read with a different immich-go command, and dropping
 // --include-unmatched silently skips every photo whose sidecar is missing.

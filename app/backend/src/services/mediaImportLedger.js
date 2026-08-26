@@ -9,6 +9,27 @@ import { join } from 'node:path';
 import { resolveExistingPathWithinPrefix } from './pathConfinement.js';
 
 const VERIFIED_OUTCOMES = new Set(['uploaded', 'duplicate']);
+export function classifyImmichLogOutcome(line) {
+  return parseImmichLogEvent(line)?.outcome || null;
+}
+
+function parseImmichLogEvent(line) {
+  const uploaded = line.match(/\b(?:uploaded successfully|server asset upgraded)\b.*?\bfile=(.+?)(?:\s+[a-z_]+=[^\s]+)*$/i);
+  if (uploaded) return { outcome: 'uploaded', fileReference: uploaded[1].trim(), error: null };
+
+  const duplicate = line.match(/\bserver has (?:duplicate|same|better)\b.*?\bfile=(.+?)(?:\s+[a-z_]+=[^\s]+)*$/i);
+  if (duplicate) return { outcome: 'duplicate', fileReference: duplicate[1].trim(), error: null };
+
+  const failed = line.match(/\b(?:server error|upload failed|file access error|incomplete processing)\b.*?\bfile=(.+?)(?:\s+error=(.+))?$/i);
+  if (failed) {
+    return {
+      outcome: 'error',
+      fileReference: failed[1].trim(),
+      error: failed[2]?.trim() || 'Immich import failed',
+    };
+  }
+  return null;
+}
 
 function sourcePathFromReference(fileReference, mountPath) {
   const colonIndex = fileReference.indexOf(':');
@@ -43,32 +64,8 @@ async function fingerprintFile(filePath) {
 }
 
 export async function parseImmichLogLine(line, mountPath) {
-  let fileReference;
-  let outcome;
-  let error = null;
-
-  const uploaded = line.match(/\b(?:uploaded successfully|server asset upgraded)\b.*?\bfile=(.+?)(?:\s+[a-z_]+=[^\s]+)*$/i);
-  if (uploaded) {
-    fileReference = uploaded[1].trim();
-    outcome = 'uploaded';
-  }
-
-  if (!outcome) {
-    const duplicate = line.match(/\bserver has (?:duplicate|same|better)\b.*?\bfile=(.+?)(?:\s+[a-z_]+=[^\s]+)*$/i);
-    if (duplicate) {
-      fileReference = duplicate[1].trim();
-      outcome = 'duplicate';
-    }
-  }
-
-  if (!outcome) {
-    const failed = line.match(/\b(?:server error|upload failed|file access error|incomplete processing)\b.*?\bfile=(.+?)(?:\s+error=(.+))?$/i);
-    if (failed) {
-      fileReference = failed[1].trim();
-      outcome = 'error';
-      error = failed[2]?.trim() || 'Immich import failed';
-    }
-  }
+  const event = parseImmichLogEvent(line);
+  const { fileReference, outcome, error } = event || {};
 
   if (!outcome || !fileReference) return null;
   const sourcePath = sourcePathFromReference(fileReference, mountPath);

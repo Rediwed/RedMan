@@ -1252,6 +1252,8 @@
       "testImmichConnection",
       "isImmichGoAvailable",
       "startImport",
+      "applyImmichLogProgress",
+      "watchImmichLogProgress",
       "uploadTakeoutArchive",
       "stopActiveImportProcesses",
       "isEjectSupported",
@@ -1265,6 +1267,9 @@
       "validateFolderSourceInput",
       "resolveImportSourcePaths",
       "supportsDriveSideEffects"
+    ],
+    "mediaImportLedger": [
+      "classifyImmichLogOutcome"
     ],
     "onlineMediaImport": [
       "validateOnlineMediaSourceInput",

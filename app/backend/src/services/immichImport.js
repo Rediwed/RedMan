@@ -2,8 +2,8 @@
 // Parses output for progress tracking, handles delete-after and eject-after
 
 import { spawn, execFileSync } from 'child_process';
-import { readdir, rmdir, stat, readFile } from 'fs/promises';
-import { accessSync, constants, readFileSync, existsSync, mkdirSync, symlinkSync, unlinkSync, rmdirSync } from 'fs';
+import { open as openFile, readdir, rmdir, stat, readFile } from 'fs/promises';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import db from '../db.js';
 import {
@@ -12,6 +12,7 @@ import {
 } from './notify.js';
 import {
   buildMediaImportLedger,
+  classifyImmichLogOutcome,
   deleteVerifiedMediaSources,
   persistMediaImportLedger,
 } from './mediaImportLedger.js';
@@ -334,16 +335,16 @@ export function spawnImmichGo(args, runId, progress, envOverrides = {}, onProgre
       for (const line of lines) {
         // Parse immich-go progress output
         const uploadedMatch = line.match(/Uploaded\s+(\d+)/);
-        if (uploadedMatch) progress.uploaded = parseInt(uploadedMatch[1]);
+        if (uploadedMatch && !progress.trackLogOutcomes) progress.uploaded = parseInt(uploadedMatch[1]);
 
         const assetsMatch = line.match(/Assets found:\s*(\d+)/);
         if (assetsMatch) progress.assetsFound = parseInt(assetsMatch[1]);
 
         const errorsMatch = line.match(/Upload errors:\s*(\d+)/);
-        if (errorsMatch) progress.errors = parseInt(errorsMatch[1]);
+        if (errorsMatch && !progress.trackLogOutcomes) progress.errors = parseInt(errorsMatch[1]);
 
         const dupeMatch = line.match(/server has duplicate.*?:\s*(\d+)/);
-        if (dupeMatch) progress.duplicates = parseInt(dupeMatch[1]);
+        if (dupeMatch && !progress.trackLogOutcomes) progress.duplicates = parseInt(dupeMatch[1]);
 
         const percentMatch = line.match(/Immich read\s+(\d+)%/);
         if (percentMatch) progress.percent = parseInt(percentMatch[1]);
@@ -369,6 +370,67 @@ export function spawnImmichGo(args, runId, progress, envOverrides = {}, onProgre
   });
 }
 
+export function applyImmichLogProgress(line, progress) {
+  const outcome = classifyImmichLogOutcome(line);
+  if (outcome === 'uploaded') progress.uploaded = (progress.uploaded || 0) + 1;
+  else if (outcome === 'duplicate') progress.duplicates = (progress.duplicates || 0) + 1;
+  else if (outcome === 'error') progress.errors = (progress.errors || 0) + 1;
+  else return false;
+  progress.scanned = (progress.uploaded || 0) + (progress.duplicates || 0) + (progress.errors || 0);
+  return true;
+}
+
+export function watchImmichLogProgress(logPath, progress, onProgress) {
+  const MAX_BYTES_PER_TICK = 256 * 1024;
+  const MAX_REMAINDER_BYTES = 64 * 1024;
+  let offset = 0;
+  let remainder = '';
+  let reading = false;
+  let stopped = false;
+  let activeRead = Promise.resolve(false);
+  const readChunk = async () => {
+    if (!existsSync(logPath)) return false;
+    let handle = null;
+    try {
+      const size = (await stat(logPath)).size;
+      const bytesToRead = Math.min(MAX_BYTES_PER_TICK, Math.max(0, size - offset));
+      if (bytesToRead === 0) return false;
+      handle = await openFile(logPath, 'r');
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      const { bytesRead } = await handle.read(buffer, 0, bytesToRead, offset);
+      offset += bytesRead;
+      const lines = `${remainder}${buffer.toString('utf8', 0, bytesRead)}`.split('\n');
+      remainder = (lines.pop() || '').slice(-MAX_REMAINDER_BYTES);
+      let changed = false;
+      for (const line of lines) changed = applyImmichLogProgress(line, progress) || changed;
+      if (changed) onProgress?.(progress);
+      return bytesRead > 0;
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn(`[immich-import] Progress log read failed: ${error.message}`);
+      return false;
+    } finally {
+      await handle?.close();
+    }
+  };
+  const listener = () => {
+    if (stopped) return Promise.resolve(false);
+    if (reading) return activeRead;
+    reading = true;
+    activeRead = readChunk().finally(() => {
+      reading = false;
+    });
+    return activeRead;
+  };
+  const timer = setInterval(listener, 500);
+  timer.unref?.();
+  return async () => {
+    clearInterval(timer);
+    stopped = true;
+    await activeRead;
+    while (await readChunk()) { /* bounded chunks, draining a stable closed-child log */ }
+  };
+}
+
 export async function uploadTakeoutArchive({ archivePath, runId, progress, logPath, onProgress }) {
   const serverUrl = getSetting('immich_server_url');
   const apiKey = getSetting('immich_api_key');
@@ -380,7 +442,13 @@ export async function uploadTakeoutArchive({ archivePath, runId, progress, logPa
     sourcePath: archivePath,
     mode: 'google-photos',
   });
-  return spawnImmichGo(invocation.args, runId, progress, invocation.env, onProgress);
+  progress.trackLogOutcomes = true;
+  const stopWatching = watchImmichLogProgress(logPath, progress, onProgress);
+  try {
+    return await spawnImmichGo(invocation.args, runId, progress, invocation.env, onProgress);
+  } finally {
+    await stopWatching();
+  }
 }
 
 /**
