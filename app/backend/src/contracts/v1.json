@@ -1114,6 +1114,7 @@
       "appendOutputTail",
       "cleanRsyncLine",
       "parseItemizeAction",
+      "parseRsyncByteCount",
       "parseProgressLine",
       "parseProgress2Line",
       "createRsyncOutputProcessor"

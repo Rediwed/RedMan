@@ -27,7 +27,7 @@ export function parseItemizeAction(flags) {
 }
 
 export function parseProgressLine(line, progress) {
-  const match = line.match(/^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\S+)\s+\(xfe?r#(\d+),\s*(to-check|to-chk|ir-chk)=(\d+)\/(\d+)\)/);
+  const match = line.match(/^\s*([\d,.]+[kKmMgGtT]?)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\S+)\s+\(xfe?r#(\d+),\s*(to-check|to-chk|ir-chk)=(\d+)\/(\d+)\)/);
   if (match) {
     progress.speed = match[3];
     const count = Number.parseInt(match[7], 10);
@@ -41,20 +41,23 @@ export function parseProgressLine(line, progress) {
     return true;
   }
 
-  const simple = line.match(/^\s*[\d,]+\s+\d+%\s+([\d.]+\w+\/s)/);
+  const simple = line.match(/^\s*[\d,.]+[kKmMgGtT]?\s+\d+%\s+([\d.]+\w+\/s)/);
   if (!simple) return false;
   progress.speed = simple[1];
   return true;
 }
 
 export function parseProgress2Line(line, progress) {
-  const match = line.match(/^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\S+)/);
+  const match = line.match(/^\s*([\d,.]+[kKmMgGtT]?)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\S+)/);
   if (!match) return false;
 
-  progress.bytesTransferred = Number.parseInt(match[1].replace(/,/g, ''), 10);
+  const bytesTransferred = parseRsyncByteCount(match[1]);
+  if (bytesTransferred === null) return false;
+  const percent = Number.parseInt(match[2], 10);
+  if (percent < 0 || percent > 100) return false;
+  if (bytesTransferred > progress.bytesTransferred) progress.bytesTransferred = bytesTransferred;
   progress.speed = match[3];
   progress.eta = match[4] === '0:00:00' ? null : match[4];
-  const percent = Number.parseInt(match[2], 10);
   if (progress.percent === null || percent > progress.percent) progress.percent = percent;
 
   const fileCounts = line.match(/\(xfr#(\d+),\s*(?:to-chk|ir-chk)=(\d+)\/(\d+)\)\s*$/);
@@ -64,6 +67,19 @@ export function parseProgress2Line(line, progress) {
     progress.filesTotal = Number.parseInt(fileCounts[3], 10);
   }
   return true;
+}
+
+function looksLikeProgress2Line(line) {
+  return /^\s*\S+\s+\d+%\s+\S+\/s\s+\S+/.test(line);
+}
+
+export function parseRsyncByteCount(value) {
+  const match = String(value).match(/^((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)([kKmMgGtT]?)$/);
+  if (!match) return null;
+  const normalized = match[1].replace(/,/g, '');
+  const multipliers = { '': 1, k: 1_000, m: 1_000_000, g: 1_000_000_000, t: 1_000_000_000_000 };
+  const result = Math.round(Number.parseFloat(normalized) * multipliers[match[2].toLowerCase()]);
+  return Number.isSafeInteger(result) ? result : null;
 }
 
 export function createRsyncOutputProcessor({
@@ -121,9 +137,12 @@ export function createRsyncOutputProcessor({
       return;
     }
 
-    const parsedProgress = platform !== 'darwin' && parseProgress2Line(line, progress)
-      ? true
-      : parseProgressLine(line, progress);
+    let parsedProgress;
+    if (platform !== 'darwin' && looksLikeProgress2Line(line)) {
+      parsedProgress = parseProgress2Line(line, progress);
+    } else {
+      parsedProgress = parseProgressLine(line, progress);
+    }
     if (parsedProgress) {
       onProgress?.(progress);
       return;
