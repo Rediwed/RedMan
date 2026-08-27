@@ -63,6 +63,7 @@ export const API_ROUTE_POLICIES = Object.freeze([
   policy(['GET'], /^\/media-import\/drives\/(?:known|\d+)$/, PERMISSIONS.READ),
   policy(['GET'], /^\/media-import\/drives\/\d+\/scan$/, PERMISSIONS.READ),
   policy(['GET'], /^\/media-import\/runs\/\d+(?:\/(?:progress|files))?$/, PERMISSIONS.READ),
+  policy(['GET'], /^\/media-import\/runs\/active$/, PERMISSIONS.READ),
   policy(['GET'], /^\/media-import\/online-discover\/[^/]+$/, PERMISSIONS.READ),
   policy(['PUT'], /^\/media-import\/drives\/\d+$/, PERMISSIONS.OPERATE),
   policy(['POST'], /^\/media-import\/(?:drives\/\d+\/(?:scan|import|eject)|runs\/\d+\/cancel|test-immich)$/, PERMISSIONS.OPERATE),

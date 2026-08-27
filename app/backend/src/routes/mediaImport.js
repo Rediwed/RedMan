@@ -315,6 +315,19 @@ router.post('/runs/:id/cancel', (req, res) => {
 
 // ── Import History ────────────────────────────────────────────────
 
+router.get('/runs/active', (req, res) => {
+  const runs = db.prepare(`
+    SELECT r.id, r.config_id, r.status, r.started_at,
+      d.name AS drive_name, d.label AS drive_label
+    FROM backup_runs r
+    LEFT JOIN media_drives d ON r.config_id = d.id
+    WHERE r.feature = 'media-import' AND r.status = 'running'
+    ORDER BY r.started_at DESC
+    LIMIT 100
+  `).all();
+  res.json(runs);
+});
+
 router.get('/runs', (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = 10;

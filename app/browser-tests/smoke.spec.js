@@ -41,3 +41,80 @@ test('mobile navigation exposes and follows feature links', async ({ page }, tes
   await page.getByRole('link', { name: 'SSD Backup', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'SSD Backup' })).toBeVisible();
 });
+
+test('media import restores running cards after navigation without duplicate polling', async ({ page }) => {
+  const progressRequests = new Map();
+  await page.route('**/api/media-import/sources', route => route.fulfill({
+    json: [
+      {
+        id: 4,
+        name: 'Google Photos takeout',
+        mount_path: '/app/backend/data/media-import-staging/test',
+        source_kind: 'online',
+        import_mode: 'google-photos',
+        remote_name: 'gdrive',
+        remote_path: 'Takeout',
+        available: true,
+      },
+      {
+        id: 5,
+        name: 'Camera staging',
+        mount_path: '/storage/camera',
+        source_kind: 'folder',
+        import_mode: 'folder',
+        available: true,
+      },
+    ],
+  }));
+  await page.route('**/api/media-import/runs?page=1', route => route.fulfill({
+    json: {
+      runs: Array.from({ length: 10 }, (_, index) => ({
+        id: 5000 + index,
+        config_id: 4,
+        status: 'completed',
+        drive_name: 'Older import',
+      })),
+      total: 11,
+      page: 1,
+      pages: 2,
+    },
+  }));
+  await page.route('**/api/media-import/runs/active', route => route.fulfill({
+    json: [
+      { id: 4246, config_id: 4, status: 'running', drive_name: 'Google Photos takeout' },
+      { id: 4247, config_id: 5, status: 'running', drive_name: 'Camera staging' },
+    ],
+  }));
+  await page.route(/\/api\/media-import\/runs\/(4246|4247)\/progress$/, async route => {
+    const runId = Number(route.request().url().match(/runs\/(\d+)\/progress$/)[1]);
+    progressRequests.set(runId, (progressRequests.get(runId) || 0) + 1);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await route.fulfill({
+      json: runId === 4246
+        ? {
+            runId, driveId: 4, status: 'running', phase: 'importing',
+            archivesTotal: 57, archivesCompleted: 18, assetsFound: 1059,
+            scanned: 840, uploaded: 120, duplicates: 718, errors: 2,
+            startedAt: Date.now() - 120_000,
+          }
+        : {
+            runId, driveId: 5, status: 'running', assetsFound: 400,
+            uploaded: 110, duplicates: 80, errors: 0, percent: 48,
+            startedAt: Date.now() - 60_000,
+          },
+    });
+  });
+
+  await page.goto('/media-import');
+  await expect(page.getByText('Starting job', { exact: true })).toHaveCount(2);
+  await expect(page.getByText('Archive 19 of 57', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(page.getByText('Uploading', { exact: true })).toBeVisible({ timeout: 4_000 });
+
+  await page.goto('/status');
+  await page.goto('/media-import');
+  await expect(page.getByText('Starting job', { exact: true })).toHaveCount(2);
+  await expect(page.getByText('Archive 19 of 57', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(page.getByText('Uploading', { exact: true })).toBeVisible({ timeout: 4_000 });
+  expect(progressRequests.get(4246)).toBe(2);
+  expect(progressRequests.get(4247)).toBe(2);
+});

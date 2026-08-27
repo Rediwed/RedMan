@@ -4,9 +4,10 @@ import {
   startDriveImport, cancelDriveImport, getImportProgress, ejectDrive, getMediaImportRuns,
   getMediaImportStatus, getMediaImportRunFiles,
   getMediaImportSources, createMediaImportSource, createOnlineMediaImportSource, deleteMediaImportSource,
-  discoverOnlineTakeout, getRcloneRemotes,
+  discoverOnlineTakeout, getActiveMediaImportRuns, getRcloneRemotes,
 } from '../api/index.js';
 import useReconnect from '../hooks/useReconnect.js';
+import useJobProgress from '../hooks/useJobProgress.js';
 import { useSettings } from '../contexts/SettingsContext.jsx';
 import { formatDateTime, formatDateShort as fmtDateShort } from '../utils/dateFormat.js';
 import StatusBadge from '../components/StatusBadge.jsx';
@@ -21,7 +22,6 @@ import PathPicker from '../components/PathPicker.jsx';
 import RcloneRemotePathPicker from '../components/RcloneRemotePathPicker.jsx';
 import { DialogSurface } from '../components/Dialog.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
-import { isTerminalRunStatus } from '../utils/runStatus.js';
 import './MediaImportPage.css';
 
 export default function MediaImportPage() {
@@ -37,7 +37,7 @@ export default function MediaImportPage() {
   const [runsMeta, setRunsMeta] = useState({ total: 0, pages: 1 });
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeImports, setActiveImports] = useState({});
+  const [runningRuns, setRunningRuns] = useState([]);
   const [detailRun, setDetailRun] = useState(null);
   const [detailFiles, setDetailFiles] = useState(null);
   const [detailFilter, setDetailFilter] = useState(null);
@@ -49,12 +49,13 @@ export default function MediaImportPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [d, k, r, s, src] = await Promise.all([
+      const [d, k, r, s, src, activeRuns] = await Promise.all([
         getMediaDrives(),
         getKnownDrives(),
         getMediaImportRuns(runsPage),
         getMediaImportStatus(),
         getMediaImportSources(),
+        getActiveMediaImportRuns(),
       ]);
       setDrives(d);
       setKnownDrives(k.filter(kd => !d.some(cd => cd.id === kd.id)));
@@ -62,11 +63,28 @@ export default function MediaImportPage() {
       setRunsMeta({ total: r.total, pages: r.pages });
       setStatus(s);
       setSources(src);
+      setRunningRuns(activeRuns);
     } catch (err) {
       setActionResult({ type: 'error', message: err.message });
     }
     setLoading(false);
   }, [runsPage]);
+
+  const fetchMediaRunProgress = useCallback(async runId => {
+    const progress = await getImportProgress(runId);
+    return {
+      status: progress.status === 'none' ? 'failed' : progress.status,
+      liveProgress: progress.status === 'none' ? null : progress,
+    };
+  }, []);
+  const {
+    trackRun,
+    detectRunning,
+    getProgressForConfig,
+    getRunIdForConfig,
+  } = useJobProgress(fetchMediaRunProgress, refresh);
+
+  useEffect(() => { detectRunning(runningRuns); }, [detectRunning, runningRuns]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useReconnect(refresh);
@@ -84,34 +102,6 @@ export default function MediaImportPage() {
       scanPollRef.current.clear();
     };
   }, []);
-
-  // Poll active imports for progress
-  useEffect(() => {
-    const importRunIds = Object.keys(activeImports);
-    if (importRunIds.length === 0) return;
-
-    const interval = setInterval(async () => {
-      for (const runId of importRunIds) {
-        try {
-          const progress = await getImportProgress(runId);
-          if (isTerminalRunStatus(progress.status) || progress.status === 'none') {
-            setActiveImports(prev => {
-              const next = { ...prev };
-              delete next[runId];
-              return next;
-            });
-            refresh();
-          } else {
-            setActiveImports(prev => ({ ...prev, [runId]: progress }));
-          }
-        } catch (err) {
-          setActionResult({ type: 'error', message: `Import progress unavailable: ${err.message}` });
-        }
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [activeImports, refresh]);
 
   async function handleScan(driveId) {
     try {
@@ -141,7 +131,7 @@ export default function MediaImportPage() {
   async function handleImport(driveId) {
     try {
       const result = await startDriveImport(driveId);
-      setActiveImports(prev => ({ ...prev, [result.runId]: { status: 'running', percent: 0 } }));
+      trackRun(result.runId, driveId);
     } catch (err) {
       setActionResult({ type: 'error', message: err.message });
     }
@@ -189,7 +179,7 @@ export default function MediaImportPage() {
     setActionResult({ type: 'success', message: `Import source “${payload.name}” added.` });
     if (payload.source_kind === 'online') {
       const result = await startDriveImport(source.id);
-      setActiveImports(prev => ({ ...prev, [result.runId]: { status: 'running', phase: 'listing', driveId: source.id, percent: 0 } }));
+      trackRun(result.runId, source.id);
       setActionResult({ type: 'success', message: `Online import “${payload.name}” started.` });
     }
     refresh();
@@ -264,10 +254,10 @@ export default function MediaImportPage() {
               <DriveCard
                 key={drive.mountPath || drive.id}
                 drive={drive}
-                activeImport={Object.values(activeImports).find(i => i.driveId === drive.id)}
+                activeImport={getProgressForConfig(drive.id)}
                 onCancel={() => {
-                  const entry = Object.entries(activeImports).find(([, i]) => i.driveId === drive.id);
-                  if (entry) cancelDriveImport(parseInt(entry[0])).then(() => refresh());
+                  const runId = getRunIdForConfig(drive.id);
+                  if (runId) cancelDriveImport(runId).then(() => refresh());
                 }}
                 onScan={() => handleScan(drive.id)}
                 onImport={() => handleImport(drive.id)}
@@ -306,10 +296,10 @@ export default function MediaImportPage() {
               <FolderSourceCard
                 key={source.id}
                 source={source}
-                activeImport={Object.values(activeImports).find(i => i.driveId === source.id)}
+                activeImport={getProgressForConfig(source.id)}
                 onCancel={() => {
-                  const entry = Object.entries(activeImports).find(([, i]) => i.driveId === source.id);
-                  if (entry) cancelDriveImport(parseInt(entry[0])).then(() => refresh());
+                  const runId = getRunIdForConfig(source.id);
+                  if (runId) cancelDriveImport(runId).then(() => refresh());
                 }}
                 onImport={() => handleImport(source.id)}
                 onDelete={() => { setActionResult(null); setDeleteSourceTarget(source); }}

@@ -30,6 +30,7 @@ assert.equal(getRoutePermission('POST', '/api/ssd-backup/configs/1/restore'), PE
 assert.equal(getRoutePermission('POST', '/api/docker/containers/abc/restart'), PERMISSIONS.DOCKER_MUTATE);
 assert.equal(getRoutePermission('GET', '/api/media-import/online-discover/google_drive'), PERMISSIONS.READ);
 assert.equal(getRoutePermission('POST', '/api/media-import/online-sources'), PERMISSIONS.OPERATE);
+assert.equal(getRoutePermission('GET', '/api/media-import/runs/active'), PERMISSIONS.READ);
 
 function invoke(role, method, originalUrl) {
   const req = { method, originalUrl, user: { role } };

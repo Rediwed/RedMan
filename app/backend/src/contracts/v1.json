@@ -342,6 +342,9 @@
           "drive_id"
         ]
       },
+      "GET /api/media-import/runs/active": {
+        "auth": true
+      },
       "GET /api/media-import/runs/:id": {
         "auth": true
       },
@@ -1570,6 +1573,7 @@
       "testImmichConnection",
       "getMediaImportStatus",
       "getMediaImportSources",
+      "getActiveMediaImportRuns",
       "createMediaImportSource",
       "createOnlineMediaImportSource",
       "discoverOnlineTakeout",
