@@ -46,6 +46,8 @@ export default function MediaImportPage() {
   const [actionResult, setActionResult] = useState(null);
   const [deleteVerifiedTarget, setDeleteVerifiedTarget] = useState(null);
   const [dryRunTarget, setDryRunTarget] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [deletePartialOnCancel, setDeletePartialOnCancel] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const scanPollRef = useRef(new Set());
 
@@ -140,15 +142,38 @@ export default function MediaImportPage() {
     }
   }
 
-  async function handleCancel(driveId) {
-    const runId = getRunIdForConfig(driveId);
-    if (!runId) return;
+  function requestCancel(target) {
+    const activeImport = getProgressForConfig(target.id);
+    setActionResult(null);
+    setDeletePartialOnCancel(true);
+    setCancelTarget({ ...target, dryRun: activeImport?.dryRun === true });
+  }
+
+  async function confirmCancel() {
+    const runId = getRunIdForConfig(cancelTarget.id);
+    if (!runId) {
+      setActionResult({ type: 'error', message: 'This import is no longer active.' });
+      return;
+    }
+    setConfirming(true);
     try {
-      await cancelDriveImport(runId);
-      setActionResult({ type: 'success', message: 'Import cancellation requested.' });
-      refresh();
+      const result = await cancelDriveImport(runId, {
+        delete_partial: cancelTarget.source_kind === 'online' && !cancelTarget.dryRun
+          ? deletePartialOnCancel
+          : false,
+      });
+      if (result.partial_cleanup_failed) {
+        setActionResult({ type: 'error', message: 'The import stopped, but its partial download could not be removed safely.' });
+      } else {
+        const cleanupMessage = result.partial_removed ? ' The partial download was removed.' : '';
+        setActionResult({ type: 'success', message: `Import cancelled.${cleanupMessage}` });
+      }
+      setCancelTarget(null);
+      await refresh();
     } catch (err) {
       setActionResult({ type: 'error', message: err.message });
+    } finally {
+      setConfirming(false);
     }
   }
 
@@ -277,7 +302,7 @@ export default function MediaImportPage() {
                 key={drive.mountPath || drive.id}
                 drive={drive}
                 activeImport={getProgressForConfig(drive.id)}
-                onCancel={() => handleCancel(drive.id)}
+                onCancel={() => requestCancel(drive)}
                 onScan={() => handleScan(drive.id)}
                 onImport={() => handleImport(drive.id)}
                 onDryRun={() => { setActionResult(null); setDryRunTarget(drive); }}
@@ -317,7 +342,7 @@ export default function MediaImportPage() {
                 key={source.id}
                 source={source}
                 activeImport={getProgressForConfig(source.id)}
-                onCancel={() => handleCancel(source.id)}
+                onCancel={() => requestCancel(source)}
                 onImport={() => handleImport(source.id)}
                 onDryRun={() => { setActionResult(null); setDryRunTarget(source); }}
                 onDelete={() => { setActionResult(null); setDeleteSourceTarget(source); }}
@@ -366,6 +391,41 @@ export default function MediaImportPage() {
               ? 'Google Takeout archives are still downloaded one at a time for analysis, then RedMan removes only the temporary copies created by this dry run.'
               : 'The complete source is read, so this can take about as long as an import even though no assets are uploaded.'}
           </p>
+        </ConfirmDialog>
+      )}
+
+      {cancelTarget && (
+        <ConfirmDialog
+          title="Stop media import?"
+          confirmLabel="Stop import"
+          cancelLabel="Keep running"
+          destructive
+          busy={confirming}
+          error={actionResult?.type === 'error' ? actionResult.message : null}
+          onClose={() => setCancelTarget(null)}
+          onConfirm={confirmCancel}
+        >
+          <p>Stop the active import from <strong>{cancelTarget.name || cancelTarget.label}</strong>?</p>
+          {cancelTarget.source_kind === 'online' && !cancelTarget.dryRun && (
+            <>
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  className="toggle"
+                  checked={deletePartialOnCancel}
+                  onChange={event => setDeletePartialOnCancel(event.target.checked)}
+                />
+                Remove the partial download from local staging
+              </label>
+              <p className="form-hint">Completed archives and Google Drive source files are never removed. If kept, the incomplete local file remains in staging until the next attempt replaces it or you remove it manually.</p>
+            </>
+          )}
+          {cancelTarget.dryRun && (
+            <p className="form-hint">Temporary files created by a dry run are always removed after cancellation.</p>
+          )}
+          {cancelTarget.source_kind !== 'online' && (
+            <p className="form-hint">Files already processed remain in Immich. Source cleanup will not run after cancellation.</p>
+          )}
         </ConfirmDialog>
       )}
 

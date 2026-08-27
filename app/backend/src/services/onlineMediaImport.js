@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, statSync, statfsSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import db from '../db.js';
@@ -10,6 +10,9 @@ import { cancelImport, uploadTakeoutArchive } from './immichImport.js';
 import { summarizeImmichGoFailure } from './immichFailureSummary.js';
 
 const activeOnlineImports = new Map();
+const activePartialDownloads = new Map();
+const onlineImportTasks = new Map();
+const onlineCancellationRequests = new Map();
 const cancelledOnlineImports = new Set();
 const MIN_FREE_RESERVE_BYTES = 512 * 1024 * 1024;
 
@@ -59,6 +62,43 @@ export function assertStagedArchiveSafe(archivePath, stagingPath, expectedSize) 
   return resolved;
 }
 
+export function removePartialDownload(partialPath, stagingPath, expectedIdentity, quarantineToken = 'cleanup') {
+  if (!partialPath) return false;
+  const normalizedPartial = normalizePath(partialPath);
+  const normalizedStaging = normalizePath(stagingPath);
+  if (!normalizedPartial || !normalizedStaging || !normalizedPartial.endsWith('.partial')
+    || !isWithinPrefix(normalizedPartial, normalizedStaging)) {
+    throw new Error('The partial download is outside the online import staging folder');
+  }
+  if (!expectedIdentity || !Number.isSafeInteger(expectedIdentity.dev) || !Number.isSafeInteger(expectedIdentity.ino)) {
+    throw new Error('The partial download identity was not recorded');
+  }
+  let info;
+  try {
+    info = lstatSync(normalizedPartial);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error('The partial download is not a regular file');
+  }
+  if (info.dev !== expectedIdentity.dev || info.ino !== expectedIdentity.ino) {
+    throw new Error('The partial download changed before cleanup');
+  }
+  const resolved = resolveExistingPathWithinPrefix(normalizedPartial, normalizedStaging).path;
+  if (resolved !== normalizedPartial) throw new Error('The partial download resolves elsewhere');
+  const quarantinePath = join(normalizedStaging, `.cancelled-${quarantineToken}-${randomUUID()}.partial`);
+  renameSync(normalizedPartial, quarantinePath);
+  const quarantined = lstatSync(quarantinePath);
+  if (!quarantined.isFile() || quarantined.isSymbolicLink()
+    || quarantined.dev !== expectedIdentity.dev || quarantined.ino !== expectedIdentity.ino) {
+    throw new Error('The partial download changed during cleanup');
+  }
+  unlinkSync(quarantinePath);
+  return true;
+}
+
 export function defaultOnlineStagingPath(remoteName, remotePath, databasePath = db.name) {
   const fingerprint = createHash('sha256')
     .update(`${remoteName}\0${remotePath}`)
@@ -90,15 +130,33 @@ export function getActiveOnlineImport(runId) {
   return activeOnlineImports.get(runId);
 }
 
-export async function cancelOnlineImport(runId, timeoutMs = 10000) {
+export async function cancelOnlineImport(runId, timeoutMs = 10000, { deletePartial = false } = {}) {
   if (!activeOnlineImports.has(runId)) return false;
   cancelledOnlineImports.add(runId);
   activeOnlineImports.get(runId).status = 'cancelling';
+  const cancellation = { deletePartial, partialRemoved: false, partialCleanupFailed: false };
+  onlineCancellationRequests.set(runId, cancellation);
+  const partialDownload = activePartialDownloads.get(runId);
+  if (partialDownload && !partialDownload.identity) {
+    try {
+      const info = lstatSync(partialDownload.partialPath);
+      if (info.isFile() && !info.isSymbolicLink()) {
+        partialDownload.identity = { dev: info.dev, ino: info.ino };
+      }
+    } catch { /* No partial file exists yet. */ }
+  }
+  const task = onlineImportTasks.get(runId);
   const terminations = await Promise.all([
     terminateRcloneProcess(`media-online:${runId}`, timeoutMs),
     cancelImport(runId, timeoutMs),
   ]);
-  return !terminations.includes(false);
+  const stopped = !terminations.includes(false);
+  if (stopped && task) await task;
+  return {
+    stopped,
+    partialRemoved: cancellation.partialRemoved,
+    partialCleanupFailed: cancellation.partialCleanupFailed,
+  };
 }
 
 function localArchivePaths(source, remoteArchive, namePrefix = '') {
@@ -151,9 +209,10 @@ export async function startOnlineImport(sourceId, { dryRun = false } = {}) {
     startedAt: Date.now(),
   };
   activeOnlineImports.set(runId, progress);
-  runOnlineImport(source, runId, progress).catch(error => {
+  const task = runOnlineImport(source, runId, progress).catch(error => {
     console.error(`[online-media-import] Run ${runId} failed: ${error.message}`);
   });
+  onlineImportTasks.set(runId, task);
   return { runId, status: 'running', dryRun };
 }
 
@@ -207,9 +266,21 @@ async function runOnlineImport(source, runId, progress) {
         progress.requiredBytes = space.required;
         progress.phase = 'downloading';
         if (progress.dryRun) dryRunArtifacts.add(partialPath);
+        activePartialDownloads.set(runId, {
+          partialPath, stagingPath: source.mount_path, identity: null,
+        });
         await downloadRemoteFile(source.remote_name, `${source.remote_path}/${archive.path}`, partialPath, archive.size, `media-online:${runId}`, update => {
           progress.archivePercent = update.percent;
           progress.bytesTransferred = update.bytesTransferred;
+          try {
+            const info = lstatSync(partialPath);
+            if (info.isFile() && !info.isSymbolicLink()) {
+              const activePartial = activePartialDownloads.get(runId);
+              if (activePartial?.partialPath === partialPath) {
+                activePartial.identity = { dev: info.dev, ino: info.ino };
+              }
+            }
+          } catch { /* The first progress event can precede destination creation. */ }
         });
         source.mount_path = revalidateStagingPath(source.mount_path);
         try {
@@ -219,6 +290,7 @@ async function runOnlineImport(source, runId, progress) {
           throw error;
         }
         renameSync(partialPath, finalPath);
+        activePartialDownloads.delete(runId);
         if (progress.dryRun) {
           dryRunArtifacts.delete(partialPath);
           dryRunArtifacts.add(finalPath);
@@ -280,11 +352,13 @@ async function runOnlineImport(source, runId, progress) {
       progress.currentArchive = null;
     }
 
+    if (isCancelled(runId)) throw new Error('Cancelled by user');
     const duration = (Date.now() - startedAt) / 1000;
-    db.prepare(`
+    const completionClaim = db.prepare(`
       UPDATE backup_runs SET status = 'completed', completed_at = datetime('now'), files_total = ?,
-        files_copied = ?, files_failed = 0, duration_seconds = ? WHERE id = ?
+        files_copied = ?, files_failed = 0, duration_seconds = ? WHERE id = ? AND status = 'running'
     `).run(archives.length, progress.dryRun ? completedAssets.uploaded : progress.archivesCompleted, duration, runId);
+    if (completionClaim.changes !== 1) throw new Error('Run status changed before completion');
     if (!progress.dryRun) {
       db.prepare("UPDATE media_drives SET last_import_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(source.id);
     }
@@ -296,12 +370,29 @@ async function runOnlineImport(source, runId, progress) {
     const status = cancelled ? 'cancelled' : 'failed';
     db.prepare(`
       UPDATE backup_runs SET status = ?, completed_at = datetime('now'), files_total = ?, files_copied = ?,
-        files_failed = ?, duration_seconds = ?, error_message = ? WHERE id = ?
+        files_failed = ?, duration_seconds = ?, error_message = ?
+      WHERE id = ? AND status IN ('running', 'cancelling')
     `).run(status, progress.archivesTotal, progress.archivesCompleted, cancelled ? 0 : 1,
       (Date.now() - startedAt) / 1000, cancelled ? 'Cancelled by user' : error.message, runId);
     progress.status = status;
     progress.phase = status;
   } finally {
+    const cancellation = onlineCancellationRequests.get(runId);
+    const partialDownload = activePartialDownloads.get(runId);
+    if (cancellation?.deletePartial && partialDownload) {
+      try {
+        cancellation.partialRemoved = removePartialDownload(
+          partialDownload.partialPath,
+          partialDownload.stagingPath,
+          partialDownload.identity,
+          runId,
+        );
+      } catch (cleanupError) {
+        cancellation.partialCleanupFailed = true;
+        console.warn(`[online-media-import] Could not safely remove cancelled partial download: ${cleanupError.message}`);
+      }
+    }
+    activePartialDownloads.delete(runId);
     for (const artifactPath of dryRunArtifacts) {
       try {
         source.mount_path = revalidateStagingPath(source.mount_path);
@@ -311,11 +402,14 @@ async function runOnlineImport(source, runId, progress) {
           unlinkSync(artifactPath);
         }
       } catch (cleanupError) {
+        if (cancellation) cancellation.partialCleanupFailed = true;
         if (cleanupError.code !== 'ENOENT') {
           console.warn(`[online-media-import] Could not remove dry-run staging artifact: ${cleanupError.message}`);
         }
       }
     }
+    onlineCancellationRequests.delete(runId);
+    onlineImportTasks.delete(runId);
     cancelledOnlineImports.delete(runId);
     setTimeout(() => activeOnlineImports.delete(runId), 5 * 60 * 1000);
   }

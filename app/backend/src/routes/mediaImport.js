@@ -306,6 +306,9 @@ router.get('/runs/:id/progress', (req, res) => {
 // Cancel a running import
 router.post('/runs/:id/cancel', async (req, res) => {
   const runId = parseInt(req.params.id);
+  if (req.body?.delete_partial !== undefined && typeof req.body.delete_partial !== 'boolean') {
+    return res.status(400).json({ error: 'delete_partial must be a boolean' });
+  }
   const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'media-import'").get(runId);
   if (!run) return res.status(404).json({ error: 'Run not found' });
   if (run.status === 'cancelled') return res.json({ status: 'cancelled' });
@@ -316,20 +319,33 @@ router.post('/runs/:id/cancel', async (req, res) => {
   `).run(runId);
   if (claim.changes !== 1) return res.status(400).json({ error: 'Run is not active' });
 
-  const stopped = await cancelOnlineImport(runId) || await cancelImport(runId);
+  const onlineCancellation = await cancelOnlineImport(runId, 10000, {
+    deletePartial: req.body?.delete_partial === true,
+  });
+  const stopped = onlineCancellation === false
+    ? await cancelImport(runId)
+    : onlineCancellation.stopped;
   if (!stopped) {
     return res.status(500).json({ error: 'Cancellation was requested, but process termination could not be confirmed' });
   }
 
-  db.prepare(`
+  const cancellationClaim = db.prepare(`
     UPDATE backup_runs
     SET status = 'cancelled', completed_at = COALESCE(completed_at, datetime('now')),
       error_message = 'Cancelled by user'
     WHERE id = ? AND feature = 'media-import' AND status IN ('cancelling', 'cancelled')
   `).run(runId);
+  const finalStatus = db.prepare("SELECT status FROM backup_runs WHERE id = ? AND feature = 'media-import'").get(runId)?.status;
+  if (cancellationClaim.changes !== 1 || finalStatus !== 'cancelled') {
+    return res.status(409).json({ error: 'The import reached another terminal state before cancellation completed' });
+  }
   const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(run.config_id);
   notifyJobCancelled('Media Import', drive?.name || drive?.label || `Drive ${run.config_id}`);
-  res.json({ status: 'cancelled' });
+  res.json({
+    status: 'cancelled',
+    partial_removed: onlineCancellation === false ? false : onlineCancellation.partialRemoved,
+    partial_cleanup_failed: onlineCancellation === false ? false : onlineCancellation.partialCleanupFailed,
+  });
 });
 
 // ── Import History ────────────────────────────────────────────────

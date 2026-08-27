@@ -336,7 +336,10 @@
         "auth": true
       },
       "POST /api/media-import/runs/:id/cancel": {
-        "auth": true
+        "auth": true,
+        "body": [
+          "delete_partial"
+        ]
       },
       "GET /api/media-import/runs": {
         "auth": true,
@@ -1284,6 +1287,7 @@
       "validateOnlineMediaSourceInput",
       "defaultOnlineStagingPath",
       "assertStagedArchiveSafe",
+      "removePartialDownload",
       "requiredOnlineImportBytes",
       "getActiveOnlineImport",
       "cancelOnlineImport",

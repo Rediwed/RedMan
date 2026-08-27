@@ -132,6 +132,7 @@ test('media import restores running cards after navigation without duplicate pol
 test('media import can start a labelled dry run and cancel it', async ({ page }) => {
   let importRequest = null;
   let cancelled = false;
+  let cancelRequest = null;
   await page.route('**/api/media-import/drives', route => route.fulfill({ json: [] }));
   await page.route('**/api/media-import/drives/known', route => route.fulfill({ json: [] }));
   await page.route('**/api/media-import/runs?page=1', route => route.fulfill({
@@ -144,9 +145,11 @@ test('media import can start a labelled dry run and cancel it', async ({ page })
     json: [{
       id: 8,
       name: 'Camera staging',
-      mount_path: '/storage/camera',
-      source_kind: 'folder',
-      import_mode: 'folder',
+      mount_path: '/app/backend/data/media-import-staging/test',
+      source_kind: 'online',
+      import_mode: 'google-photos',
+      remote_name: 'gdrive',
+      remote_path: 'Takeout',
       available: true,
     }],
   }));
@@ -165,6 +168,7 @@ test('media import can start a labelled dry run and cancel it', async ({ page })
         },
   }));
   await page.route('**/api/media-import/runs/8801/cancel', async route => {
+    cancelRequest = route.request().postDataJSON();
     cancelled = true;
     await route.fulfill({ json: { status: 'cancelled' } });
   });
@@ -178,6 +182,70 @@ test('media import can start a labelled dry run and cancel it', async ({ page })
   expect(importRequest).toEqual({ dry_run: true });
   await expect(page.getByText('Would upload', { exact: true })).toBeVisible({ timeout: 4_000 });
   await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog', { name: 'Stop media import?' })).toBeVisible();
+  expect(cancelled).toBe(false);
+  await expect(page.getByText('Temporary files created by a dry run are always removed after cancellation.')).toBeVisible();
+  await page.getByRole('button', { name: 'Stop import' }).click();
   await expect.poll(() => cancelled).toBe(true);
-  await expect(page.getByText('Import cancellation requested.', { exact: true })).toBeVisible();
+  expect(cancelRequest).toEqual({ delete_partial: false });
+  await expect(page.getByText('Import cancelled.', { exact: true })).toBeVisible();
+});
+
+test('online media import confirms cancellation and partial cleanup', async ({ page }) => {
+  let cancelRequest = null;
+  let cancelled = false;
+  await page.route('**/api/media-import/drives', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/drives/known', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/runs?page=1', route => route.fulfill({
+    json: { runs: [], total: 0, page: 1, pages: 1 },
+  }));
+  await page.route('**/api/media-import/status', route => route.fulfill({
+    json: { immichGoAvailable: true, ejectSupported: false },
+  }));
+  await page.route('**/api/media-import/sources', route => route.fulfill({
+    json: [{
+      id: 9,
+      name: 'Google Photos takeout',
+      mount_path: '/app/backend/data/media-import-staging/test',
+      source_kind: 'online',
+      import_mode: 'google-photos',
+      remote_name: 'gdrive',
+      remote_path: 'Takeout',
+      available: true,
+    }],
+  }));
+  await page.route('**/api/media-import/runs/active', route => route.fulfill({
+    json: cancelled ? [] : [{ id: 9901, config_id: 9, status: 'running', dry_run: 0 }],
+  }));
+  await page.route('**/api/media-import/runs/9901/progress', route => route.fulfill({
+    json: cancelled
+      ? { runId: 9901, driveId: 9, status: 'cancelled' }
+      : {
+          runId: 9901, driveId: 9, status: 'running', phase: 'downloading',
+          archivesTotal: 57, archivesCompleted: 37, archivePercent: 42,
+          scanned: 0, uploaded: 0, duplicates: 0, errors: 0,
+          startedAt: Date.now() - 60_000,
+        },
+  }));
+  await page.route('**/api/media-import/runs/9901/cancel', async route => {
+    cancelRequest = route.request().postDataJSON();
+    cancelled = true;
+    await route.fulfill({ json: { status: 'cancelled', partial_removed: true } });
+  });
+
+  await page.goto('/media-import');
+  await expect(page.getByText('Archive 38 of 57 · Downloading', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Stop media import?' });
+  await expect(dialog).toBeVisible();
+  const removePartial = dialog.getByRole('checkbox', { name: 'Remove the partial download from local staging' });
+  await expect(removePartial).toBeChecked();
+  expect(cancelRequest).toBeNull();
+  await dialog.getByRole('button', { name: 'Keep running' }).click();
+  expect(cancelRequest).toBeNull();
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('dialog', { name: 'Stop media import?' }).getByRole('button', { name: 'Stop import' }).click();
+  await expect.poll(() => cancelRequest).toEqual({ delete_partial: true });
+  await expect(page.getByText('Import cancelled. The partial download was removed.', { exact: true })).toBeVisible();
 });

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assertStagedArchiveSafe,
   defaultOnlineStagingPath,
+  removePartialDownload,
   requiredOnlineImportBytes,
   validateOnlineMediaSourceInput,
 } from '../app/backend/src/services/onlineMediaImport.js';
@@ -45,6 +46,25 @@ try {
   writeFileSync(safeArchive, 'safe');
   assert.equal(assertStagedArchiveSafe(safeArchive, staging, 4), safeArchive);
 
+  const partialArchive = join(staging, 'takeout.zip.partial');
+  writeFileSync(partialArchive, 'partial');
+  const partialInfo = statSync(partialArchive);
+  assert.equal(removePartialDownload(partialArchive, staging, {
+    dev: partialInfo.dev, ino: partialInfo.ino,
+  }, 'test-run'), true);
+  assert.equal(existsSync(partialArchive), false);
+  assert.equal(removePartialDownload(partialArchive, staging, {
+    dev: partialInfo.dev, ino: partialInfo.ino,
+  }, 'test-run'), false);
+
+  const replacedPartial = join(staging, 'replaced.zip.partial');
+  writeFileSync(replacedPartial, 'replacement');
+  assert.throws(
+    () => removePartialDownload(replacedPartial, staging, { dev: partialInfo.dev, ino: partialInfo.ino }, 'test-run'),
+    /changed before cleanup/,
+  );
+  assert.equal(existsSync(replacedPartial), true);
+
   const outsideArchive = join(sandbox, 'outside.zip');
   writeFileSync(outsideArchive, 'safe');
   const linkedArchive = join(staging, 'linked.zip');
@@ -53,6 +73,11 @@ try {
     () => assertStagedArchiveSafe(linkedArchive, staging, 4),
     /not a regular file|resolves elsewhere/,
   );
+  assert.throws(
+    () => removePartialDownload(linkedArchive, staging, { dev: partialInfo.dev, ino: partialInfo.ino }, 'test-run'),
+    /outside the online import staging folder|not a regular file|resolves elsewhere/,
+  );
+  assert.equal(existsSync(outsideArchive), true);
   assert.throws(() => validateOnlineMediaSourceInput({
     name: 'Traversal', path: staging, remote_name: 'drive', remote_path: '../Takeout',
   }, { roots: [sandbox], databasePath }), /valid Google Takeout folder/);

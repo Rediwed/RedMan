@@ -221,7 +221,7 @@ export const updateMediaDrive = (id, data) => putJSON(`/media-import/drives/${id
 export const scanDrive = (id) => postJSON(`/media-import/drives/${id}/scan`, {});
 export const getScanProgress = (id) => fetchJSON(`/media-import/drives/${id}/scan`);
 export const startDriveImport = (id, options = {}) => postJSON(`/media-import/drives/${id}/import`, options);
-export const cancelDriveImport = (runId) => postJSON(`/media-import/runs/${runId}/cancel`, {});
+export const cancelDriveImport = (runId, options = {}) => postJSON(`/media-import/runs/${runId}/cancel`, options);
 export const getImportProgress = (runId) => fetchJSON(`/media-import/runs/${runId}/progress`);
 export const getActiveMediaImportRuns = () => fetchJSON('/media-import/runs/active');
 export const ejectDrive = (id) => postJSON(`/media-import/drives/${id}/eject`, {});
