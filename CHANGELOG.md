@@ -14,7 +14,7 @@ Versioning scheme:
 - [x] See exactly why an import source cannot yet be added, with a direct recovery step when Takeout folder detection finds nothing.
 - [x] Follow every running job through compact atomic stages, one real progress bar, and live feature-specific metrics integrated into its existing card.
 - [x] See accurate live file and byte counts during human-readable SSD and Hyper Backup transfers instead of zeroes until completion.
-- [x] Keep every active Media Import card and its live progress visible when navigating away, paging through history, and returning later.
+- [x] Keep every active Media Import card and its live progress stable through navigation, history paging, reconnects, and background refreshes.
 
 ### Added
 - [x] Extended the integrated **atomic progress pattern to every job view**. SSD Backup shows Prepare, Transfer, and Finalize; Hyper Backup shows Connect, Transfer, and Confirm; Cloud Backup shows Check, Transfer, and Finalize; regular Media Import shows Scan, Upload, and Finish. Each uses the same inline progress bar and feature-specific live metrics without a card inside the existing job card.
@@ -57,6 +57,7 @@ Versioning scheme:
 - [x] Made the deployment host-observation window adaptive: it now early-exits once the container is stably healthy (a minimum floor plus consecutive clean samples) instead of always waiting the full fixed window, so healthy deploys promote in seconds while immediate failure detection is unchanged.
 
 ### Fixed
+- [x] Fixed a running Media Import briefly falling back to **“Waiting for the first progress update”** whenever the page refreshed its active-run list. Rediscovery now updates run metadata without discarding hydrated progress. Online Takeout status also names both the current archive and phase, making the intentional Download → Import → Cleanup cycle visibly restart for each archive instead of looking like the overall job moved backwards.
 - [x] Fixed an active Media Import card **forgetting its progress after navigating away and back**. A dedicated active-runs endpoint restores every running import independently of the selected 10-row history page, then resumes live polling, matching SSD, Hyper, and Cloud Backup behavior.
 - [x] Fixed live SSD and Hyper Backup progress showing **0 checked / 0 transferred / 0 B** while rsync was already transferring. RedMan enabled rsync's human-readable output but only parsed raw numeric byte counts; progress lines such as `1.23G 42% ... (xfr#430, to-chk=11570/12000)` are now parsed into live bytes, percentage, and file counts.
 - [x] Fixed guarded deployment treating **unrelated HDD-array D-state as proof that RedMan's SSD is unsafe**. Global D-state remains visible as a warning, but the deploy gate now performs bounded create, fsync, and cleanup probes on RedMan's persistent data path and Docker storage themselves. Active Time Machine I/O on the HDD array can no longer block an otherwise healthy SSD-contained rollout, while slow or unresponsive target filesystems still fail closed.

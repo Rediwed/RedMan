@@ -130,7 +130,7 @@ Auto-detect USB/SD card drives and import to Immich.
 - Optional verified cleanup: only files with per-run Immich success/duplicate evidence and unchanged size, mtime, and SHA-256 are deleted; failed, unknown, changed, or unsafe files remain
 - **Drive management** — rename and configure drives; ejection is shown only when an executable `MEDIA_EJECT_HELPER` host integration is configured, without granting `CAP_SYS_ADMIN`
 - **Scan & import progress** — real-time tracking of photo/video scanning and Immich uploads
-- **Atomic online-import progress** — Scan, Download, Import, and Cleanup are shown as one integrated stepper with overall archive progress and live counts for scanned, uploaded, already-present, and failed assets
+- **Atomic online-import progress** — Scan, Download, Import, and Cleanup repeat for each archive in one integrated stepper; the status names the current archive and phase while the progress bar covers the complete Takeout. Live counts show scanned, uploaded, already-present, and failed assets
 - **Unified job progress** — SSD Backup, Hyper Backup, Cloud Backup, and regular Media Import use the same inline stepper, real progress bar, elapsed time, cancellation, and feature-specific live metrics without nesting another card inside each job
 - **Immich auto-discovery** — scans LAN for Immich instances, auto-fills server URL in settings
 - **Immich connection testing** — verify API key and server connectivity before importing

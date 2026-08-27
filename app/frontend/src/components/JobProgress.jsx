@@ -209,13 +209,22 @@ function MediaImportProgress({ progress, onCancel, elapsed }) {
   const overallPercent = archivesTotal > 0
     ? Math.min(100, Math.round((archivesCompleted + currentFraction) / archivesTotal * 100))
     : 0;
+  const phaseLabel = {
+    listing: 'Finding archives',
+    'checking-space': 'Checking space',
+    downloading: 'Downloading',
+    importing: 'Importing',
+    cleanup: 'Cleaning up',
+  }[progress.phase] || 'Processing';
 
   return (
     <div className="job-progress media-step-progress">
       <div className="job-progress-header">
         <span className="job-progress-status">
           <Loader2 size={14} className="spin" />
-          {archivesTotal > 0 ? `Archive ${Math.min(archivesCompleted + 1, archivesTotal)} of ${archivesTotal}` : 'Finding archives'}
+          {archivesTotal > 0
+            ? `Archive ${Math.min(archivesCompleted + 1, archivesTotal)} of ${archivesTotal} · ${phaseLabel}`
+            : phaseLabel}
         </span>
         {progress.startedAt && <span className="job-progress-elapsed">{formatElapsed(elapsed)}</span>}
         {onCancel && (
@@ -225,7 +234,7 @@ function MediaImportProgress({ progress, onCancel, elapsed }) {
         )}
       </div>
 
-      <ProgressSteps steps={MEDIA_STEPS} activeIndex={phaseStep} label="Import stages" />
+      <ProgressSteps steps={MEDIA_STEPS} activeIndex={phaseStep} label="Current archive stages" />
 
       <div className="job-progress-bar-row">
         <div className="job-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={overallPercent}>

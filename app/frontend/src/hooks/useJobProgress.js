@@ -25,15 +25,15 @@ export default function useJobProgress(fetchRunProgress, onCompleted) {
 
   // Detect already-running jobs from initial page load data
   const detectRunning = useCallback((runs) => {
-    const running = {};
-    for (const run of runs) {
-      if (run.status === 'running') {
-        running[String(run.id)] = { configId: run.config_id, status: 'running' };
+    setActiveRuns(prev => {
+      const next = { ...prev };
+      for (const run of runs) {
+        if (run.status !== 'running') continue;
+        const runId = String(run.id);
+        next[runId] = { ...next[runId], configId: run.config_id, status: 'running' };
       }
-    }
-    if (Object.keys(running).length > 0) {
-      setActiveRuns(prev => ({ ...prev, ...running }));
-    }
+      return next;
+    });
   }, []);
 
   // Only re-create the polling interval when the SET of tracked IDs changes

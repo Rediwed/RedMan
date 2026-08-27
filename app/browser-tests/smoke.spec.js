@@ -44,6 +44,7 @@ test('mobile navigation exposes and follows feature links', async ({ page }, tes
 
 test('media import restores running cards after navigation without duplicate polling', async ({ page }) => {
   const progressRequests = new Map();
+  let activeRunRequests = 0;
   await page.route('**/api/media-import/sources', route => route.fulfill({
     json: [
       {
@@ -79,12 +80,15 @@ test('media import restores running cards after navigation without duplicate pol
       pages: 2,
     },
   }));
-  await page.route('**/api/media-import/runs/active', route => route.fulfill({
-    json: [
-      { id: 4246, config_id: 4, status: 'running', drive_name: 'Google Photos takeout' },
-      { id: 4247, config_id: 5, status: 'running', drive_name: 'Camera staging' },
-    ],
-  }));
+  await page.route('**/api/media-import/runs/active', route => {
+    activeRunRequests++;
+    return route.fulfill({
+      json: [
+        { id: 4246, config_id: 4, status: 'running', drive_name: 'Google Photos takeout' },
+        { id: 4247, config_id: 5, status: 'running', drive_name: 'Camera staging' },
+      ],
+    });
+  });
   await page.route(/\/api\/media-import\/runs\/(4246|4247)\/progress$/, async route => {
     const runId = Number(route.request().url().match(/runs\/(\d+)\/progress$/)[1]);
     progressRequests.set(runId, (progressRequests.get(runId) || 0) + 1);
@@ -107,13 +111,19 @@ test('media import restores running cards after navigation without duplicate pol
 
   await page.goto('/media-import');
   await expect(page.getByText('Starting job', { exact: true })).toHaveCount(2);
-  await expect(page.getByText('Archive 19 of 57', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(page.getByText('Archive 19 of 57 · Importing', { exact: true })).toBeVisible({ timeout: 4_000 });
   await expect(page.getByText('Uploading', { exact: true })).toBeVisible({ timeout: 4_000 });
+
+  const requestsBeforeReconnect = activeRunRequests;
+  await page.evaluate(() => window.dispatchEvent(new Event('redman:reconnected')));
+  await expect.poll(() => activeRunRequests).toBeGreaterThan(requestsBeforeReconnect);
+  await page.waitForTimeout(100);
+  await expect(page.getByText('Starting job', { exact: true })).toHaveCount(0);
 
   await page.goto('/status');
   await page.goto('/media-import');
   await expect(page.getByText('Starting job', { exact: true })).toHaveCount(2);
-  await expect(page.getByText('Archive 19 of 57', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await expect(page.getByText('Archive 19 of 57 · Importing', { exact: true })).toBeVisible({ timeout: 4_000 });
   await expect(page.getByText('Uploading', { exact: true })).toBeVisible({ timeout: 4_000 });
   expect(progressRequests.get(4246)).toBe(2);
   expect(progressRequests.get(4247)).toBe(2);
