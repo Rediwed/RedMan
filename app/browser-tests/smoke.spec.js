@@ -249,3 +249,51 @@ test('online media import confirms cancellation and partial cleanup', async ({ p
   await expect.poll(() => cancelRequest).toEqual({ delete_partial: true });
   await expect(page.getByText('Import cancelled. The partial download was removed.', { exact: true })).toBeVisible();
 });
+
+test('adding an online media source waits for an explicit import choice', async ({ page }) => {
+  let sources = [];
+  let importRequests = 0;
+  await page.route('**/api/media-import/drives', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/drives/known', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/runs?page=1', route => route.fulfill({
+    json: { runs: [], total: 0, page: 1, pages: 1 },
+  }));
+  await page.route('**/api/media-import/status', route => route.fulfill({
+    json: { immichGoAvailable: true, ejectSupported: false },
+  }));
+  await page.route('**/api/media-import/runs/active', route => route.fulfill({ json: [] }));
+  await page.route('**/api/rclone/remotes', route => route.fulfill({ json: ['gdrive'] }));
+  await page.route('**/api/media-import/online-discover/gdrive', route => route.fulfill({
+    json: { path: 'Takeout', archiveCount: 57 },
+  }));
+  await page.route('**/api/media-import/sources', route => route.fulfill({ json: sources }));
+  await page.route('**/api/media-import/online-sources', async route => {
+    const payload = route.request().postDataJSON();
+    sources = [{
+      id: 12,
+      ...payload,
+      mount_path: '/app/backend/data/media-import-staging/test',
+      import_mode: 'google-photos',
+      available: true,
+    }];
+    await route.fulfill({ json: sources[0] });
+  });
+  await page.route('**/api/media-import/drives/12/import', route => {
+    importRequests++;
+    return route.fulfill({ json: { runId: 12001, status: 'running' } });
+  });
+
+  await page.goto('/media-import');
+  await page.getByRole('button', { name: 'Add Source' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add import source' });
+  await dialog.getByLabel('Source').selectOption('online');
+  await dialog.getByLabel('Google Drive connection').selectOption('gdrive');
+  await expect(dialog.getByRole('button', { name: 'Add Source' })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Add Source' }).click();
+
+  await expect(page.getByText('Import source “Google Photos takeout” added.', { exact: true })).toBeVisible();
+  expect(importRequests).toBe(0);
+  const sourceCard = page.locator('.drive-card').filter({ hasText: 'Google Photos takeout' });
+  await expect(sourceCard.getByRole('button', { name: 'Import Now' })).toBeEnabled();
+  await expect(sourceCard.getByRole('button', { name: 'Dry Run' })).toBeEnabled();
+});

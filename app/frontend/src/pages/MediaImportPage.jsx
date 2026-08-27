@@ -219,16 +219,11 @@ export default function MediaImportPage() {
   }
 
   async function handleCreateSource(payload) {
-    const source = payload.source_kind === 'online'
+    payload.source_kind === 'online'
       ? await createOnlineMediaImportSource(payload)
       : await createMediaImportSource(payload);
     setSourceDialogOpen(false);
     setActionResult({ type: 'success', message: `Import source “${payload.name}” added.` });
-    if (payload.source_kind === 'online') {
-      const result = await startDriveImport(source.id);
-      trackRun(result.runId, source.id);
-      setActionResult({ type: 'success', message: `Online import “${payload.name}” started.` });
-    }
     refresh();
   }
 
