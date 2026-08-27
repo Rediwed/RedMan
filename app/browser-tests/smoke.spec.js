@@ -128,3 +128,56 @@ test('media import restores running cards after navigation without duplicate pol
   expect(progressRequests.get(4246)).toBe(2);
   expect(progressRequests.get(4247)).toBe(2);
 });
+
+test('media import can start a labelled dry run and cancel it', async ({ page }) => {
+  let importRequest = null;
+  let cancelled = false;
+  await page.route('**/api/media-import/drives', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/drives/known', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/runs?page=1', route => route.fulfill({
+    json: { runs: [], total: 0, page: 1, pages: 1 },
+  }));
+  await page.route('**/api/media-import/status', route => route.fulfill({
+    json: { immichGoAvailable: true, ejectSupported: false },
+  }));
+  await page.route('**/api/media-import/sources', route => route.fulfill({
+    json: [{
+      id: 8,
+      name: 'Camera staging',
+      mount_path: '/storage/camera',
+      source_kind: 'folder',
+      import_mode: 'folder',
+      available: true,
+    }],
+  }));
+  await page.route('**/api/media-import/runs/active', route => route.fulfill({ json: [] }));
+  await page.route('**/api/media-import/drives/8/import', async route => {
+    importRequest = route.request().postDataJSON();
+    await route.fulfill({ json: { runId: 8801, status: 'running', dryRun: true } });
+  });
+  await page.route('**/api/media-import/runs/8801/progress', route => route.fulfill({
+    json: cancelled
+      ? { runId: 8801, driveId: 8, status: 'cancelled', dryRun: true }
+      : {
+          runId: 8801, driveId: 8, status: 'running', dryRun: true,
+          assetsFound: 20, scanned: 8, uploaded: 6, duplicates: 2, errors: 0,
+          percent: 40, startedAt: Date.now() - 5_000,
+        },
+  }));
+  await page.route('**/api/media-import/runs/8801/cancel', async route => {
+    cancelled = true;
+    await route.fulfill({ json: { status: 'cancelled' } });
+  });
+
+  await page.goto('/media-import');
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.getByRole('button', { name: 'Dry Run' }).click();
+  await expect(page.getByRole('dialog', { name: 'Run import simulation' })).toBeVisible();
+  await page.getByRole('button', { name: 'Start dry run' }).click();
+  expect(importRequest).toEqual({ dry_run: true });
+  await expect(page.getByText('Would upload', { exact: true })).toBeVisible({ timeout: 4_000 });
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect.poll(() => cancelled).toBe(true);
+  await expect(page.getByText('Import cancellation requested.', { exact: true })).toBeVisible();
+});

@@ -25,7 +25,7 @@ export default function JobProgress({ progress, feature, onCancel }) {
   if (!progress) return null;
 
   if (progress.status === 'running' && !progress.startedAt) {
-    return <StartingJobProgress onCancel={onCancel} />;
+    return <StartingJobProgress onCancel={onCancel} dryRun={progress.dryRun} />;
   }
 
   if (feature === 'media-import' && progress.archivesTotal != null) {
@@ -76,13 +76,13 @@ export default function JobProgress({ progress, feature, onCancel }) {
   );
 }
 
-function StartingJobProgress({ onCancel }) {
+function StartingJobProgress({ onCancel, dryRun = false }) {
   return (
     <div className="job-progress starting-job-progress">
       <div className="job-progress-header">
         <span className="job-progress-status">
           <Loader2 size={14} className="spin" />
-          Starting job
+          {dryRun ? 'Starting dry run' : 'Starting job'}
         </span>
         {onCancel && (
           <button type="button" className="btn btn-ghost btn-sm job-progress-cancel" onClick={onCancel} title="Cancel">
@@ -159,7 +159,7 @@ function getAtomicJobView(progress, feature) {
   return {
     steps: config.steps,
     activeIndex,
-    label: progress.stage || config.labels[status] || 'Running',
+    label: `${progress.dryRun ? 'Dry run · ' : ''}${progress.status === 'cancelling' ? 'Cancelling' : progress.stage || config.labels[status] || 'Running'}`,
     percent,
     metrics: getJobMetrics(progress, feature, processed),
   };
@@ -174,7 +174,7 @@ function getJobMetrics(progress, feature, processed) {
   ];
   if (feature === 'media-import') return [
     { value: processed, label: 'Scanned' },
-    { value: progress.uploaded || 0, label: 'Uploaded' },
+    { value: progress.uploaded || 0, label: progress.dryRun ? 'Would upload' : 'Uploaded' },
     { value: progress.duplicates || 0, label: 'Already there' },
     { value: progress.errors || 0, label: 'Errors', danger: progress.errors > 0 },
   ];
@@ -209,20 +209,20 @@ function MediaImportProgress({ progress, onCancel, elapsed }) {
   const overallPercent = archivesTotal > 0
     ? Math.min(100, Math.round((archivesCompleted + currentFraction) / archivesTotal * 100))
     : 0;
-  const phaseLabel = {
+  const phaseLabel = progress.status === 'cancelling' ? 'Cancelling' : ({
     listing: 'Finding archives',
     'checking-space': 'Checking space',
     downloading: 'Downloading',
     importing: 'Importing',
     cleanup: 'Cleaning up',
-  }[progress.phase] || 'Processing';
+  }[progress.phase] || 'Processing');
 
   return (
     <div className="job-progress media-step-progress">
       <div className="job-progress-header">
         <span className="job-progress-status">
           <Loader2 size={14} className="spin" />
-          {archivesTotal > 0
+          {progress.dryRun ? 'Dry run · ' : ''}{archivesTotal > 0
             ? `Archive ${Math.min(archivesCompleted + 1, archivesTotal)} of ${archivesTotal} · ${phaseLabel}`
             : phaseLabel}
         </span>
@@ -245,7 +245,7 @@ function MediaImportProgress({ progress, onCancel, elapsed }) {
 
       <div className="media-progress-metrics">
         <Metric value={scanned} label="Scanned" />
-        <Metric value={progress.uploaded || 0} label="Uploaded" />
+        <Metric value={progress.uploaded || 0} label={progress.dryRun ? 'Would upload' : 'Uploaded'} />
         <Metric value={progress.duplicates || 0} label="Already there" />
         <Metric value={progress.errors || 0} label="Errors" danger={progress.errors > 0} />
       </div>

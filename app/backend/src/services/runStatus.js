@@ -1,5 +1,6 @@
 export function isCancelledRun(currentStatus, exitCode) {
   return currentStatus === 'cancelled'
+    || currentStatus === 'cancelling'
     || exitCode === null
     || exitCode === 143
     || exitCode === -15;

@@ -27,9 +27,20 @@ class FakeChild extends EventEmitter {
 const graceful = new FakeChild(true);
 const forced = new FakeChild(false);
 const result = await terminateChildProcesses([graceful, forced], 10);
-assert.deepEqual(result, { terminated: 2, forced: 1 });
+assert.deepEqual(result, { terminated: 2, forced: 1, remaining: 0 });
 assert.deepEqual(graceful.signals, ['SIGTERM']);
 assert.deepEqual(forced.signals, ['SIGTERM', 'SIGKILL']);
-assert.deepEqual(await terminateChildProcesses([], 10), { terminated: 0, forced: 0 });
+assert.deepEqual(await terminateChildProcesses([], 10), { terminated: 0, forced: 0, remaining: 0 });
 
-console.log('Bounded child process shutdown: 4 cases passed');
+const stubborn = new FakeChild(false);
+stubborn.kill = function kill(signal) {
+  this.signals.push(signal);
+  return true;
+};
+assert.deepEqual(
+  await terminateChildProcesses([stubborn], 5, 5),
+  { terminated: 0, forced: 1, remaining: 1 },
+);
+assert.deepEqual(stubborn.signals, ['SIGTERM', 'SIGKILL']);
+
+console.log('Bounded child process shutdown: 6 cases passed');

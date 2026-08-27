@@ -366,7 +366,7 @@ export function assessUpgradeReadiness(database, options = {}) {
   ));
 
   const activeRuns = tableExists(database, 'backup_runs')
-    ? count(database, "SELECT COUNT(*) AS count FROM backup_runs WHERE status = 'running'")
+    ? count(database, "SELECT COUNT(*) AS count FROM backup_runs WHERE status IN ('running', 'cancelling')")
     : 0;
   checks.push(check(
     'active-runs',
@@ -542,7 +542,7 @@ function writeJsonAtomic(filePath, value) {
 export async function createUpgradeBackup(database, options = {}) {
   const dataDir = resolve(options.dataDir || dirname(database.name));
   const activeRuns = tableExists(database, 'backup_runs')
-    ? count(database, "SELECT COUNT(*) AS count FROM backup_runs WHERE status = 'running'")
+    ? count(database, "SELECT COUNT(*) AS count FROM backup_runs WHERE status IN ('running', 'cancelling')")
     : 0;
   if (activeRuns > 0) {
     const error = new Error(`${activeRuns} active job(s) block the pre-upgrade backup`);

@@ -47,6 +47,13 @@ export function cancelRcloneProcess(processKey) {
   return true;
 }
 
+export async function terminateRcloneProcess(processKey, timeoutMs = 10000) {
+  const proc = activeProcesses.get(processKey);
+  if (!proc) return null;
+  const termination = await terminateChildProcesses([proc], timeoutMs);
+  return termination.remaining === 0;
+}
+
 export async function stopActiveRcloneProcesses(timeoutMs = 10000) {
   return terminateChildProcesses(activeProcesses.values(), timeoutMs);
 }

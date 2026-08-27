@@ -1,6 +1,6 @@
-export async function terminateChildProcesses(processes, timeoutMs = 10000) {
+export async function terminateChildProcesses(processes, timeoutMs = 10000, forceTimeoutMs = 1000) {
   const children = [...new Set(processes)].filter(Boolean);
-  if (children.length === 0) return { terminated: 0, forced: 0 };
+  if (children.length === 0) return { terminated: 0, forced: 0, remaining: 0 };
 
   const waits = children.map(child => new Promise(resolve => {
     if (child.exitCode !== null || child.signalCode) {
@@ -32,8 +32,9 @@ export async function terminateChildProcesses(processes, timeoutMs = 10000) {
     }
     await Promise.race([
       Promise.allSettled(waits),
-      new Promise(resolve => { setTimeout(resolve, 1000); }),
+      new Promise(resolve => { setTimeout(resolve, forceTimeoutMs); }),
     ]);
   }
-  return { terminated: children.length, forced };
+  const remaining = children.filter(child => child.exitCode === null && !child.signalCode).length;
+  return { terminated: children.length - remaining, forced, remaining };
 }

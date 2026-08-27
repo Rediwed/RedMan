@@ -20,7 +20,7 @@ export function isSupportedImmichUploadMode(mode) {
   return Object.prototype.hasOwnProperty.call(UPLOAD_MODES, mode);
 }
 
-export function buildImmichUploadInvocation({ serverUrl, apiKey, logPath, sourcePath, sourcePaths, mode = 'folder' }) {
+export function buildImmichUploadInvocation({ serverUrl, apiKey, logPath, sourcePath, sourcePaths, mode = 'folder', dryRun = false }) {
   const sources = Array.isArray(sourcePaths) && sourcePaths.length > 0
     ? sourcePaths
     : (sourcePath ? [sourcePath] : []);
@@ -39,6 +39,7 @@ export function buildImmichUploadInvocation({ serverUrl, apiKey, logPath, source
       '--log-level=INFO',
       '--no-ui',
       '--on-errors', 'continue',
+      ...(dryRun ? ['--dry-run'] : []),
       ...profile.extraArgs,
       ...sources,
     ],

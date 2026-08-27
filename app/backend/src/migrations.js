@@ -1029,6 +1029,19 @@ const migrations = [
       console.log('[migration-33] Added resumable online media imports');
     }
   },
+  {
+    version: 34,
+    description: 'Record whether a media import run is a dry run',
+    up(db) {
+      // Metadata-only in SQLite; existing runs become ordinary imports without
+      // scanning or rewriting retained run history.
+      const columns = db.prepare('PRAGMA table_info(backup_runs)').all().map(column => column.name);
+      if (!columns.includes('dry_run')) {
+        db.exec('ALTER TABLE backup_runs ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0 CHECK(dry_run IN (0, 1))');
+      }
+      console.log('[migration-34] Added media import dry-run tracking');
+    }
+  },
 ];
 
 // Derived rather than declared: a copy of this number kept somewhere else only

@@ -19,8 +19,11 @@ export default function useJobProgress(fetchRunProgress, onCompleted) {
   useEffect(() => { onCompletedRef.current = onCompleted; }, [onCompleted]);
 
   // Track a newly-triggered run
-  const trackRun = useCallback((runId, configId) => {
-    setActiveRuns(prev => ({ ...prev, [String(runId)]: { configId, status: 'running' } }));
+  const trackRun = useCallback((runId, configId, initialProgress = {}) => {
+    setActiveRuns(prev => ({
+      ...prev,
+      [String(runId)]: { ...initialProgress, configId, status: 'running' },
+    }));
   }, []);
 
   // Detect already-running jobs from initial page load data
@@ -28,9 +31,14 @@ export default function useJobProgress(fetchRunProgress, onCompleted) {
     setActiveRuns(prev => {
       const next = { ...prev };
       for (const run of runs) {
-        if (run.status !== 'running') continue;
+        if (!['running', 'cancelling'].includes(run.status)) continue;
         const runId = String(run.id);
-        next[runId] = { ...next[runId], configId: run.config_id, status: 'running' };
+        next[runId] = {
+          ...next[runId],
+          configId: run.config_id,
+          status: run.status,
+          ...(run.dry_run !== undefined ? { dryRun: !!run.dry_run } : {}),
+        };
       }
       return next;
     });

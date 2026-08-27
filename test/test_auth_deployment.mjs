@@ -54,7 +54,7 @@ assert.match(deploy, /read_existing_env REDMAN_PUBLIC_ORIGIN/);
 assert.match(deploy, /read_existing_env TRUSTED_PROXIES/);
 assert.match(deploy, /Cannot verify container state/);
 assert.match(deploy, /Cannot query active jobs inside the container/);
-assert.match(deploy, /SELECT COUNT\(\*\) AS count FROM backup_runs WHERE status = 'running'/);
+assert.match(deploy, /SELECT COUNT\(\*\) AS count FROM backup_runs WHERE status IN \('running', 'cancelling'\)/);
 assert.doesNotMatch(deploy, /Health response has no runningJobs count/);
 assert.doesNotMatch(deploy, /-e PROXY_AUTO_PROVISION_ROLE=admin/);
 assert.match(deploy, /--exclude='app\/backend\/data\/'/);

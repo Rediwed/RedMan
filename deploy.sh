@@ -380,7 +380,7 @@ check_activity() {
     "${docker_prefix} docker exec $CONTAINER node --input-type=module -e \"
       import Database from 'better-sqlite3';
       const db = new Database('/app/backend/data/redman.db', { readonly: true });
-      const row = db.prepare(\\\"SELECT COUNT(*) AS count FROM backup_runs WHERE status = 'running'\\\").get();
+      const row = db.prepare(\\\"SELECT COUNT(*) AS count FROM backup_runs WHERE status IN ('running', 'cancelling')\\\").get();
       process.stdout.write(String(row.count));
       db.close();
     \"" 2>/dev/null); then
@@ -406,7 +406,7 @@ check_activity() {
     "${docker_prefix} docker exec $CONTAINER node -e \"
       const Database = (await import('better-sqlite3')).default;
       const db = new Database('/app/backend/data/redman.db', { readonly: true });
-      const runs = db.prepare(\\\"SELECT id, feature, config_id, started_at FROM backup_runs WHERE status = 'running'\\\").all();
+      const runs = db.prepare(\\\"SELECT id, feature, config_id, started_at FROM backup_runs WHERE status IN ('running', 'cancelling')\\\").all();
       runs.forEach(r => console.log('    ' + r.feature + ' run #' + r.id + ' (started ' + r.started_at + ')'));
       if (!runs.length) console.log('    (no running jobs in DB — may be in-memory only)');
       db.close();

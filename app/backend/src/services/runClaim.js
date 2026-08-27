@@ -2,7 +2,7 @@ export function claimBackupRun(db, feature, configId, peerStaticPublicKey = null
   const claim = db.transaction(() => {
     const active = db.prepare(`
       SELECT id FROM backup_runs
-      WHERE feature = ? AND config_id = ? AND status = 'running'
+      WHERE feature = ? AND config_id = ? AND status IN ('running', 'cancelling')
       ORDER BY id DESC LIMIT 1
     `).get(feature, Number(configId));
 

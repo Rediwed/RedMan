@@ -18,7 +18,6 @@ import {
 } from '../services/onlineMediaImport.js';
 import { cancelRcloneProcess, discoverRemoteTakeoutFolder } from '../services/rclone.js';
 import { notifyDriveScanStarted, notifyDriveScanCompleted, notifyJobCancelled } from '../services/notify.js';
-import { cancelFeatureRun } from '../services/runLifecycle.js';
 
 const router = Router();
 
@@ -283,10 +282,14 @@ router.get('/drives/:id/scan', (req, res) => {
 // Start import from drive into Immich
 router.post('/drives/:id/import', async (req, res) => {
   try {
+    if (req.body?.dry_run !== undefined && typeof req.body.dry_run !== 'boolean') {
+      return res.status(400).json({ error: 'dry_run must be a boolean' });
+    }
+    const options = { dryRun: req.body?.dry_run === true };
     const source = db.prepare('SELECT source_kind FROM media_drives WHERE id = ?').get(req.params.id);
     const result = source?.source_kind === 'online'
-      ? await startOnlineImport(parseInt(req.params.id))
-      : await startImport(parseInt(req.params.id));
+      ? await startOnlineImport(parseInt(req.params.id), options)
+      : await startImport(parseInt(req.params.id), options);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -301,15 +304,31 @@ router.get('/runs/:id/progress', (req, res) => {
 });
 
 // Cancel a running import
-router.post('/runs/:id/cancel', (req, res) => {
+router.post('/runs/:id/cancel', async (req, res) => {
   const runId = parseInt(req.params.id);
-  const result = cancelFeatureRun(db, {
-    feature: 'media-import', runId,
-    cancelProcess: id => cancelOnlineImport(id) || cancelImport(id),
-  });
-  if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
-  const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(result.run.config_id);
-  notifyJobCancelled('Media Import', drive?.name || drive?.label || `Drive ${result.run.config_id}`);
+  const run = db.prepare("SELECT * FROM backup_runs WHERE id = ? AND feature = 'media-import'").get(runId);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  if (run.status === 'cancelled') return res.json({ status: 'cancelled' });
+  if (run.status === 'cancelling') return res.status(202).json({ status: 'cancelling' });
+  const claim = db.prepare(`
+    UPDATE backup_runs SET status = 'cancelling'
+    WHERE id = ? AND feature = 'media-import' AND status = 'running'
+  `).run(runId);
+  if (claim.changes !== 1) return res.status(400).json({ error: 'Run is not active' });
+
+  const stopped = await cancelOnlineImport(runId) || await cancelImport(runId);
+  if (!stopped) {
+    return res.status(500).json({ error: 'Cancellation was requested, but process termination could not be confirmed' });
+  }
+
+  db.prepare(`
+    UPDATE backup_runs
+    SET status = 'cancelled', completed_at = COALESCE(completed_at, datetime('now')),
+      error_message = 'Cancelled by user'
+    WHERE id = ? AND feature = 'media-import' AND status IN ('cancelling', 'cancelled')
+  `).run(runId);
+  const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(run.config_id);
+  notifyJobCancelled('Media Import', drive?.name || drive?.label || `Drive ${run.config_id}`);
   res.json({ status: 'cancelled' });
 });
 
@@ -317,11 +336,11 @@ router.post('/runs/:id/cancel', (req, res) => {
 
 router.get('/runs/active', (req, res) => {
   const runs = db.prepare(`
-    SELECT r.id, r.config_id, r.status, r.started_at,
+    SELECT r.id, r.config_id, r.status, r.started_at, r.dry_run,
       d.name AS drive_name, d.label AS drive_label
     FROM backup_runs r
     LEFT JOIN media_drives d ON r.config_id = d.id
-    WHERE r.feature = 'media-import' AND r.status = 'running'
+    WHERE r.feature = 'media-import' AND r.status IN ('running', 'cancelling')
     ORDER BY r.started_at DESC
     LIMIT 100
   `).all();
@@ -438,7 +457,7 @@ router.get('/status', (req, res) => {
 function getActiveImportForSource(sourceId) {
   const running = db.prepare(`
     SELECT id FROM backup_runs
-    WHERE feature = 'media-import' AND config_id = ? AND status = 'running'
+    WHERE feature = 'media-import' AND config_id = ? AND status IN ('running', 'cancelling')
   `).get(sourceId);
   return running ? getActiveImport(running.id) || getActiveOnlineImport(running.id) || running : null;
 }

@@ -36,13 +36,16 @@ export function getActiveImport(runId) {
   return activeImports.get(runId);
 }
 
-export function cancelImport(runId) {
+export async function cancelImport(runId, timeoutMs = 10000) {
   const proc = activeImportProcesses.get(runId);
+  if (!activeImports.has(runId) && !proc) return null;
+  const progress = activeImports.get(runId);
+  if (progress) progress.status = 'cancelling';
   if (proc) {
-    proc.kill('SIGTERM');
-    return true;
+    const termination = await terminateChildProcesses([proc], timeoutMs);
+    if (termination.remaining > 0) return false;
   }
-  return false;
+  return true;
 }
 
 export async function stopActiveImportProcesses(timeoutMs = 10000) {
@@ -94,7 +97,7 @@ export function isImmichGoAvailable() {
 /**
  * Start importing photos from a drive into Immich.
  */
-export async function startImport(driveId) {
+export async function startImport(driveId, { dryRun = false } = {}) {
   const drive = db.prepare('SELECT * FROM media_drives WHERE id = ?').get(driveId);
   if (!drive) throw new Error(`Drive ${driveId} not found`);
 
@@ -112,7 +115,7 @@ export async function startImport(driveId) {
   // Check for existing active import on this drive (only block on running imports)
   for (const [runId, imp] of activeImports) {
     if (imp.driveId === driveId) {
-      if (imp.status === 'running') {
+      if (imp.status === 'running' || imp.status === 'cancelling') {
         throw new Error('Import already running on this drive');
       }
       // Clear stale completed/failed imports
@@ -122,8 +125,8 @@ export async function startImport(driveId) {
 
   // Create run record
   const run = db.prepare(`
-    INSERT INTO backup_runs (feature, config_id, status) VALUES ('media-import', ?, 'running')
-  `).run(driveId);
+    INSERT INTO backup_runs (feature, config_id, status, dry_run) VALUES ('media-import', ?, 'running', ?)
+  `).run(driveId, dryRun ? 1 : 0);
   const runId = Number(run.lastInsertRowid);
 
   const startTime = Date.now();
@@ -137,6 +140,7 @@ export async function startImport(driveId) {
     errors: 0,
     currentFile: null,
     percent: 0,
+    dryRun,
     startedAt: startTime,
   };
   activeImports.set(runId, progress);
@@ -145,15 +149,15 @@ export async function startImport(driveId) {
   });
 
   // Run import async
-  notifications.start(() => notifyImportStarted(drive.name || drive.label));
-  runImport(drive, runId, serverUrl, apiKey, startTime, progress, notifications).catch(err => {
+  if (!dryRun) notifications.start(() => notifyImportStarted(drive.name || drive.label));
+  runImport(drive, runId, serverUrl, apiKey, startTime, progress, notifications, dryRun).catch(err => {
     console.error(`[immich-import] Import failed for drive ${driveId}:`, err.message);
   });
 
-  return { runId, status: 'running' };
+  return { runId, status: 'running', dryRun };
 }
 
-async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, notifications) {
+async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, notifications, dryRun) {
   try {
     const importLogDir = join(dirname(db.name), 'import-logs');
     mkdirSync(importLogDir, { recursive: true });
@@ -166,15 +170,16 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
       logPath: primaryLogPath,
       sourcePaths: resolveImportSourcePaths(drive),
       mode: drive.import_mode || 'folder',
+      dryRun,
     });
 
     const result = await spawnImmichGo(primaryInvocation.args, runId, progress, primaryInvocation.env, update => {
-      notifications.progress({ ...update, filesCopied: update.uploaded });
+      if (!dryRun) notifications.progress({ ...update, filesCopied: update.uploaded });
     });
 
     // Retry failed files once — parse log for failed paths, symlink them into a temp dir
     const statusAfterInitialRun = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
-    if (resolveMediaImportStatus(statusAfterInitialRun, result.exitCode, progress) !== 'cancelled'
+    if (!dryRun && resolveMediaImportStatus(statusAfterInitialRun, result.exitCode, progress) !== 'cancelled'
       && result.exitCode !== 0 && progress.errors > 0 && progress.uploaded > 0
       // A failure inside a takeout archive has no file on disk to link to.
       && (drive.import_mode || 'folder') === 'folder') {
@@ -199,6 +204,9 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
           });
           const retryProgress = { errors: 0, uploaded: 0, assetsFound: 0, duplicates: 0, percent: 0 };
           logPaths.push(retryLogPath);
+          if (db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status === 'cancelled') {
+            throw new Error('Cancelled by user');
+          }
           const retryResult = await spawnImmichGo(retryInvocation.args, runId, retryProgress, retryInvocation.env, update => {
             notifications.progress({ ...progress, uploaded: progress.uploaded + update.uploaded, filesCopied: progress.uploaded + update.uploaded });
           });
@@ -244,7 +252,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     persistMediaImportLedger(db, runId, ledgerEntries);
 
     // Update drive last_import_at
-    if (status === 'completed' || status === 'partial') {
+    if (!dryRun && (status === 'completed' || status === 'partial')) {
       db.prepare(`
         UPDATE media_drives SET last_import_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ?
@@ -259,7 +267,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     }
 
     // Send notification
-    if (status === 'completed' || status === 'partial') {
+    if (!dryRun && (status === 'completed' || status === 'partial')) {
       notifyImportCompleted(drive.name || drive.label, {
         uploaded: progress.uploaded, duplicates: progress.duplicates,
         errors: progress.errors, duration,
@@ -268,7 +276,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
       notifyImportError(drive.name || drive.label, failureSummary);
     }
 
-    if ((status === 'completed' || status === 'partial') && drive.delete_after_import
+    if (!dryRun && (status === 'completed' || status === 'partial') && drive.delete_after_import
       && supportsDriveSideEffects(drive)) {
       const deletion = await deleteVerifiedMediaSources(db, runId, drive.mount_path);
       await sendNotification(
@@ -278,7 +286,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
     }
 
     // Handle eject-after-import
-    if ((status === 'completed' || status === 'partial') && drive.eject_after_import
+    if (!dryRun && (status === 'completed' || status === 'partial') && drive.eject_after_import
       && supportsDriveSideEffects(drive)) {
       console.log(`[immich-import] Ejecting drive ${drive.mount_path}`);
       const ejected = ejectDrive(drive.mount_path);
@@ -296,7 +304,7 @@ async function runImport(drive, runId, serverUrl, apiKey, startTime, progress, n
   } catch (err) {
     const duration = (Date.now() - startTime) / 1000;
     const persistedStatus = db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status;
-    if (persistedStatus === 'cancelled') {
+    if (persistedStatus === 'cancelled' || persistedStatus === 'cancelling') {
       progress.status = 'cancelled';
       return { runId, status: 'cancelled' };
     }
@@ -431,7 +439,7 @@ export function watchImmichLogProgress(logPath, progress, onProgress) {
   };
 }
 
-export async function uploadTakeoutArchive({ archivePath, runId, progress, logPath, onProgress }) {
+export async function uploadTakeoutArchive({ archivePath, runId, progress, logPath, onProgress, dryRun = false }) {
   const serverUrl = getSetting('immich_server_url');
   const apiKey = getSetting('immich_api_key');
   if (!serverUrl || !apiKey) throw new Error('Immich server URL and API key must be configured in Settings');
@@ -441,6 +449,7 @@ export async function uploadTakeoutArchive({ archivePath, runId, progress, logPa
     logPath,
     sourcePath: archivePath,
     mode: 'google-photos',
+    dryRun,
   });
   progress.trackLogOutcomes = true;
   const stopWatching = watchImmichLogProgress(logPath, progress, onProgress);

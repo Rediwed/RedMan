@@ -5,11 +5,12 @@ import db from '../db.js';
 import { isWithinPrefix, normalizePath } from '../middleware/validation.js';
 import { storageConfig } from './storageConfig.js';
 import { ensureDirectoryWithinPrefix, resolveExistingPathWithinPrefix } from './pathConfinement.js';
-import { cancelRcloneProcess, downloadRemoteFile, listRemoteTakeoutArchives } from './rclone.js';
+import { downloadRemoteFile, listRemoteTakeoutArchives, terminateRcloneProcess } from './rclone.js';
 import { cancelImport, uploadTakeoutArchive } from './immichImport.js';
 import { summarizeImmichGoFailure } from './immichFailureSummary.js';
 
 const activeOnlineImports = new Map();
+const cancelledOnlineImports = new Set();
 const MIN_FREE_RESERVE_BYTES = 512 * 1024 * 1024;
 
 function resolveStagingRoot(path, databasePath = db.name) {
@@ -89,14 +90,21 @@ export function getActiveOnlineImport(runId) {
   return activeOnlineImports.get(runId);
 }
 
-export function cancelOnlineImport(runId) {
-  return cancelRcloneProcess(`media-online:${runId}`) || cancelImport(runId);
+export async function cancelOnlineImport(runId, timeoutMs = 10000) {
+  if (!activeOnlineImports.has(runId)) return false;
+  cancelledOnlineImports.add(runId);
+  activeOnlineImports.get(runId).status = 'cancelling';
+  const terminations = await Promise.all([
+    terminateRcloneProcess(`media-online:${runId}`, timeoutMs),
+    cancelImport(runId, timeoutMs),
+  ]);
+  return !terminations.includes(false);
 }
 
-function localArchivePaths(source, remoteArchive) {
+function localArchivePaths(source, remoteArchive, namePrefix = '') {
   const fingerprint = createHash('sha256').update(remoteArchive.path).digest('hex').slice(0, 12);
   const safeName = basename(remoteArchive.path).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const finalPath = join(source.mount_path, `${fingerprint}-${safeName}`);
+  const finalPath = join(source.mount_path, `${namePrefix}${fingerprint}-${safeName}`);
   return { finalPath, partialPath: `${finalPath}.partial` };
 }
 
@@ -116,37 +124,47 @@ function assertEnoughSpace(stagingPath, archiveSize) {
 }
 
 function isCancelled(runId) {
-  return db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status === 'cancelled';
+  return cancelledOnlineImports.has(runId)
+    || ['cancelling', 'cancelled'].includes(
+      db.prepare('SELECT status FROM backup_runs WHERE id = ?').get(runId)?.status,
+    );
 }
 
-export async function startOnlineImport(sourceId) {
+export async function startOnlineImport(sourceId, { dryRun = false } = {}) {
   const source = db.prepare("SELECT * FROM media_drives WHERE id = ? AND source_kind = 'online'").get(sourceId);
   if (!source) throw new Error('Online import source not found');
-  if ([...activeOnlineImports.values()].some(item => item.sourceId === source.id && item.status === 'running')) {
+  if ([...activeOnlineImports.values()].some(item => (
+    item.sourceId === source.id && ['running', 'cancelling'].includes(item.status)
+  ))) {
     throw new Error('An import is already running for this online source');
   }
   source.mount_path = revalidateStagingPath(source.mount_path);
 
-  const result = db.prepare("INSERT INTO backup_runs (feature, config_id, status) VALUES ('media-import', ?, 'running')").run(source.id);
+  const result = db.prepare("INSERT INTO backup_runs (feature, config_id, status, dry_run) VALUES ('media-import', ?, 'running', ?)")
+    .run(source.id, dryRun ? 1 : 0);
   const runId = Number(result.lastInsertRowid);
   const progress = {
     runId, sourceId: source.id, driveId: source.id, status: 'running', phase: 'listing',
     archivesTotal: 0, archivesCompleted: 0, currentArchive: null, percent: 0,
     assetsFound: 0, scanned: 0, uploaded: 0, duplicates: 0, errors: 0, bytesTransferred: 0,
+    dryRun,
     startedAt: Date.now(),
   };
   activeOnlineImports.set(runId, progress);
   runOnlineImport(source, runId, progress).catch(error => {
     console.error(`[online-media-import] Run ${runId} failed: ${error.message}`);
   });
-  return { runId, status: 'running' };
+  return { runId, status: 'running', dryRun };
 }
 
 async function runOnlineImport(source, runId, progress) {
   const startedAt = Date.now();
   const completedAssets = { scanned: 0, found: 0, uploaded: 0, duplicates: 0, errors: 0 };
+  const dryRunArtifacts = new Set();
   try {
-    const archives = await listRemoteTakeoutArchives(source.remote_name, source.remote_path);
+    const archives = await listRemoteTakeoutArchives(source.remote_name, source.remote_path, {
+      processKey: `media-online:${runId}`,
+    });
     if (archives.length === 0) throw new Error('No .zip, .tgz, or .tar.gz Takeout archives were found in this Google Drive folder');
     const completed = new Set(db.prepare(`
       SELECT remote_path || char(0) || remote_size || char(0) || remote_modtime AS archive_key
@@ -161,9 +179,14 @@ async function runOnlineImport(source, runId, progress) {
       source.mount_path = revalidateStagingPath(source.mount_path);
       progress.currentArchive = archive.path;
       progress.phase = 'checking-space';
-      const { finalPath, partialPath } = localArchivePaths(source, archive);
+      const { finalPath, partialPath } = localArchivePaths(
+        source,
+        archive,
+        progress.dryRun ? `dry-run-${runId}-` : '',
+      );
       let reusable = false;
-      if (existsSync(finalPath)) {
+      let downloadedForDryRun = false;
+      if (!progress.dryRun && existsSync(finalPath)) {
         try {
           assertStagedArchiveSafe(finalPath, source.mount_path, archive.size);
           reusable = true;
@@ -183,6 +206,7 @@ async function runOnlineImport(source, runId, progress) {
         progress.freeBytes = space.available;
         progress.requiredBytes = space.required;
         progress.phase = 'downloading';
+        if (progress.dryRun) dryRunArtifacts.add(partialPath);
         await downloadRemoteFile(source.remote_name, `${source.remote_path}/${archive.path}`, partialPath, archive.size, `media-online:${runId}`, update => {
           progress.archivePercent = update.percent;
           progress.bytesTransferred = update.bytesTransferred;
@@ -195,6 +219,11 @@ async function runOnlineImport(source, runId, progress) {
           throw error;
         }
         renameSync(partialPath, finalPath);
+        if (progress.dryRun) {
+          dryRunArtifacts.delete(partialPath);
+          dryRunArtifacts.add(finalPath);
+          downloadedForDryRun = true;
+        }
       }
 
       if (isCancelled(runId)) throw new Error('Cancelled by user');
@@ -206,7 +235,7 @@ async function runOnlineImport(source, runId, progress) {
       const logPath = join(dirname(db.name), 'import-logs', `run-${runId}-archive-${progress.archivesCompleted + 1}.log`);
       mkdirSync(dirname(logPath), { recursive: true });
       const upload = await uploadTakeoutArchive({
-        archivePath: finalPath, runId, progress: archiveProgress, logPath,
+        archivePath: finalPath, runId, progress: archiveProgress, logPath, dryRun: progress.dryRun,
         onProgress(update) {
           progress.archivePercent = update.percent;
           progress.assetsFound = completedAssets.found + update.assetsFound;
@@ -220,17 +249,22 @@ async function runOnlineImport(source, runId, progress) {
         throw new Error(summarizeImmichGoFailure(upload.errorOutput) || `Immich could not completely import ${archive.path}`);
       }
 
-      db.prepare(`
-        INSERT OR IGNORE INTO media_online_import_archives
-          (source_id, remote_path, remote_size, remote_modtime, status)
-        VALUES (?, ?, ?, ?, 'completed')
-      `).run(source.id, archive.path, archive.size, archive.modTime);
+      if (!progress.dryRun) {
+        db.prepare(`
+          INSERT OR IGNORE INTO media_online_import_archives
+            (source_id, remote_path, remote_size, remote_modtime, status)
+          VALUES (?, ?, ?, ?, 'completed')
+        `).run(source.id, archive.path, archive.size, archive.modTime);
+      }
       db.prepare('INSERT INTO backup_run_files (run_id, file_path, action, size) VALUES (?, ?, ?, ?)')
-        .run(runId, archive.path, 'imported', archive.size);
+        .run(runId, archive.path, progress.dryRun ? 'dry-run' : 'imported', archive.size);
       source.mount_path = revalidateStagingPath(source.mount_path);
       assertStagedArchiveSafe(finalPath, source.mount_path, archive.size);
       progress.phase = 'cleanup';
-      unlinkSync(finalPath);
+      if (!progress.dryRun || downloadedForDryRun) {
+        unlinkSync(finalPath);
+        dryRunArtifacts.delete(finalPath);
+      }
       completedAssets.found += archiveProgress.assetsFound;
       completedAssets.scanned += archiveProgress.scanned;
       completedAssets.uploaded += archiveProgress.uploaded;
@@ -250,8 +284,10 @@ async function runOnlineImport(source, runId, progress) {
     db.prepare(`
       UPDATE backup_runs SET status = 'completed', completed_at = datetime('now'), files_total = ?,
         files_copied = ?, files_failed = 0, duration_seconds = ? WHERE id = ?
-    `).run(archives.length, progress.archivesCompleted, duration, runId);
-    db.prepare("UPDATE media_drives SET last_import_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(source.id);
+    `).run(archives.length, progress.dryRun ? completedAssets.uploaded : progress.archivesCompleted, duration, runId);
+    if (!progress.dryRun) {
+      db.prepare("UPDATE media_drives SET last_import_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(source.id);
+    }
     progress.status = 'completed';
     progress.phase = 'completed';
     progress.percent = 100;
@@ -262,10 +298,25 @@ async function runOnlineImport(source, runId, progress) {
       UPDATE backup_runs SET status = ?, completed_at = datetime('now'), files_total = ?, files_copied = ?,
         files_failed = ?, duration_seconds = ?, error_message = ? WHERE id = ?
     `).run(status, progress.archivesTotal, progress.archivesCompleted, cancelled ? 0 : 1,
-      (Date.now() - startedAt) / 1000, error.message, runId);
+      (Date.now() - startedAt) / 1000, cancelled ? 'Cancelled by user' : error.message, runId);
     progress.status = status;
     progress.phase = status;
   } finally {
+    for (const artifactPath of dryRunArtifacts) {
+      try {
+        source.mount_path = revalidateStagingPath(source.mount_path);
+        const artifact = lstatSync(artifactPath);
+        if (!artifact.isSymbolicLink() && artifact.isFile()
+          && isWithinPrefix(normalizePath(artifactPath), source.mount_path)) {
+          unlinkSync(artifactPath);
+        }
+      } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT') {
+          console.warn(`[online-media-import] Could not remove dry-run staging artifact: ${cleanupError.message}`);
+        }
+      }
+    }
+    cancelledOnlineImports.delete(runId);
     setTimeout(() => activeOnlineImports.delete(runId), 5 * 60 * 1000);
   }
 }

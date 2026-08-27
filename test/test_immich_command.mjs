@@ -27,7 +27,18 @@ assert.equal(invocation.args.some(argument => argument.includes(apiKey)), false)
 assert.equal(invocation.args.some(argument => argument.startsWith('--api-key')), false);
 assert.equal(invocation.env.IMMICH_GO_UPLOAD_API_KEY, apiKey);
 assert.equal(invocation.args.at(-1), '/mnt/disks/camera');
+assert.equal(invocation.args.includes('--dry-run'), false);
 assert.throws(() => buildImmichUploadInvocation({}), /requires server/);
+
+const dryRunInvocation = buildImmichUploadInvocation({
+  serverUrl: 'http://192.168.50.20:2283',
+  apiKey,
+  logPath: '/app/backend/data/import-logs/run-dry.log',
+  sourcePath: '/mnt/disks/camera',
+  dryRun: true,
+});
+assert.equal(dryRunInvocation.args.includes('--dry-run'), true);
+assert.equal(dryRunInvocation.args.some(argument => argument.includes(apiKey)), false);
 
 const logProgress = { scanned: 0, uploaded: 0, duplicates: 0, errors: 0 };
 assert.equal(applyImmichLogProgress('INF uploaded successfully file=Takeout:a.jpg', logProgress), true);

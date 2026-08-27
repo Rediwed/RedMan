@@ -327,7 +327,10 @@
         "auth": true
       },
       "POST /api/media-import/drives/:id/import": {
-        "auth": true
+        "auth": true,
+        "body": [
+          "dry_run"
+        ]
       },
       "GET /api/media-import/runs/:id/progress": {
         "auth": true
@@ -803,7 +806,8 @@
         "files_failed": "INTEGER",
         "bytes_transferred": "INTEGER",
         "duration_seconds": "REAL",
-        "error_message": "TEXT"
+        "error_message": "TEXT",
+        "dry_run": "INTEGER NOT NULL"
       }
     },
     "backup_run_files": {
@@ -1202,6 +1206,7 @@
       "listRemoteRootDirectories",
       "discoverRemoteTakeoutFolder",
       "listRemoteTakeoutArchives",
+      "terminateRcloneProcess",
       "downloadRemoteFile",
       "validateRcloneJobInput",
       "executeRcloneJob",

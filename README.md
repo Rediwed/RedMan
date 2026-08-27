@@ -131,6 +131,8 @@ Auto-detect USB/SD card drives and import to Immich.
 - **Drive management** — rename and configure drives; ejection is shown only when an executable `MEDIA_EJECT_HELPER` host integration is configured, without granting `CAP_SYS_ADMIN`
 - **Scan & import progress** — real-time tracking of photo/video scanning and Immich uploads
 - **Atomic online-import progress** — Scan, Download, Import, and Cleanup repeat for each archive in one integrated stepper; the status names the current archive and phase while the progress bar covers the complete Takeout. Live counts show scanned, uploaded, already-present, and failed assets
+- **Dry runs** — every connected drive, folder source, and online Takeout source can simulate the same remaining work with `dry_run: true`. Immich receives `--dry-run`, so no server assets change; RedMan records only run/report metadata, skips retries, new checkpoints, source deletion, ejection, and `last_import_at`, and removes only temporary online archives created by that dry run. Already-checkpointed online archives remain skipped, exactly as they would in a resumed import
+- **Cancellation** — every active Media Import card has a Cancel action. Cancellation targets the complete RedMan orchestrator, including remote listing, disk checks, downloads, Immich analysis, and gaps between child processes, rather than working only while a transfer subprocess happens to exist
 - **Unified job progress** — SSD Backup, Hyper Backup, Cloud Backup, and regular Media Import use the same inline stepper, real progress bar, elapsed time, cancellation, and feature-specific live metrics without nesting another card inside each job
 - **Immich auto-discovery** — scans LAN for Immich instances, auto-fills server URL in settings
 - **Immich connection testing** — verify API key and server connectivity before importing
@@ -342,6 +344,10 @@ a fresh production volume. Compose refuses to start when required host paths or
 security values are missing. This prevents Docker from silently creating a
 directory where the host `authorized_keys` file should be.
 
+Media Import simulations are stored in the shared run history with
+`backup_runs.dry_run = 1`, so API consumers and the UI can distinguish projected
+upload counts from completed uploads after the live process has ended.
+
 Proxy mode denies unknown identities by default. Provision the expected Badger
 subject from the container host, then sign in through Pangolin:
 
@@ -445,6 +451,11 @@ explicit `--profile NAME` exits without contacting a host. Reusable profiles
 belong in gitignored `.redman-deploy-profiles.sh`; copy
 `deploy-profiles.example.sh` as a starting point. Multiple `--profile NAME`
 arguments deploy sequentially and stop at the first failed target.
+
+The activity gate treats both `running` and `cancelling` runs as active. A
+Media Import must finish its bounded child-process termination before a normal
+deployment can replace the container; `--wait-for-idle` waits for that state to
+settle instead of interrupting it.
 
 The script runs syntax and compatibility checks, provisions the platform-specific
 backup account, builds locally on the target, and preserves auth/trust values

@@ -118,7 +118,7 @@ app.use('/api', (req, res, next) => {
 app.get('/api/health/details', (req, res) => {
   const mem = process.memoryUsage();
   const schedulerRunning = getRunningJobCount();
-  const dbRunning = db.prepare("SELECT COUNT(*) as count FROM backup_runs WHERE status = 'running'").get().count;
+  const dbRunning = db.prepare("SELECT COUNT(*) as count FROM backup_runs WHERE status IN ('running', 'cancelling')").get().count;
   res.json({
     status: 'ok',
     version: '1.1.9',
@@ -187,8 +187,13 @@ const mainServer = app.listen(runtimeConfig.mainPort, () => {
       error_message = 'Process was interrupted (crash recovery)'
     WHERE status = 'running'
   `).run();
-  if (orphaned.changes > 0) {
-    console.log(`[startup] Cleaned up ${orphaned.changes} orphaned job(s) from previous run`);
+  const orphanedCancellations = db.prepare(`
+    UPDATE backup_runs SET status = 'cancelled', completed_at = datetime('now'),
+      error_message = 'Cancelled by user'
+    WHERE status = 'cancelling'
+  `).run();
+  if (orphaned.changes + orphanedCancellations.changes > 0) {
+    console.log(`[startup] Cleaned up ${orphaned.changes + orphanedCancellations.changes} orphaned job(s) from previous run`);
   }
 
   // Start background services
@@ -288,8 +293,13 @@ async function shutdown(signal, exitCode = 0) {
         error_message = 'Process shutdown (${signal})'
     WHERE status = 'running'
     `).run();
-    if (interrupted.changes > 0) {
-      console.log(`[shutdown] Marked ${interrupted.changes} active job(s) as failed`);
+    const cancelled = db.prepare(`
+      UPDATE backup_runs SET status = 'cancelled', completed_at = datetime('now'),
+        error_message = 'Cancelled by user'
+      WHERE status = 'cancelling'
+    `).run();
+    if (interrupted.changes + cancelled.changes > 0) {
+      console.log(`[shutdown] Finalized ${interrupted.changes + cancelled.changes} active job(s)`);
     }
   } catch {}
 

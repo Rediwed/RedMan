@@ -15,6 +15,7 @@ import {
   Camera, HardDrive, Search, Upload, LogOut, RefreshCw,
   Image, Video, Folder, Clock, AlertTriangle, Info, CheckCircle, X,
   FileCheck, FileX, Copy, FolderPlus, Trash2, Package, Cloud,
+  FlaskConical,
 } from 'lucide-react';
 import JobProgress from '../components/JobProgress.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
@@ -44,6 +45,7 @@ export default function MediaImportPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionResult, setActionResult] = useState(null);
   const [deleteVerifiedTarget, setDeleteVerifiedTarget] = useState(null);
+  const [dryRunTarget, setDryRunTarget] = useState(null);
   const [confirming, setConfirming] = useState(false);
   const scanPollRef = useRef(new Set());
 
@@ -128,13 +130,33 @@ export default function MediaImportPage() {
     }
   }
 
-  async function handleImport(driveId) {
+  async function handleImport(driveId, dryRun = false) {
     try {
-      const result = await startDriveImport(driveId);
-      trackRun(result.runId, driveId);
+      const result = await startDriveImport(driveId, { dry_run: dryRun });
+      trackRun(result.runId, driveId, { dryRun: result.dryRun });
+      if (dryRun) setActionResult({ type: 'success', message: 'Dry run started. Immich will not be changed.' });
     } catch (err) {
       setActionResult({ type: 'error', message: err.message });
     }
+  }
+
+  async function handleCancel(driveId) {
+    const runId = getRunIdForConfig(driveId);
+    if (!runId) return;
+    try {
+      await cancelDriveImport(runId);
+      setActionResult({ type: 'success', message: 'Import cancellation requested.' });
+      refresh();
+    } catch (err) {
+      setActionResult({ type: 'error', message: err.message });
+    }
+  }
+
+  async function confirmDryRun() {
+    setConfirming(true);
+    await handleImport(dryRunTarget.id, true);
+    setConfirming(false);
+    setDryRunTarget(null);
   }
 
   async function handleEject(driveId) {
@@ -255,12 +277,10 @@ export default function MediaImportPage() {
                 key={drive.mountPath || drive.id}
                 drive={drive}
                 activeImport={getProgressForConfig(drive.id)}
-                onCancel={() => {
-                  const runId = getRunIdForConfig(drive.id);
-                  if (runId) cancelDriveImport(runId).then(() => refresh());
-                }}
+                onCancel={() => handleCancel(drive.id)}
                 onScan={() => handleScan(drive.id)}
                 onImport={() => handleImport(drive.id)}
+                onDryRun={() => { setActionResult(null); setDryRunTarget(drive); }}
                 onEject={() => handleEject(drive.id)}
                 ejectSupported={!!status?.ejectSupported}
                 canManage={auth.isAdmin}
@@ -297,11 +317,9 @@ export default function MediaImportPage() {
                 key={source.id}
                 source={source}
                 activeImport={getProgressForConfig(source.id)}
-                onCancel={() => {
-                  const runId = getRunIdForConfig(source.id);
-                  if (runId) cancelDriveImport(runId).then(() => refresh());
-                }}
+                onCancel={() => handleCancel(source.id)}
                 onImport={() => handleImport(source.id)}
+                onDryRun={() => { setActionResult(null); setDryRunTarget(source); }}
                 onDelete={() => { setActionResult(null); setDeleteSourceTarget(source); }}
                 canManage={auth.isAdmin}
               />
@@ -340,6 +358,17 @@ export default function MediaImportPage() {
         </ConfirmDialog>
       )}
 
+      {dryRunTarget && (
+        <ConfirmDialog title="Run import simulation" confirmLabel="Start dry run" busy={confirming} onClose={() => setDryRunTarget(null)} onConfirm={confirmDryRun}>
+          <p>Analyze <strong>{dryRunTarget.name || dryRunTarget.label}</strong> without changing Immich or deleting, ejecting, or checkpointing source data.</p>
+          <p className="form-hint">
+            {dryRunTarget.source_kind === 'online'
+              ? 'Google Takeout archives are still downloaded one at a time for analysis, then RedMan removes only the temporary copies created by this dry run.'
+              : 'The complete source is read, so this can take about as long as an import even though no assets are uploaded.'}
+          </p>
+        </ConfirmDialog>
+      )}
+
       {/* Import History */}
       <section>
         <h2 className="section-title"><Clock size={16} /> Import History</h2>
@@ -354,6 +383,7 @@ export default function MediaImportPage() {
                 <thead>
                   <tr>
                     <th>Status</th>
+                    <th>Mode</th>
                     <th>Drive</th>
                     <th>Started</th>
                     <th>Duration</th>
@@ -365,6 +395,7 @@ export default function MediaImportPage() {
                   {runs.map(run => (
                     <tr key={run.id} className="clickable-row" onClick={() => openRunDetail(run)}>
                       <td><StatusBadge status={run.status} /></td>
+                      <td>{run.dry_run ? 'Dry run' : 'Import'}</td>
                       <td>{run.drive_name || run.drive_label || `Drive #${run.config_id}`}</td>
                       <td>{formatDateTime(run.started_at, settings)}</td>
                       <td>{run.duration_seconds ? formatDuration(run.duration_seconds) : '—'}</td>
@@ -414,7 +445,7 @@ export default function MediaImportPage() {
       {detailRun && (
         <DialogSurface ariaLabel={`Import details for ${detailRun.drive_name || detailRun.drive_label}`} className="modal-lg" onClose={() => { setDetailRun(null); setDetailFiles(null); }}>
             <div className="modal-header">
-              <h3>Import Details — {detailRun.drive_name || detailRun.drive_label}</h3>
+              <h3>{detailRun.dry_run ? 'Dry Run Details' : 'Import Details'} — {detailRun.drive_name || detailRun.drive_label}</h3>
               <button className="btn btn-ghost btn-sm" onClick={() => { setDetailRun(null); setDetailFiles(null); }} title="Close" aria-label="Close import details">
                 <X size={16} aria-hidden="true" />
               </button>
@@ -424,7 +455,7 @@ export default function MediaImportPage() {
                 <StatusBadge status={detailRun.status} />
                 <span>{formatDateTime(detailRun.started_at, settings)}</span>
                 <span>{detailRun.duration_seconds ? formatDuration(detailRun.duration_seconds) : '—'}</span>
-                <span>{detailRun.files_copied ?? 0} uploaded</span>
+                <span>{detailRun.files_copied ?? 0} {detailRun.dry_run ? 'would upload' : 'uploaded'}</span>
                 {detailRun.files_failed > 0 && <span className="text-danger">{detailRun.files_failed} errors</span>}
               </div>
 
@@ -505,7 +536,7 @@ export default function MediaImportPage() {
   );
 }
 
-function DriveCard({ drive, activeImport, onScan, onImport, onEject, ejectSupported, canManage, onToggle, onRequestDeleteVerified, onCancel }) {
+function DriveCard({ drive, activeImport, onScan, onImport, onDryRun, onEject, ejectSupported, canManage, onToggle, onRequestDeleteVerified, onCancel }) {
   const { settings } = useSettings();
   const scan = drive.scan;
   const isScanning = scan && scan.status === 'scanning';
@@ -592,6 +623,9 @@ function DriveCard({ drive, activeImport, onScan, onImport, onEject, ejectSuppor
         <button className="btn btn-primary btn-sm" onClick={onImport} disabled={isImporting || isScanning}>
           <Upload size={14} /> Import Now
         </button>
+        <button className="btn btn-secondary btn-sm" onClick={onDryRun} disabled={isImporting || isScanning}>
+          <FlaskConical size={14} /> Dry Run
+        </button>
         <button className="btn btn-secondary btn-sm" onClick={onScan} disabled={isScanning || isImporting}>
           <Search size={14} /> Scan
         </button>
@@ -603,7 +637,7 @@ function DriveCard({ drive, activeImport, onScan, onImport, onEject, ejectSuppor
   );
 }
 
-function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, canManage }) {
+function FolderSourceCard({ source, activeImport, onImport, onDryRun, onDelete, onCancel, canManage }) {
   const { settings } = useSettings();
   const isImporting = !!activeImport;
   const isTakeout = source.import_mode === 'google-photos';
@@ -644,6 +678,9 @@ function FolderSourceCard({ source, activeImport, onImport, onDelete, onCancel, 
       {canManage && <div className="drive-actions">
         <button className="btn btn-primary btn-sm" onClick={onImport} disabled={isImporting || !source.available}>
           <Upload size={14} /> Import Now
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={onDryRun} disabled={isImporting || !source.available}>
+          <FlaskConical size={14} /> Dry Run
         </button>
         <button className="btn btn-ghost btn-sm" onClick={onDelete} disabled={isImporting}>
           <Trash2 size={14} /> Remove
